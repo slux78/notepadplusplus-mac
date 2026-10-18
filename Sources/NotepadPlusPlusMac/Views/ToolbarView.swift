@@ -9,8 +9,8 @@ public struct NppToolbarView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 4) {
-            // File operations
+        HStack(spacing: 3) {
+            // Group 1: File Operations (New, Open, Save, Save All, Close, Close All, Print)
             NppToolbarButton(icon: "doc.badge.plus", tooltip: "New (Cmd+N)") {
                 workspace.newDocument()
             }
@@ -23,18 +23,19 @@ public struct NppToolbarView: View {
             NppToolbarButton(icon: "square.and.arrow.down.on.square", tooltip: "Save All", isEnabled: workspace.documents.contains(where: { $0.isDirty })) {
                 workspace.saveAll()
             }
-            NppToolbarButton(icon: "xmark.circle", tooltip: "Close Active Tab (Cmd+W)") {
-                if let id = workspace.activeDocumentId {
-                    workspace.closeDocument(id: id)
-                }
+            NppToolbarButton(icon: "xmark.circle", tooltip: "Close (Cmd+W)") {
+                workspace.closeActive()
             }
             NppToolbarButton(icon: "xmark.circle.fill", tooltip: "Close All Tabs") {
                 workspace.closeAll()
             }
+            NppToolbarButton(icon: "printer", tooltip: "Print... (Cmd+P)") {
+                workspace.printActive()
+            }
 
             Divider().frame(height: 18).padding(.horizontal, 2)
 
-            // Edit operations
+            // Group 2: Edit Operations (Cut, Copy, Paste, Undo, Redo)
             NppToolbarButton(icon: "scissors", tooltip: "Cut (Cmd+X)") {
                 NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
             }
@@ -53,9 +54,12 @@ public struct NppToolbarView: View {
 
             Divider().frame(height: 18).padding(.horizontal, 2)
 
-            // Search & View operations
-            NppToolbarButton(icon: "magnifyingglass", tooltip: "Find & Replace (Cmd+F)", isActive: workspace.showSearchBar) {
-                workspace.showSearchBar.toggle()
+            // Group 3: Search & Zoom (Find, Replace, Zoom In, Zoom Out)
+            NppToolbarButton(icon: "magnifyingglass", tooltip: "Find (Cmd+F)", isActive: workspace.showSearchBar) {
+                workspace.showSearchBar = true
+            }
+            NppToolbarButton(icon: "arrow.triangle.2.circlepath", tooltip: "Replace (Cmd+H)", isActive: workspace.showSearchBar) {
+                workspace.showSearchBar = true
             }
             NppToolbarButton(icon: "plus.magnifyingglass", tooltip: "Zoom In (Cmd++)") {
                 workspace.zoomIn()
@@ -63,8 +67,65 @@ public struct NppToolbarView: View {
             NppToolbarButton(icon: "minus.magnifyingglass", tooltip: "Zoom Out (Cmd+-)") {
                 workspace.zoomOut()
             }
+
+            Divider().frame(height: 18).padding(.horizontal, 2)
+
+            // Group 4: View & Display formatting (Word Wrap, Characters ¶, Indent Guide, Language, Map, Func List, Scroll Sync)
             NppToolbarButton(icon: "text.wrap", tooltip: "Toggle Word Wrap", isActive: workspace.isWordWrapEnabled) {
                 workspace.isWordWrapEnabled.toggle()
+            }
+            NppToolbarButton(icon: "paragraphsign", tooltip: "Show All Characters (¶)", isActive: workspace.showInvisibleCharacters) {
+                workspace.showInvisibleCharacters.toggle()
+            }
+            NppToolbarButton(icon: "checklist.unchecked", tooltip: "Show Indent Guide", isActive: workspace.showIndentGuides) {
+                workspace.showIndentGuides.toggle()
+            }
+            NppToolbarButton(icon: "chevron.left.forwardslash.chevron.right", tooltip: "Define your language...") {
+                showDefineLanguageAlert()
+            }
+            NppToolbarButton(icon: "rectangle.split.2x1", tooltip: "Document Map", isActive: workspace.showDocumentMap) {
+                workspace.showDocumentMap.toggle()
+            }
+            NppToolbarButton(icon: "function", tooltip: "Function List", isActive: workspace.showFunctionList) {
+                workspace.showFunctionList.toggle()
+            }
+            NppToolbarButton(icon: "arrow.up.and.down", tooltip: "Synchronize Vertical Scrolling", isActive: workspace.syncScrollV) {
+                workspace.syncScrollV.toggle()
+            }
+            NppToolbarButton(icon: "arrow.left.and.right", tooltip: "Synchronize Horizontal Scrolling", isActive: workspace.syncScrollH) {
+                workspace.syncScrollH.toggle()
+            }
+
+            Divider().frame(height: 18).padding(.horizontal, 2)
+
+            // Group 5: Macro Operations (Start, Stop, Play, Run Multiple)
+            NppToolbarButton(
+                icon: "circle.fill",
+                tooltip: "Start Recording Macro",
+                color: .red,
+                isActive: workspace.isMacroRecording
+            ) {
+                workspace.startMacroRecording()
+            }
+            NppToolbarButton(
+                icon: "square.fill",
+                tooltip: "Stop Recording Macro",
+                isEnabled: workspace.isMacroRecording
+            ) {
+                workspace.stopMacroRecording()
+            }
+            NppToolbarButton(
+                icon: "play.fill",
+                tooltip: "Playback Recorded Macro",
+                color: .green
+            ) {
+                workspace.playbackMacro()
+            }
+            NppToolbarButton(
+                icon: "forward.fill",
+                tooltip: "Run a Macro Multiple Times..."
+            ) {
+                workspace.runMacroMultipleTimes()
             }
 
             Spacer()
@@ -79,11 +140,20 @@ public struct NppToolbarView: View {
             alignment: .bottom
         )
     }
+
+    private func showDefineLanguageAlert() {
+        let alert = NSAlert()
+        alert.messageText = "User-Defined Language"
+        alert.informativeText = "Current language: \(workspace.activeDocument?.language ?? "Plain Text")\n\nYou can select syntax highlighting for C, C++, Swift, Python, JS, TS, HTML, CSS, JSON, XML, SQL, Shell, Markdown, Java, Rust, Go from the 'Language' menu."
+        alert.alertStyle = .informational
+        alert.runModal()
+    }
 }
 
 public struct NppToolbarButton: View {
     let icon: String
     let tooltip: String
+    var color: Color? = nil
     var isEnabled: Bool = true
     var isActive: Bool = false
     let action: () -> Void
@@ -93,15 +163,16 @@ public struct NppToolbarButton: View {
     public var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 13))
-                .foregroundColor(
-                    !isEnabled ? .gray.opacity(0.4) :
-                    (isActive ? .accentColor : (isHovering ? .primary : .secondary))
-                )
-                .frame(width: 26, height: 26)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundColor(buttonColor)
+                .frame(width: 24, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(isActive ? Color.accentColor.opacity(0.15) : (isHovering && isEnabled ? Color(NSColor.controlBackgroundColor) : Color.clear))
+                        .fill(isActive ? Color.accentColor.opacity(0.18) : (isHovering && isEnabled ? Color(NSColor.controlBackgroundColor) : Color.clear))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(isActive ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
                 )
         }
         .buttonStyle(PlainButtonStyle())
@@ -110,5 +181,18 @@ public struct NppToolbarButton: View {
         .onHover { h in
             isHovering = h
         }
+    }
+
+    private var buttonColor: Color {
+        if !isEnabled {
+            return .gray.opacity(0.35)
+        }
+        if let customColor = color {
+            return customColor
+        }
+        if isActive {
+            return .accentColor
+        }
+        return isHovering ? .primary : .secondary
     }
 }

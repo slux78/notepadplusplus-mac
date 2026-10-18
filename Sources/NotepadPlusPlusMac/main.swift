@@ -946,7 +946,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func menuDebugInfo() {
         let alert = NSAlert()
         alert.messageText = "Debug Info"
-        alert.informativeText = "Notepad++ for Mac v8.7.0 (64-bit ARM Mach-O)\nBuild time: Oct 2026\nSystem: macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nCore Engine: Notepad++ upstream uchardet + iconv streaming\nUI Engine: Apple TextKit 2 + SwiftUI AppKit Bridge"
+        alert.informativeText = "Notepad++ for Mac v8.9.8.1 (64-bit ARM Mach-O)\nBuild time: Oct 2026\nSystem: macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nCore Engine: Notepad++ upstream v8.9.8.1 uchardet + iconv streaming\nUI Engine: Apple TextKit 2 + SwiftUI AppKit Bridge"
         alert.alertStyle = .informational
         alert.runModal()
     }
@@ -954,7 +954,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notepad++ for Mac"
-        alert.informativeText = "Notepad++ v8.7.0 (64-bit)\nFree & Open Source Software\n\nHigh-Performance Native Port for macOS\nPowered by Notepad++ C++ Core (uchardet & iconv) and Apple TextKit 2.\n\nAuthor: Don HO (Notepad++ upstream)\nPorted to macOS with Antigravity"
+        alert.informativeText = "Notepad++ v8.9.8.1 (64-bit)\nFree & Open Source Software\n\nHigh-Performance Native Port for macOS\nPowered by Notepad++ upstream v8.9.8.1 C++ Core (uchardet & iconv) and Apple TextKit 2.\n\nAuthor: Don HO (Notepad++ upstream)\nPorted to macOS with Antigravity"
         alert.alertStyle = .informational
         alert.runModal()
     }

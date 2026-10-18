@@ -8,6 +8,11 @@ public final class NppWorkspace: ObservableObject {
     @Published public var fontSize: CGFloat = 13.0
     @Published public var isWordWrapEnabled: Bool = false
     @Published public var showInvisibleCharacters: Bool = false
+    @Published public var showIndentGuides: Bool = true
+    @Published public var showDocumentMap: Bool = false
+    @Published public var showFunctionList: Bool = false
+    @Published public var syncScrollV: Bool = false
+    @Published public var syncScrollH: Bool = false
     @Published public var showSearchBar: Bool = false
 
     // Notepad++ Find All Search Results State
@@ -328,6 +333,42 @@ public final class NppWorkspace: ObservableObject {
     public func sortTabsBySize(ascending: Bool) {
         documents.sort {
             ascending ? $0.content.count < $1.content.count : $0.content.count > $1.content.count
+        }
+    }
+
+    public func closeActive() {
+        if let id = activeDocumentId {
+            closeDocument(id: id)
+        }
+    }
+
+    public func printActive() {
+        if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
+            let op = NSPrintOperation(view: tv)
+            op.run()
+        }
+    }
+
+    public func startMacroRecording() {
+        isMacroRecording = true
+        recordedMacroActions.removeAll()
+    }
+
+    public func stopMacroRecording() {
+        isMacroRecording = false
+    }
+
+    public func playbackMacro() {
+        if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
+            NppEditOperations.duplicateLine(in: tv)
+        }
+    }
+
+    public func runMacroMultipleTimes() {
+        if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
+            for _ in 0..<5 {
+                NppEditOperations.duplicateLine(in: tv)
+            }
         }
     }
 }

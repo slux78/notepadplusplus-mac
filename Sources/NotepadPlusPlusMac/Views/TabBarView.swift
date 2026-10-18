@@ -25,9 +25,22 @@ public struct NppTabBarView: View {
                             }
                         )
                     }
+
+                    // Empty space next to tabs: double-click to create new tab!
+                    Color.clear
+                        .frame(minWidth: 80, maxWidth: .infinity)
+                        .frame(height: 28)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) {
+                            workspace.newDocument()
+                        }
                 }
                 .padding(.horizontal, 4)
                 .padding(.vertical, 3)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                workspace.newDocument()
             }
 
             // New Tab "+" Button
@@ -41,6 +54,7 @@ public struct NppTabBarView: View {
             }
             .buttonStyle(PlainButtonStyle())
             .padding(.trailing, 6)
+            .help("New Document (Double-click tab bar space or Cmd+N)")
         }
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(
@@ -49,6 +63,10 @@ public struct NppTabBarView: View {
                 .foregroundColor(Color(NSColor.separatorColor)),
             alignment: .bottom
         )
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            workspace.newDocument()
+        }
     }
 }
 
@@ -63,17 +81,17 @@ public struct NppTabItemView: View {
 
     public var body: some View {
         HStack(spacing: 6) {
-            // Notepad++ Floppy Disk Icon: Blue for saved, Red for dirty
-            Image(systemName: doc.isDirty ? "circle.fill" : "doc.text")
+            // Notepad++ Floppy Disk / Pencil Icon: Blue for saved, Red for dirty, Pencil when active
+            Image(systemName: doc.isDirty ? "circle.fill" : (isActive ? "pencil.line" : "doc.text"))
                 .font(.system(size: 10))
-                .foregroundColor(doc.isDirty ? .red : .blue)
+                .foregroundColor(doc.isDirty ? .red : (isActive ? .accentColor : .secondary))
 
             Text(doc.title)
-                .font(.system(size: 12, weight: isActive ? .medium : .regular))
+                .font(.system(size: 12, weight: isActive ? .semibold : .regular))
                 .foregroundColor(isActive ? .primary : .secondary)
                 .lineLimit(1)
 
-            // Close button
+            // Close button [x]
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))
@@ -82,6 +100,7 @@ public struct NppTabItemView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
+            .help("Close (or double click tab)")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -96,9 +115,17 @@ public struct NppTabItemView: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .onTapGesture {
-            onSelect()
-        }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                // Notepad++ signature: Double-click tab to close it
+                onClose()
+            }
+        )
+        .simultaneousGesture(
+            TapGesture(count: 1).onEnded {
+                onSelect()
+            }
+        )
         // MARK: - Notepad++ Tab Right Click Context Menu (tabContextMenu.xml)
         .contextMenu {
             Button("Close") { onClose() }
