@@ -100,13 +100,53 @@ public final class NppDocument: ObservableObject, Identifiable {
         }
     }
 
+    public var encodingDisplayName: String {
+        switch encoding {
+        case "UTF-8":
+            return hasBOM ? "UTF-8-BOM" : "UTF-8"
+        case "CP949":
+            return "Windows-949"
+        case "EUC-KR":
+            return "EUC-KR"
+        case "WINDOWS-1252":
+            return "ANSI"
+        case "CP932":
+            return "Shift-JIS"
+        case "GB18030":
+            return "GB2312"
+        case "BIG5":
+            return "Big5"
+        case "UTF-16LE":
+            return "UTF-16 LE"
+        case "UTF-16BE":
+            return "UTF-16 BE"
+        default:
+            return encoding
+        }
+    }
+
+    public static func normalizeCharset(_ name: String) -> String {
+        let upper = name.uppercased()
+        if upper.contains("949") || upper == "EUC-KR" { return "CP949" }
+        if upper.contains("932") || upper.contains("SHIFT") { return "CP932" }
+        if upper.contains("18030") || upper.contains("2312") { return "GB18030" }
+        if upper.contains("BIG5") { return "BIG5" }
+        if upper.contains("1252") || upper == "ANSI" { return "WINDOWS-1252" }
+        if upper.contains("16LE") { return "UTF-16LE" }
+        if upper.contains("16BE") { return "UTF-16BE" }
+        if upper.contains("UTF-8") || upper.contains("UTF8") { return "UTF-8" }
+        return upper
+    }
+
     // Notepad++: "Convert to UTF-8", "Convert to CP949", etc.
     public func convertEncoding(to targetCharset: String, addBOM: Bool = false) {
+        objectWillChange.send()
+        let norm = NppDocument.normalizeCharset(targetCharset)
+
         // In Notepad++, Convert to UTF-8 converts the document format to UTF-8 without altering visible characters.
         // If the document currently has mojibake (e.g. CP949 decoded as Latin1/Windows-1252),
         // we automatically repair the text so it displays clean Korean!
-        if (targetCharset == "UTF-8" || targetCharset == "UTF-8-BOM") && (self.encoding == "CP949" || self.encoding == "EUC-KR" || self.encoding == "WINDOWS-1252") {
-            // Check if current content looks like broken Korean mojibake
+        if (norm == "UTF-8") && (self.encoding == "CP949" || self.encoding == "EUC-KR" || self.encoding == "WINDOWS-1252") {
             if let latinData = content.data(using: .windowsCP1252) ?? content.data(using: .isoLatin1) {
                 latinData.withUnsafeBytes { rawPtr in
                     guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
@@ -121,64 +161,70 @@ public final class NppDocument: ObservableObject, Identifiable {
             }
         }
 
-        self.encoding = targetCharset
+        self.encoding = norm
         self.hasBOM = addBOM
         self.isDirty = true
     }
 
     // Notepad++: "Encode in ANSI / CP949" (re-interpret raw bytes without changing byte payload)
     public func reencodeAs(targetCharset: String) {
+        objectWillChange.send()
+        let norm = NppDocument.normalizeCharset(targetCharset)
+
         var data: Data? = nil
         if let url = filePath, let diskData = try? Data(contentsOf: url) {
             data = diskData
             self.rawFileBytes = diskData
         } else if let cached = rawFileBytes {
             data = cached
+        } else {
+            // For in-memory documents, re-encode current content to raw bytes using old encoding
+            let oldEnc = self.encoding
+            let utf8Bytes = Array(content.utf8)
+            var outLen: Int = 0
+            if let ptr = npp_encode_from_utf8(content, utf8Bytes.count, oldEnc, 0, &outLen) {
+                data = Data(bytes: ptr, count: outLen)
+                npp_free_buffer(ptr)
+            }
         }
 
         if let raw = data {
             raw.withUnsafeBytes { rawPtr in
                 guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
                 var decodedLen: Int32 = 0
-                if let decodedPtr = npp_decode_to_utf8(ptr, raw.count, targetCharset, &decodedLen) {
-                    if let str = String(bytes: Data(bytes: decodedPtr, count: Int(decodedLen)), encoding: .utf8) {
+                if norm == "UTF-8" {
+                    // Safe UTF-8 decoding with replacement characters for invalid bytes (Notepad++ / Scintilla behavior)
+                    self.content = String(decoding: raw, as: UTF8.self)
+                } else if let decodedPtr = npp_decode_to_utf8(ptr, raw.count, norm, &decodedLen) {
+                    let decodedData = Data(bytes: decodedPtr, count: Int(decodedLen))
+                    if let str = String(bytes: decodedData, encoding: .utf8) {
                         self.content = str
                     } else {
-                        self.content = String(cString: decodedPtr)
+                        self.content = String(decoding: decodedData, as: UTF8.self)
                     }
                     npp_free_string(decodedPtr)
-                }
-            }
-        } else {
-            // In-memory mojibake recovery: recover bytes and re-decode
-            if let rawBytes = content.data(using: .windowsCP1252) ?? content.data(using: .isoLatin1) {
-                rawBytes.withUnsafeBytes { rawPtr in
-                    guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
-                    var decodedLen: Int32 = 0
-                    if let decodedPtr = npp_decode_to_utf8(ptr, rawBytes.count, targetCharset, &decodedLen) {
-                        if let str = String(bytes: Data(bytes: decodedPtr, count: Int(decodedLen)), encoding: .utf8) {
-                            self.content = str
-                        }
-                        npp_free_string(decodedPtr)
-                    }
+                } else {
+                    self.content = String(decoding: raw, as: UTF8.self)
                 }
             }
         }
 
-        self.encoding = targetCharset
+        self.encoding = norm
+        self.hasBOM = (norm == "UTF-8" && self.hasBOM)
         self.isDirty = true
     }
 
     // Notepad++: EOL Conversion (Windows CRLF <-> Unix LF <-> Mac CR)
     public func convertEOL(to targetEol: NppEol) {
         guard targetEol != self.eolFormat else { return }
+        objectWillChange.send()
         let utf8Bytes = Array(content.utf8)
         var outLen: Int = 0
         if let convertedPtr = npp_convert_eol(content, utf8Bytes.count, Int32(targetEol.rawValue), &outLen) {
             if let str = String(bytes: Data(bytes: convertedPtr, count: outLen), encoding: .utf8) {
                 self.content = str
             } else {
-                self.content = String(cString: convertedPtr)
+                self.content = String(decoding: Data(bytes: convertedPtr, count: outLen), as: UTF8.self)
             }
             npp_free_string(convertedPtr)
         }

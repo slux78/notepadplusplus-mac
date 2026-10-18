@@ -140,6 +140,7 @@ public struct NppEditorView: NSViewRepresentable {
         public func textViewDidChangeSelection(_ notification: Notification) {
             updateCaretPosition()
             gutter?.needsDisplay = true
+            textView?.needsDisplay = true
             updateSmartHighlighting()
         }
 
@@ -272,6 +273,28 @@ public final class NppTextView: NSTextView {
         super.keyDown(with: event)
     }
 
+    // MARK: - Notepad++ Active Line Highlight Bar (notepad4ever.png line 8 style)
+    public override func draw(_ dirtyRect: NSRect) {
+        let sel = self.selectedRange()
+        if sel.length == 0, let layoutManager = self.layoutManager {
+            let str = self.string as NSString
+            let charPos = min(sel.location, max(0, str.length))
+            let glyphIdx = layoutManager.glyphIndexForCharacter(at: charPos)
+            var lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)
+            lineRect.origin.x = 0
+            lineRect.size.width = max(self.bounds.width, self.visibleRect.width)
+
+            let isDark = self.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let lineHighlightColor = isDark
+                ? NSColor(calibratedRed: 0.17, green: 0.18, blue: 0.20, alpha: 0.95)
+                : NSColor(calibratedRed: 0.93, green: 0.95, blue: 0.98, alpha: 0.95)
+
+            lineHighlightColor.setFill()
+            NSBezierPath(rect: lineRect).fill()
+        }
+        super.draw(dirtyRect)
+    }
+
     // MARK: - Notepad++ Right Click Context Menu (Scintilla Edit Zone)
     public override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu(title: "Context Menu")
@@ -286,6 +309,59 @@ public final class NppTextView: NSTextView {
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         menu.addItem(withTitle: "Delete", action: #selector(NSText.delete(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        menu.addItem(NSMenuItem.separator())
+
+        // 2. Notepad++ Style Token Occurrence Submenu
+        let styleMenuItem = NSMenuItem(title: "Style all occurrences of token", action: nil, keyEquivalent: "")
+        let styleMenu = NSMenu(title: "Style all occurrences of token")
+        let style1 = NSMenuItem(title: "Using 1st Style (Mint Green)", action: #selector(contextStyle1), keyEquivalent: "")
+        style1.target = self
+        styleMenu.addItem(style1)
+        let style2 = NSMenuItem(title: "Using 2nd Style (Cyan)", action: #selector(contextStyle2), keyEquivalent: "")
+        style2.target = self
+        styleMenu.addItem(style2)
+        let style3 = NSMenuItem(title: "Using 3rd Style (Yellow)", action: #selector(contextStyle3), keyEquivalent: "")
+        style3.target = self
+        styleMenu.addItem(style3)
+        let style4 = NSMenuItem(title: "Using 4th Style (Orange)", action: #selector(contextStyle4), keyEquivalent: "")
+        style4.target = self
+        styleMenu.addItem(style4)
+        let style5 = NSMenuItem(title: "Using 5th Style (Purple)", action: #selector(contextStyle5), keyEquivalent: "")
+        style5.target = self
+        styleMenu.addItem(style5)
+        styleMenuItem.submenu = styleMenu
+        menu.addItem(styleMenuItem)
+
+        let clearStyleItem = NSMenuItem(title: "Clear style", action: #selector(contextClearStyle), keyEquivalent: "")
+        clearStyleItem.target = self
+        menu.addItem(clearStyleItem)
+        menu.addItem(NSMenuItem.separator())
+
+        // 3. Notepad++ Plugin commands (Base64, URL, Hashes)
+        let pluginItem = NSMenuItem(title: "Plugin commands", action: nil, keyEquivalent: "")
+        let pluginMenu = NSMenu(title: "Plugin commands")
+        let b64Enc = NSMenuItem(title: "Base64 Encode", action: #selector(contextBase64Encode), keyEquivalent: "")
+        b64Enc.target = self
+        pluginMenu.addItem(b64Enc)
+        let b64Dec = NSMenuItem(title: "Base64 Decode", action: #selector(contextBase64Decode), keyEquivalent: "")
+        b64Dec.target = self
+        pluginMenu.addItem(b64Dec)
+        pluginMenu.addItem(NSMenuItem.separator())
+        let urlEnc = NSMenuItem(title: "URL Encode", action: #selector(contextUrlEncode), keyEquivalent: "")
+        urlEnc.target = self
+        pluginMenu.addItem(urlEnc)
+        let urlDec = NSMenuItem(title: "URL Decode", action: #selector(contextUrlDecode), keyEquivalent: "")
+        urlDec.target = self
+        pluginMenu.addItem(urlDec)
+        pluginMenu.addItem(NSMenuItem.separator())
+        let md5Item = NSMenuItem(title: "Generate MD5 into Clipboard", action: #selector(contextMD5), keyEquivalent: "")
+        md5Item.target = self
+        pluginMenu.addItem(md5Item)
+        let sha256Item = NSMenuItem(title: "Generate SHA-256 into Clipboard", action: #selector(contextSHA256), keyEquivalent: "")
+        sha256Item.target = self
+        pluginMenu.addItem(sha256Item)
+        pluginItem.submenu = pluginMenu
+        menu.addItem(pluginItem)
         menu.addItem(NSMenuItem.separator())
 
         // 2. Comment / Uncomment
@@ -512,5 +588,103 @@ public final class NppTextView: NSTextView {
         if let doc = editorCoordinator?.parent.document, let path = doc.filePath {
             NSWorkspace.shared.activateFileViewerSelecting([path])
         }
+    }
+
+    // MARK: - Notepad++ Style Token Occurrence Handlers
+    private func styleToken(color: NSColor) {
+        guard let ts = self.textStorage else { return }
+        let sel = self.selectedRange()
+        let str = self.string as NSString
+        guard sel.length > 0 && NSMaxRange(sel) <= str.length else { return }
+        let selectedWord = str.substring(with: sel)
+
+        var searchRange = NSRange(location: 0, length: str.length)
+        ts.beginEditing()
+        while searchRange.location < str.length {
+            let found = str.range(of: selectedWord, options: [.literal], range: searchRange)
+            if found.location == NSNotFound { break }
+            ts.addAttribute(.backgroundColor, value: color, range: found)
+            let nextPos = found.location + max(1, found.length)
+            searchRange = NSRange(location: nextPos, length: str.length - nextPos)
+        }
+        ts.endEditing()
+    }
+
+    @objc func contextStyle1() { styleToken(color: NSColor(calibratedRed: 0.15, green: 0.65, blue: 0.40, alpha: 0.50)) } // Mint Green
+    @objc func contextStyle2() { styleToken(color: NSColor(calibratedRed: 0.15, green: 0.55, blue: 0.85, alpha: 0.50)) } // Cyan
+    @objc func contextStyle3() { styleToken(color: NSColor(calibratedRed: 0.85, green: 0.75, blue: 0.20, alpha: 0.50)) } // Yellow
+    @objc func contextStyle4() { styleToken(color: NSColor(calibratedRed: 0.90, green: 0.50, blue: 0.20, alpha: 0.50)) } // Orange
+    @objc func contextStyle5() { styleToken(color: NSColor(calibratedRed: 0.65, green: 0.35, blue: 0.85, alpha: 0.50)) } // Purple
+
+    @objc func contextClearStyle() {
+        guard let ts = self.textStorage else { return }
+        ts.beginEditing()
+        ts.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: ts.length))
+        ts.endEditing()
+        editorCoordinator?.smartHighlightedRanges.removeAll()
+        editorCoordinator?.lastSmartHighlightedWord = ""
+    }
+
+    // MARK: - Plugin Commands (Base64, URL, Hashes)
+    @objc func contextBase64Encode() {
+        let sel = self.selectedRange()
+        guard sel.length > 0 else { return }
+        let text = (self.string as NSString).substring(with: sel)
+        let encoded = NppTools.base64Encode(string: text)
+        self.insertText(encoded, replacementRange: sel)
+    }
+
+    @objc func contextBase64Decode() {
+        let sel = self.selectedRange()
+        guard sel.length > 0 else { return }
+        let text = (self.string as NSString).substring(with: sel)
+        let decoded = NppTools.base64Decode(string: text)
+        self.insertText(decoded, replacementRange: sel)
+    }
+
+    @objc func contextUrlEncode() {
+        let sel = self.selectedRange()
+        guard sel.length > 0 else { return }
+        let text = (self.string as NSString).substring(with: sel)
+        let encoded = NppTools.urlEncode(string: text)
+        self.insertText(encoded, replacementRange: sel)
+    }
+
+    @objc func contextUrlDecode() {
+        let sel = self.selectedRange()
+        guard sel.length > 0 else { return }
+        let text = (self.string as NSString).substring(with: sel)
+        let decoded = NppTools.urlDecode(string: text)
+        self.insertText(decoded, replacementRange: sel)
+    }
+
+    @objc func contextMD5() {
+        let sel = self.selectedRange()
+        let targetText: String
+        if sel.length > 0 {
+            targetText = (self.string as NSString).substring(with: sel)
+        } else {
+            targetText = self.string
+        }
+        guard let data = targetText.data(using: .utf8) else { return }
+        let hash = NppTools.md5(data: data)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(hash, forType: .string)
+        NppTools.showHashDialog(title: "MD5 Digest Copied to Clipboard", hash: hash)
+    }
+
+    @objc func contextSHA256() {
+        let sel = self.selectedRange()
+        let targetText: String
+        if sel.length > 0 {
+            targetText = (self.string as NSString).substring(with: sel)
+        } else {
+            targetText = self.string
+        }
+        guard let data = targetText.data(using: .utf8) else { return }
+        let hash = NppTools.sha256(data: data)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(hash, forType: .string)
+        NppTools.showHashDialog(title: "SHA-256 Digest Copied to Clipboard", hash: hash)
     }
 }

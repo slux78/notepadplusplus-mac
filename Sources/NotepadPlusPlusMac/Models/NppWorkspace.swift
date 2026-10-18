@@ -259,6 +259,10 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
+    @Published public var isOverwriteMode: Bool = false
+    @Published public var isMacroRecording: Bool = false
+    public var recordedMacroActions: [String] = []
+
     public func zoomIn() {
         fontSize = min(fontSize + 1.0, 36.0)
     }
@@ -269,5 +273,61 @@ public final class NppWorkspace: ObservableObject {
 
     public func resetZoom() {
         fontSize = 13.0
+    }
+
+    // MARK: - Tab Navigation & Sorting (Window Menu)
+    public func nextTab() {
+        guard documents.count > 1, let currentId = activeDocumentId,
+              let currentIndex = documents.firstIndex(where: { $0.id == currentId }) else { return }
+        let nextIndex = (currentIndex + 1) % documents.count
+        activeDocumentId = documents[nextIndex].id
+    }
+
+    public func prevTab() {
+        guard documents.count > 1, let currentId = activeDocumentId,
+              let currentIndex = documents.firstIndex(where: { $0.id == currentId }) else { return }
+        let prevIndex = (currentIndex - 1 + documents.count) % documents.count
+        activeDocumentId = documents[prevIndex].id
+    }
+
+    public func selectTab(at index: Int) {
+        guard index >= 0 && index < documents.count else { return }
+        activeDocumentId = documents[index].id
+    }
+
+    public func moveTabForward() {
+        guard let currentId = activeDocumentId,
+              let index = documents.firstIndex(where: { $0.id == currentId }),
+              index + 1 < documents.count else { return }
+        documents.swapAt(index, index + 1)
+    }
+
+    public func moveTabBackward() {
+        guard let currentId = activeDocumentId,
+              let index = documents.firstIndex(where: { $0.id == currentId }),
+              index > 0 else { return }
+        documents.swapAt(index, index - 1)
+    }
+
+    public func sortTabsByName(ascending: Bool) {
+        documents.sort {
+            ascending ? $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+                      : $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedDescending
+        }
+    }
+
+    public func sortTabsByPath(ascending: Bool) {
+        documents.sort {
+            let p1 = $0.filePath?.path ?? $0.title
+            let p2 = $1.filePath?.path ?? $1.title
+            return ascending ? p1.localizedCaseInsensitiveCompare(p2) == .orderedAscending
+                             : p1.localizedCaseInsensitiveCompare(p2) == .orderedDescending
+        }
+    }
+
+    public func sortTabsBySize(ascending: Bool) {
+        documents.sort {
+            ascending ? $0.content.count < $1.content.count : $0.content.count > $1.content.count
+        }
     }
 }
