@@ -1,0 +1,4 @@
+module NppCore {
+    header "NppEncoding.h"
+    export *
+}

@@ -1,0 +1,4 @@
+.build/
+build/
+upstream_npp/
+.DS_Store
