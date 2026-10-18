@@ -85,6 +85,18 @@ public struct NppEditorView: NSViewRepresentable {
             context.coordinator.lastWordWrap = workspace.isWordWrapEnabled
             configureWordWrap(textView: textView, scrollView: scrollView, enabled: workspace.isWordWrapEnabled)
         }
+
+        // Jump to match from Find All Results panel
+        if let match = workspace.targetJumpMatch, match.documentId == document.id {
+            let targetRange = NSRange(location: match.charPosition, length: match.matchLength)
+            if NSMaxRange(targetRange) <= (textView.string as NSString).length {
+                textView.setSelectedRange(targetRange)
+                textView.scrollRangeToVisible(targetRange)
+            }
+            DispatchQueue.main.async {
+                self.workspace.targetJumpMatch = nil
+            }
+        }
     }
 
     private func configureWordWrap(textView: NSTextView, scrollView: NSScrollView, enabled: Bool) {
@@ -108,6 +120,8 @@ public struct NppEditorView: NSViewRepresentable {
         weak var textView: NppTextView?
         weak var gutter: NppGutterView?
         var lastWordWrap: Bool = false
+        var smartHighlightedRanges: [NSRange] = []
+        var lastSmartHighlightedWord: String = ""
 
         init(_ parent: NppEditorView) {
             self.parent = parent
@@ -126,6 +140,59 @@ public struct NppEditorView: NSViewRepresentable {
         public func textViewDidChangeSelection(_ notification: Notification) {
             updateCaretPosition()
             gutter?.needsDisplay = true
+            updateSmartHighlighting()
+        }
+
+        func updateSmartHighlighting() {
+            guard let tv = textView, let ts = tv.textStorage else { return }
+            let sel = tv.selectedRange()
+            let str = tv.string as NSString
+
+            // Clear previous smart highlights
+            if !smartHighlightedRanges.isEmpty {
+                ts.beginEditing()
+                for r in smartHighlightedRanges {
+                    if NSMaxRange(r) <= ts.length {
+                        ts.removeAttribute(.backgroundColor, range: r)
+                    }
+                }
+                ts.endEditing()
+                smartHighlightedRanges.removeAll()
+                lastSmartHighlightedWord = ""
+            }
+
+            guard sel.length > 0 && NSMaxRange(sel) <= str.length else { return }
+
+            let selectedWord = str.substring(with: sel).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard selectedWord.count >= 1, !selectedWord.contains("\n"), !selectedWord.contains("\r") else { return }
+
+            // Notepad++ Smart Highlight: find all occurrences of selectedWord in document
+            var ranges: [NSRange] = []
+            var searchRange = NSRange(location: 0, length: str.length)
+
+            while searchRange.location < str.length {
+                let found = str.range(of: selectedWord, options: [.literal], range: searchRange)
+                if found.location == NSNotFound { break }
+                ranges.append(found)
+                let nextPos = found.location + max(1, found.length)
+                searchRange = NSRange(location: nextPos, length: str.length - nextPos)
+            }
+
+            if ranges.count > 1 {
+                // Notepad++ signature smart highlight: mint green
+                let isDark = tv.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                let highlightColor = isDark
+                    ? NSColor(calibratedRed: 0.15, green: 0.55, blue: 0.35, alpha: 0.55)
+                    : NSColor(calibratedRed: 0.50, green: 0.95, blue: 0.65, alpha: 0.60)
+
+                ts.beginEditing()
+                for r in ranges {
+                    ts.addAttribute(.backgroundColor, value: highlightColor, range: r)
+                }
+                ts.endEditing()
+                smartHighlightedRanges = ranges
+                lastSmartHighlightedWord = selectedWord
+            }
         }
 
         func updateCaretPosition() {

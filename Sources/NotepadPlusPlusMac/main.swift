@@ -169,11 +169,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
-        // 4. Search Menu
+        // 4. Search Menu (Notepad++ Windows parity)
         let searchMenuItem = NSMenuItem()
         let searchMenu = NSMenu(title: "Search")
         searchMenu.addItem(withTitle: "Find...", action: #selector(menuFind), keyEquivalent: "f")
         searchMenu.addItem(withTitle: "Replace...", action: #selector(menuFind), keyEquivalent: "h")
+        searchMenu.addItem(NSMenuItem.separator())
+        searchMenu.addItem(withTitle: "Find All in Current Document", action: #selector(menuFindAllCurrent), keyEquivalent: "F")
+        searchMenu.addItem(withTitle: "Find All in All Opened Documents", action: #selector(menuFindAllOpened), keyEquivalent: "")
+        searchMenu.addItem(withTitle: "Clear Search Results", action: #selector(menuClearSearchResults), keyEquivalent: "")
         searchMenuItem.submenu = searchMenu
         mainMenu.addItem(searchMenuItem)
 
@@ -284,6 +288,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func menuFind() { workspace.showSearchBar.toggle() }
+    @objc func menuFindAllCurrent() {
+        workspace.showSearchBar = true
+        if let tv = getActiveTextView() {
+            let sel = tv.selectedRange()
+            if sel.length > 0 {
+                let text = (tv.string as NSString).substring(with: sel)
+                workspace.findAllInCurrentDoc(query: text, matchCase: false, wholeWord: false, useRegex: false)
+            }
+        }
+    }
+    @objc func menuFindAllOpened() {
+        workspace.showSearchBar = true
+        if let tv = getActiveTextView() {
+            let sel = tv.selectedRange()
+            if sel.length > 0 {
+                let text = (tv.string as NSString).substring(with: sel)
+                workspace.findAllInAllOpenedDocs(query: text, matchCase: false, wholeWord: false, useRegex: false)
+            }
+        }
+    }
+    @objc func menuClearSearchResults() {
+        workspace.clearSearchResults()
+    }
     @objc func menuToggleWordWrap() { workspace.isWordWrapEnabled.toggle() }
     @objc func menuZoomIn() { workspace.zoomIn() }
     @objc func menuZoomOut() { workspace.zoomOut() }

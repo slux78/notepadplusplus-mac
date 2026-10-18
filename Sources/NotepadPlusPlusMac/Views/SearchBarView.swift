@@ -33,6 +33,12 @@ public struct NppSearchBarView: View {
                     .keyboardShortcut(.defaultAction)
                 Button("Find Prev") { findPrev() }
                 Button("Count") { countOccurrences() }
+                Button("Find All in Current Doc") {
+                    workspace.findAllInCurrentDoc(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+                }
+                Button("Find All in Opened Docs") {
+                    workspace.findAllInAllOpenedDocs(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+                }
 
                 Button(action: {
                     workspace.showSearchBar = false

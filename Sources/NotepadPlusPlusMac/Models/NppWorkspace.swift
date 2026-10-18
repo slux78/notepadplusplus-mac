@@ -10,11 +10,21 @@ public final class NppWorkspace: ObservableObject {
     @Published public var showInvisibleCharacters: Bool = false
     @Published public var showSearchBar: Bool = false
 
+    // Notepad++ Find All Search Results State
+    @Published public var searchFileGroups: [NppSearchFileGroup] = []
+    @Published public var lastSearchQuery: String = ""
+    @Published public var showSearchResultsPanel: Bool = false
+    @Published public var targetJumpMatch: NppSearchMatch?
+
     private var newDocCounter: Int = 1
 
     public var activeDocument: NppDocument? {
         guard let id = activeDocumentId else { return nil }
         return documents.first(where: { $0.id == id })
+    }
+
+    public var totalSearchHits: Int {
+        searchFileGroups.reduce(0) { $0 + $1.matches.count }
     }
 
     public init() {
@@ -112,6 +122,97 @@ public final class NppWorkspace: ObservableObject {
         } catch {
             print("Failed to reload file: \(error)")
         }
+    }
+
+    // MARK: - Notepad++ Find All Operations
+    public func findAllInCurrentDoc(query: String, matchCase: Bool, wholeWord: Bool, useRegex: Bool) {
+        guard let doc = activeDocument, !query.isEmpty else { return }
+        lastSearchQuery = query
+        let matches = searchInDocument(doc: doc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
+        if !matches.isEmpty {
+            searchFileGroups = [NppSearchFileGroup(documentId: doc.id, documentTitle: doc.title, filePath: doc.filePath, matches: matches)]
+        } else {
+            searchFileGroups = []
+        }
+        showSearchResultsPanel = true
+    }
+
+    public func findAllInAllOpenedDocs(query: String, matchCase: Bool, wholeWord: Bool, useRegex: Bool) {
+        guard !query.isEmpty else { return }
+        lastSearchQuery = query
+        var groups: [NppSearchFileGroup] = []
+        for doc in documents {
+            let matches = searchInDocument(doc: doc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
+            if !matches.isEmpty {
+                groups.append(NppSearchFileGroup(documentId: doc.id, documentTitle: doc.title, filePath: doc.filePath, matches: matches))
+            }
+        }
+        searchFileGroups = groups
+        showSearchResultsPanel = true
+    }
+
+    private func searchInDocument(doc: NppDocument, query: String, matchCase: Bool, wholeWord: Bool, useRegex: Bool) -> [NppSearchMatch] {
+        let content = doc.content as NSString
+        guard content.length > 0 else { return [] }
+
+        var pattern = query
+        if !useRegex {
+            pattern = NSRegularExpression.escapedPattern(for: query)
+        }
+        if wholeWord {
+            pattern = "\\b" + pattern + "\\b"
+        }
+
+        var regexOptions: NSRegularExpression.Options = []
+        if !matchCase {
+            regexOptions.insert(.caseInsensitive)
+        }
+
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: regexOptions) else { return [] }
+        let rawMatches = regex.matches(in: doc.content, options: [], range: NSRange(location: 0, length: content.length))
+
+        var results: [NppSearchMatch] = []
+        for m in rawMatches {
+            let lineRange = content.lineRange(for: NSRange(location: m.range.location, length: 0))
+            let lineText = content.substring(with: lineRange).trimmingCharacters(in: .newlines)
+
+            // Compute line number
+            var lineNum = 1
+            content.enumerateSubstrings(in: NSRange(location: 0, length: m.range.location), options: [.byLines, .substringNotRequired]) { _, _, _, _ in
+                lineNum += 1
+            }
+
+            let matchRangeInLine = NSRange(location: m.range.location - lineRange.location, length: m.range.length)
+
+            let match = NppSearchMatch(
+                documentId: doc.id,
+                documentTitle: doc.title,
+                filePath: doc.filePath,
+                lineNumber: lineNum,
+                lineContent: lineText,
+                matchRangeInLine: matchRangeInLine,
+                charPosition: m.range.location,
+                matchLength: m.range.length
+            )
+            results.append(match)
+        }
+        return results
+    }
+
+    public func jumpToMatch(_ match: NppSearchMatch) {
+        activeDocumentId = match.documentId
+        targetJumpMatch = match
+
+        if let doc = activeDocument {
+            doc.cursorPos = match.charPosition
+            doc.selectionLength = match.matchLength
+            doc.cursorLine = match.lineNumber
+        }
+    }
+
+    public func clearSearchResults() {
+        searchFileGroups.removeAll()
+        showSearchResultsPanel = false
     }
 
     public func saveActive() {

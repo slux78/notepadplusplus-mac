@@ -40,7 +40,12 @@ public struct NppMainWindowView: View {
                 .background(Color(NSColor.textBackgroundColor))
             }
 
-            // 5. Status Bar
+            // 5. Search Results Panel (Notepad++ Find Result dock)
+            if workspace.showSearchResultsPanel && !workspace.searchFileGroups.isEmpty {
+                NppSearchResultsView(workspace: workspace)
+            }
+
+            // 6. Status Bar
             NppStatusBarView(workspace: workspace)
         }
         .frame(minWidth: 700, minHeight: 450)
