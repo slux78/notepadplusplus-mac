@@ -47,7 +47,11 @@ public final class NppDocument: ObservableObject, Identifiable {
 
             var decodedLen: Int32 = 0
             if let decodedPtr = npp_decode_to_utf8(ptr, data.count, charset, &decodedLen) {
-                doc.content = String(cString: decodedPtr)
+                if let str = String(bytes: Data(bytes: decodedPtr, count: Int(decodedLen)), encoding: .utf8) {
+                    doc.content = str
+                } else {
+                    doc.content = String(cString: decodedPtr)
+                }
                 npp_free_string(decodedPtr)
             } else {
                 doc.content = String(decoding: data, as: UTF8.self)
@@ -98,6 +102,25 @@ public final class NppDocument: ObservableObject, Identifiable {
 
     // Notepad++: "Convert to UTF-8", "Convert to CP949", etc.
     public func convertEncoding(to targetCharset: String, addBOM: Bool = false) {
+        // In Notepad++, Convert to UTF-8 converts the document format to UTF-8 without altering visible characters.
+        // If the document currently has mojibake (e.g. CP949 decoded as Latin1/Windows-1252),
+        // we automatically repair the text so it displays clean Korean!
+        if (targetCharset == "UTF-8" || targetCharset == "UTF-8-BOM") && (self.encoding == "CP949" || self.encoding == "EUC-KR" || self.encoding == "WINDOWS-1252") {
+            // Check if current content looks like broken Korean mojibake
+            if let latinData = content.data(using: .windowsCP1252) ?? content.data(using: .isoLatin1) {
+                latinData.withUnsafeBytes { rawPtr in
+                    guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
+                    var decodedLen: Int32 = 0
+                    if let decodedPtr = npp_decode_to_utf8(ptr, latinData.count, "CP949", &decodedLen) {
+                        if let repaired = String(bytes: Data(bytes: decodedPtr, count: Int(decodedLen)), encoding: .utf8), !repaired.isEmpty {
+                            self.content = repaired
+                        }
+                        npp_free_string(decodedPtr)
+                    }
+                }
+            }
+        }
+
         self.encoding = targetCharset
         self.hasBOM = addBOM
         self.isDirty = true
@@ -105,18 +128,43 @@ public final class NppDocument: ObservableObject, Identifiable {
 
     // Notepad++: "Encode in ANSI / CP949" (re-interpret raw bytes without changing byte payload)
     public func reencodeAs(targetCharset: String) {
-        guard let data = rawFileBytes else {
-            self.encoding = targetCharset
-            return
+        var data: Data? = nil
+        if let url = filePath, let diskData = try? Data(contentsOf: url) {
+            data = diskData
+            self.rawFileBytes = diskData
+        } else if let cached = rawFileBytes {
+            data = cached
         }
-        data.withUnsafeBytes { rawPtr in
-            guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
-            var decodedLen: Int32 = 0
-            if let decodedPtr = npp_decode_to_utf8(ptr, data.count, targetCharset, &decodedLen) {
-                self.content = String(cString: decodedPtr)
-                npp_free_string(decodedPtr)
+
+        if let raw = data {
+            raw.withUnsafeBytes { rawPtr in
+                guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
+                var decodedLen: Int32 = 0
+                if let decodedPtr = npp_decode_to_utf8(ptr, raw.count, targetCharset, &decodedLen) {
+                    if let str = String(bytes: Data(bytes: decodedPtr, count: Int(decodedLen)), encoding: .utf8) {
+                        self.content = str
+                    } else {
+                        self.content = String(cString: decodedPtr)
+                    }
+                    npp_free_string(decodedPtr)
+                }
+            }
+        } else {
+            // In-memory mojibake recovery: recover bytes and re-decode
+            if let rawBytes = content.data(using: .windowsCP1252) ?? content.data(using: .isoLatin1) {
+                rawBytes.withUnsafeBytes { rawPtr in
+                    guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
+                    var decodedLen: Int32 = 0
+                    if let decodedPtr = npp_decode_to_utf8(ptr, rawBytes.count, targetCharset, &decodedLen) {
+                        if let str = String(bytes: Data(bytes: decodedPtr, count: Int(decodedLen)), encoding: .utf8) {
+                            self.content = str
+                        }
+                        npp_free_string(decodedPtr)
+                    }
+                }
             }
         }
+
         self.encoding = targetCharset
         self.isDirty = true
     }
@@ -127,7 +175,11 @@ public final class NppDocument: ObservableObject, Identifiable {
         let utf8Bytes = Array(content.utf8)
         var outLen: Int = 0
         if let convertedPtr = npp_convert_eol(content, utf8Bytes.count, Int32(targetEol.rawValue), &outLen) {
-            self.content = String(cString: convertedPtr)
+            if let str = String(bytes: Data(bytes: convertedPtr, count: outLen), encoding: .utf8) {
+                self.content = str
+            } else {
+                self.content = String(cString: convertedPtr)
+            }
             npp_free_string(convertedPtr)
         }
         self.eolFormat = targetEol

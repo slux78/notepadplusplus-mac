@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 public struct NppTabBarView: View {
     @ObservedObject var workspace: NppWorkspace
@@ -14,6 +15,7 @@ public struct NppTabBarView: View {
                     ForEach(workspace.documents) { doc in
                         NppTabItemView(
                             doc: doc,
+                            workspace: workspace,
                             isActive: workspace.activeDocumentId == doc.id,
                             onSelect: {
                                 workspace.activeDocumentId = doc.id
@@ -52,6 +54,7 @@ public struct NppTabBarView: View {
 
 public struct NppTabItemView: View {
     @ObservedObject var doc: NppDocument
+    @ObservedObject var workspace: NppWorkspace
     let isActive: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
@@ -96,16 +99,75 @@ public struct NppTabItemView: View {
         .onTapGesture {
             onSelect()
         }
+        // MARK: - Notepad++ Tab Right Click Context Menu (tabContextMenu.xml)
         .contextMenu {
             Button("Close") { onClose() }
-            Divider()
-            if let path = doc.filePath {
-                Button("Copy Full File Path") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(path.path, forType: .string)
+
+            Menu("Close Multiple Tabs") {
+                Button("Close All but Active Document") {
+                    workspace.closeAllBut(id: doc.id)
                 }
-                Button("Reveal in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([path])
+                Button("Close All to the Left") {
+                    workspace.closeAllToLeft(of: doc.id)
+                }
+                Button("Close All to the Right") {
+                    workspace.closeAllToRight(of: doc.id)
+                }
+                Button("Close All Unchanged") {
+                    workspace.closeAllUnchanged()
+                }
+            }
+
+            Divider()
+
+            Button("Save") {
+                if doc.filePath != nil {
+                    _ = doc.save()
+                } else {
+                    workspace.promptSaveAs(for: doc)
+                }
+            }
+            Button("Save As...") {
+                workspace.promptSaveAs(for: doc)
+            }
+            if doc.filePath != nil {
+                Button("Reload from Disk") {
+                    workspace.reloadFromDisk(for: doc)
+                }
+            }
+
+            Divider()
+
+            if let path = doc.filePath {
+                Menu("Open into") {
+                    Button("Open Containing Folder in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([path])
+                    }
+                    Button("Open in Terminal") {
+                        let dir = path.deletingLastPathComponent().path
+                        let script = "tell application \"Terminal\" to do script \"cd '\(dir)'\""
+                        if let appleScript = NSAppleScript(source: script) {
+                            var error: NSDictionary?
+                            appleScript.executeAndReturnError(&error)
+                        }
+                    }
+                }
+
+                Divider()
+
+                Menu("Copy to Clipboard") {
+                    Button("Copy Current Full File Path") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(path.path, forType: .string)
+                    }
+                    Button("Copy Current Filename") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(path.lastPathComponent, forType: .string)
+                    }
+                    Button("Copy Current Dir. Path") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(path.deletingLastPathComponent().path, forType: .string)
+                    }
                 }
             }
         }

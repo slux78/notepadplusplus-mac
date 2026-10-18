@@ -29,6 +29,7 @@ public struct NppEditorView: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.editorCoordinator = context.coordinator
 
         let font = NSFont.monospacedSystemFont(ofSize: workspace.fontSize, weight: .regular)
         textView.font = font
@@ -58,9 +59,10 @@ public struct NppEditorView: NSViewRepresentable {
     }
 
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
         guard let textView = context.coordinator.textView else { return }
 
-        // Update content if changed externally (e.g., encoding conversion or open)
+        // Update content if changed externally (e.g., encoding conversion, reload or edit operations)
         if textView.string != document.content {
             let selectedRange = textView.selectedRange()
             textView.string = document.content
@@ -68,6 +70,7 @@ public struct NppEditorView: NSViewRepresentable {
                 textView.setSelectedRange(selectedRange)
             }
             context.coordinator.applyHighlighting()
+            context.coordinator.gutter?.needsDisplay = true
         }
 
         // Update font size
@@ -158,8 +161,10 @@ public struct NppEditorView: NSViewRepresentable {
 }
 
 public final class NppTextView: NSTextView {
+    weak var editorCoordinator: NppEditorView.Coordinator?
+
     public override func keyDown(with event: NSEvent) {
-        // Handle Tab key: insert 4 spaces (or Tab)
+        // Tab key: insert 4 spaces
         if event.keyCode == 48 && !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.control) {
             self.insertText("    ", replacementRange: self.selectedRange())
             return
@@ -167,27 +172,278 @@ public final class NppTextView: NSTextView {
 
         // Duplicate Line: Cmd + D
         if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "d" {
-            duplicateCurrentLine()
+            NppEditOperations.duplicateLine(in: self)
+            return
+        }
+
+        // Move Line Up: Option + Up
+        if event.modifierFlags.contains(.option) && event.keyCode == 126 {
+            NppEditOperations.moveLineUp(in: self)
+            return
+        }
+
+        // Move Line Down: Option + Down
+        if event.modifierFlags.contains(.option) && event.keyCode == 125 {
+            NppEditOperations.moveLineDown(in: self)
+            return
+        }
+
+        // Join Lines: Cmd + J
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "j" {
+            NppEditOperations.joinLines(in: self)
+            return
+        }
+
+        // Toggle Comment: Cmd + /
+        if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "/" {
+            if let lang = editorCoordinator?.parent.document.language {
+                NppEditOperations.toggleComment(in: self, language: lang)
+            }
             return
         }
 
         super.keyDown(with: event)
     }
 
-    private func duplicateCurrentLine() {
-        let str = self.string as NSString
+    // MARK: - Notepad++ Right Click Context Menu (Scintilla Edit Zone)
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu(title: "Context Menu")
+
+        // 1. Basic Edit
+        menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        menu.addItem(NSMenuItem.separator())
+
+        menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        menu.addItem(withTitle: "Delete", action: #selector(NSText.delete(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        menu.addItem(NSMenuItem.separator())
+
+        // 2. Comment / Uncomment
+        let commentItem = NSMenuItem(title: "Toggle Single Line Comment", action: #selector(contextToggleComment), keyEquivalent: "/")
+        commentItem.target = self
+        menu.addItem(commentItem)
+        menu.addItem(NSMenuItem.separator())
+
+        // 3. Convert Case submenu
+        let caseMenuItem = NSMenuItem(title: "Convert Case to", action: nil, keyEquivalent: "")
+        let caseMenu = NSMenu(title: "Convert Case to")
+        let itemUpper = NSMenuItem(title: "UPPERCASE", action: #selector(contextUppercase), keyEquivalent: "U")
+        itemUpper.target = self
+        caseMenu.addItem(itemUpper)
+        let itemLower = NSMenuItem(title: "lowercase", action: #selector(contextLowercase), keyEquivalent: "u")
+        itemLower.target = self
+        caseMenu.addItem(itemLower)
+        let itemProper = NSMenuItem(title: "Proper Case", action: #selector(contextProperCase), keyEquivalent: "")
+        itemProper.target = self
+        caseMenu.addItem(itemProper)
+        let itemSentence = NSMenuItem(title: "Sentence case", action: #selector(contextSentenceCase), keyEquivalent: "")
+        itemSentence.target = self
+        caseMenu.addItem(itemSentence)
+        let itemInvert = NSMenuItem(title: "iNVERT cASE", action: #selector(contextInvertCase), keyEquivalent: "")
+        itemInvert.target = self
+        caseMenu.addItem(itemInvert)
+        caseMenuItem.submenu = caseMenu
+        menu.addItem(caseMenuItem)
+
+        // 4. Line Operations submenu
+        let lineOpsItem = NSMenuItem(title: "Line Operations", action: nil, keyEquivalent: "")
+        let lineOpsMenu = NSMenu(title: "Line Operations")
+        let dupItem = NSMenuItem(title: "Duplicate Current Line", action: #selector(contextDuplicateLine), keyEquivalent: "d")
+        dupItem.target = self
+        lineOpsMenu.addItem(dupItem)
+        let joinItem = NSMenuItem(title: "Join Lines", action: #selector(contextJoinLines), keyEquivalent: "j")
+        joinItem.target = self
+        lineOpsMenu.addItem(joinItem)
+        let splitItem = NSMenuItem(title: "Split Lines", action: #selector(contextSplitLines), keyEquivalent: "")
+        splitItem.target = self
+        lineOpsMenu.addItem(splitItem)
+        lineOpsMenu.addItem(NSMenuItem.separator())
+        let rmEmpty = NSMenuItem(title: "Remove Empty Lines", action: #selector(contextRemoveEmptyLines), keyEquivalent: "")
+        rmEmpty.target = self
+        lineOpsMenu.addItem(rmEmpty)
+        let rmDups = NSMenuItem(title: "Remove Duplicate Lines", action: #selector(contextRemoveDuplicateLines), keyEquivalent: "")
+        rmDups.target = self
+        lineOpsMenu.addItem(rmDups)
+        let sortAsc = NSMenuItem(title: "Sort Lines Lexicographically Ascending", action: #selector(contextSortAscending), keyEquivalent: "")
+        sortAsc.target = self
+        lineOpsMenu.addItem(sortAsc)
+        let sortDesc = NSMenuItem(title: "Sort Lines Lexicographically Descending", action: #selector(contextSortDescending), keyEquivalent: "")
+        sortDesc.target = self
+        lineOpsMenu.addItem(sortDesc)
+        let revLines = NSMenuItem(title: "Reverse Line Order", action: #selector(contextReverseLines), keyEquivalent: "")
+        revLines.target = self
+        lineOpsMenu.addItem(revLines)
+        lineOpsItem.submenu = lineOpsMenu
+        menu.addItem(lineOpsItem)
+
+        // 5. Blank Operations submenu
+        let blankOpsItem = NSMenuItem(title: "Blank Operations", action: nil, keyEquivalent: "")
+        let blankOpsMenu = NSMenu(title: "Blank Operations")
+        let trimTrail = NSMenuItem(title: "Trim Trailing Space", action: #selector(contextTrimTrailing), keyEquivalent: "")
+        trimTrail.target = self
+        blankOpsMenu.addItem(trimTrail)
+        let trimLead = NSMenuItem(title: "Trim Leading Space", action: #selector(contextTrimLeading), keyEquivalent: "")
+        trimLead.target = self
+        blankOpsMenu.addItem(trimLead)
+        let trimBoth = NSMenuItem(title: "Trim Leading and Trailing Space", action: #selector(contextTrimBoth), keyEquivalent: "")
+        trimBoth.target = self
+        blankOpsMenu.addItem(trimBoth)
+        let eol2ws = NSMenuItem(title: "EOL to Space", action: #selector(contextEolToSpace), keyEquivalent: "")
+        eol2ws.target = self
+        blankOpsMenu.addItem(eol2ws)
+        let tab2sp = NSMenuItem(title: "TAB to Space", action: #selector(contextTabToSpace), keyEquivalent: "")
+        tab2sp.target = self
+        blankOpsMenu.addItem(tab2sp)
+        let sp2tab = NSMenuItem(title: "Space to TAB", action: #selector(contextSpaceToTab), keyEquivalent: "")
+        sp2tab.target = self
+        blankOpsMenu.addItem(sp2tab)
+        blankOpsItem.submenu = blankOpsMenu
+        menu.addItem(blankOpsItem)
+        menu.addItem(NSMenuItem.separator())
+
+        // 6. Insert Date Time
+        let insertItem = NSMenuItem(title: "Insert", action: nil, keyEquivalent: "")
+        let insertMenu = NSMenu(title: "Insert")
+        let dtShort = NSMenuItem(title: "Date Time (short)", action: #selector(contextInsertDateShort), keyEquivalent: "")
+        dtShort.target = self
+        insertMenu.addItem(dtShort)
+        let dtLong = NSMenuItem(title: "Date Time (long)", action: #selector(contextInsertDateLong), keyEquivalent: "")
+        dtLong.target = self
+        insertMenu.addItem(dtLong)
+        insertItem.submenu = insertMenu
+        menu.addItem(insertItem)
+        menu.addItem(NSMenuItem.separator())
+
+        // 7. On Selection (Search on Google / Open File)
         let sel = self.selectedRange()
-        let lineRange = str.lineRange(for: NSRange(location: sel.location, length: 0))
-        let lineText = str.substring(with: lineRange)
-        
-        let insertPos = NSMaxRange(lineRange)
-        var textToInsert = lineText
-        if !lineText.hasSuffix("\n") && !lineText.hasSuffix("\r") {
-            textToInsert = "\n" + lineText
+        if sel.length > 0 {
+            let selectedText = (self.string as NSString).substring(with: sel)
+            let searchGoogle = NSMenuItem(title: "Search on Google: \"\(selectedText.prefix(20))\(selectedText.count > 20 ? "..." : "")\"", action: #selector(contextSearchGoogle), keyEquivalent: "")
+            searchGoogle.target = self
+            menu.addItem(searchGoogle)
+
+            if selectedText.contains("/") || selectedText.contains(".") || selectedText.hasPrefix("http") {
+                let openFileOrUrl = NSMenuItem(title: "Open Selected File or URL", action: #selector(contextOpenSelectedFileOrUrl), keyEquivalent: "")
+                openFileOrUrl.target = self
+                menu.addItem(openFileOrUrl)
+            }
+            menu.addItem(NSMenuItem.separator())
         }
 
-        self.shouldChangeText(in: NSRange(location: insertPos, length: 0), replacementString: textToInsert)
-        self.insertText(textToInsert, replacementRange: NSRange(location: insertPos, length: 0))
-        self.didChangeText()
+        // 8. File Path operations
+        if let doc = editorCoordinator?.parent.document, doc.filePath != nil {
+            let copyPathItem = NSMenuItem(title: "Copy Current Full File Path", action: #selector(contextCopyFullPath), keyEquivalent: "")
+            copyPathItem.target = self
+            menu.addItem(copyPathItem)
+
+            let revealItem = NSMenuItem(title: "Open Containing Folder in Finder", action: #selector(contextRevealInFinder), keyEquivalent: "")
+            revealItem.target = self
+            menu.addItem(revealItem)
+        }
+
+        return menu
+    }
+
+    // Context Menu Handlers
+    @objc func contextToggleComment() {
+        if let lang = editorCoordinator?.parent.document.language {
+            NppEditOperations.toggleComment(in: self, language: lang)
+        }
+    }
+    @objc func contextUppercase() { NppEditOperations.convertCase(in: self, to: .uppercase) }
+    @objc func contextLowercase() { NppEditOperations.convertCase(in: self, to: .lowercase) }
+    @objc func contextProperCase() { NppEditOperations.convertCase(in: self, to: .properCase) }
+    @objc func contextSentenceCase() { NppEditOperations.convertCase(in: self, to: .sentenceCase) }
+    @objc func contextInvertCase() { NppEditOperations.convertCase(in: self, to: .invertCase) }
+
+    @objc func contextDuplicateLine() { NppEditOperations.duplicateLine(in: self) }
+    @objc func contextJoinLines() { NppEditOperations.joinLines(in: self) }
+    @objc func contextSplitLines() { NppEditOperations.splitLines(in: self) }
+    @objc func contextRemoveEmptyLines() {
+        if let doc = editorCoordinator?.parent.document {
+            NppEditOperations.removeEmptyLines(in: doc, removeBlankChars: true)
+        }
+    }
+    @objc func contextRemoveDuplicateLines() {
+        if let doc = editorCoordinator?.parent.document {
+            NppEditOperations.removeDuplicateLines(in: doc)
+        }
+    }
+    @objc func contextSortAscending() {
+        if let doc = editorCoordinator?.parent.document {
+            NppEditOperations.sortLines(in: doc, ascending: true)
+        }
+    }
+    @objc func contextSortDescending() {
+        if let doc = editorCoordinator?.parent.document {
+            NppEditOperations.sortLines(in: doc, ascending: false)
+        }
+    }
+    @objc func contextReverseLines() {
+        if let doc = editorCoordinator?.parent.document {
+            NppEditOperations.reverseLineOrder(in: doc)
+        }
+    }
+
+    @objc func contextTrimTrailing() {
+        if let doc = editorCoordinator?.parent.document { NppEditOperations.trimSpaces(in: doc, mode: .trailing) }
+    }
+    @objc func contextTrimLeading() {
+        if let doc = editorCoordinator?.parent.document { NppEditOperations.trimSpaces(in: doc, mode: .leading) }
+    }
+    @objc func contextTrimBoth() {
+        if let doc = editorCoordinator?.parent.document { NppEditOperations.trimSpaces(in: doc, mode: .both) }
+    }
+    @objc func contextEolToSpace() {
+        if let doc = editorCoordinator?.parent.document { NppEditOperations.eolToSpace(in: doc) }
+    }
+    @objc func contextTabToSpace() {
+        if let doc = editorCoordinator?.parent.document { NppEditOperations.tabToSpace(in: doc) }
+    }
+    @objc func contextSpaceToTab() {
+        if let doc = editorCoordinator?.parent.document { NppEditOperations.spaceToTab(in: doc) }
+    }
+
+    @objc func contextInsertDateShort() { NppEditOperations.insertDateTime(in: self, isLong: false) }
+    @objc func contextInsertDateLong() { NppEditOperations.insertDateTime(in: self, isLong: true) }
+
+    @objc func contextSearchGoogle() {
+        let sel = self.selectedRange()
+        guard sel.length > 0 else { return }
+        let text = (self.string as NSString).substring(with: sel)
+        if let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+           let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc func contextOpenSelectedFileOrUrl() {
+        let sel = self.selectedRange()
+        guard sel.length > 0 else { return }
+        let text = (self.string as NSString).substring(with: sel).trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("http://") || text.hasPrefix("https://"), let url = URL(string: text) {
+            NSWorkspace.shared.open(url)
+        } else {
+            let fileUrl = URL(fileURLWithPath: text)
+            if FileManager.default.fileExists(atPath: fileUrl.path) {
+                editorCoordinator?.parent.workspace.openFile(url: fileUrl)
+            }
+        }
+    }
+
+    @objc func contextCopyFullPath() {
+        if let doc = editorCoordinator?.parent.document, let path = doc.filePath {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(path.path, forType: .string)
+        }
+    }
+
+    @objc func contextRevealInFinder() {
+        if let doc = editorCoordinator?.parent.document, let path = doc.filePath {
+            NSWorkspace.shared.activateFileViewerSelecting([path])
+        }
     }
 }

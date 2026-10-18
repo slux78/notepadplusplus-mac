@@ -68,6 +68,52 @@ public final class NppWorkspace: ObservableObject {
         newDocument()
     }
 
+    // Notepad++ Tab Context Menu: Close Multiple Documents
+    public func closeAllBut(id: UUID) {
+        documents.removeAll(where: { $0.id != id })
+        activeDocumentId = id
+    }
+
+    public func closeAllToLeft(of id: UUID) {
+        guard let index = documents.firstIndex(where: { $0.id == id }) else { return }
+        documents.removeSubrange(0..<index)
+        activeDocumentId = id
+    }
+
+    public func closeAllToRight(of id: UUID) {
+        guard let index = documents.firstIndex(where: { $0.id == id }) else { return }
+        if index + 1 < documents.count {
+            documents.removeSubrange((index + 1)..<documents.count)
+        }
+        activeDocumentId = id
+    }
+
+    public func closeAllUnchanged() {
+        let dirtyDocs = documents.filter { $0.isDirty }
+        if dirtyDocs.isEmpty {
+            newDocument()
+            documents = [documents.last!]
+        } else {
+            documents = dirtyDocs
+            activeDocumentId = documents.first?.id
+        }
+    }
+
+    public func reloadFromDisk(for doc: NppDocument) {
+        guard let url = doc.filePath else { return }
+        do {
+            let reloaded = try NppDocument.fromFile(url: url)
+            doc.content = reloaded.content
+            doc.encoding = reloaded.encoding
+            doc.hasBOM = reloaded.hasBOM
+            doc.eolFormat = reloaded.eolFormat
+            doc.rawFileBytes = reloaded.rawFileBytes
+            doc.isDirty = false
+        } catch {
+            print("Failed to reload file: \(error)")
+        }
+    }
+
     public func saveActive() {
         guard let doc = activeDocument else { return }
         if doc.filePath != nil {
