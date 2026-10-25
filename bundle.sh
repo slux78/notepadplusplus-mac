@@ -64,6 +64,8 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Notepad++ requires permission to automate Terminal and Finder.</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

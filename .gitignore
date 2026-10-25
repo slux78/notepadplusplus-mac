@@ -2,3 +2,7 @@
 build/
 upstream_npp/
 .DS_Store
+screenshot_*.png
+user_*.png
+notepad4ever.png
+.agents/

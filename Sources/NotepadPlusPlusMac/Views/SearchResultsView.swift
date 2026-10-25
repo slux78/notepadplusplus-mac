@@ -23,14 +23,14 @@ public struct NppSearchResultsView: View {
 
                 Spacer()
 
-                Button("Collapse All") {
+                Button(workspace.tr("Collapse All")) {
                     collapsedGroupIds = Set(workspace.searchFileGroups.map { $0.id })
                 }
                 .buttonStyle(PlainButtonStyle())
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
 
-                Button("Expand All") {
+                Button(workspace.tr("Expand All")) {
                     collapsedGroupIds.removeAll()
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -39,7 +39,7 @@ public struct NppSearchResultsView: View {
 
                 Divider().frame(height: 12)
 
-                Button("Clear All") {
+                Button(workspace.tr("Clear All")) {
                     workspace.clearSearchResults()
                 }
                 .buttonStyle(PlainButtonStyle())

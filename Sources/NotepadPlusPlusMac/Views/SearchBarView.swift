@@ -16,28 +16,52 @@ public struct NppSearchBarView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                // Find Row
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                    .font(.system(size: 12))
+        VStack(spacing: 8) {
+            // Mode Header / Switcher Bar
+            HStack(spacing: 12) {
+                // Find & Replace Mode Tabs
+                HStack(spacing: 0) {
+                    Button(action: {
+                        workspace.searchBarMode = .find
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 10))
+                            Text(workspace.tr("Find"))
+                                .font(.system(size: 11, weight: workspace.searchBarMode == .find ? .bold : .regular))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(workspace.searchBarMode == .find ? Color.accentColor.opacity(0.2) : Color.clear)
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
 
-                TextField("Find what...", text: $findText, onCommit: {
-                    findNext()
-                })
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .frame(maxWidth: .infinity)
-
-                Button("Find Next") { findNext() }
-                    .keyboardShortcut(.defaultAction)
-                Button("Find Prev") { findPrev() }
-                Button("Count") { countOccurrences() }
-                Button("Find All in Current Doc") {
-                    workspace.findAllInCurrentDoc(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+                    Button(action: {
+                        workspace.searchBarMode = .replace
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 10))
+                            Text(workspace.tr("Replace"))
+                                .font(.system(size: 11, weight: workspace.searchBarMode == .replace ? .bold : .regular))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(workspace.searchBarMode == .replace ? Color.accentColor.opacity(0.2) : Color.clear)
+                        .cornerRadius(4)
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
-                Button("Find All in Opened Docs") {
-                    workspace.findAllInAllOpenedDocs(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+                .cornerRadius(5)
+
+                Spacer()
+
+                if !statusMessage.isEmpty {
+                    Text(statusMessage)
+                        .font(.system(size: 11))
+                        .foregroundColor(.accentColor)
                 }
 
                 Button(action: {
@@ -50,34 +74,96 @@ public struct NppSearchBarView: View {
                 .buttonStyle(PlainButtonStyle())
             }
 
-            HStack(spacing: 8) {
-                // Replace Row
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .foregroundColor(.secondary)
-                    .font(.system(size: 12))
+            if workspace.searchBarMode == .find {
+                // MARK: - Dedicated Find / Incremental Search Mode
+                HStack(spacing: 8) {
+                    Text(workspace.tr("Find what:"))
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 75, alignment: .trailing)
 
-                TextField("Replace with...", text: $replaceText)
+                    TextField(workspace.tr("Find what:"), text: $findText, onCommit: {
+                        findNext()
+                    })
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .frame(maxWidth: .infinity)
+                    .onChange(of: findText) { newValue in
+                        if !newValue.isEmpty {
+                            findIncremental()
+                        } else {
+                            statusMessage = ""
+                        }
+                    }
+
+                    Button(workspace.tr("Find Next")) { findNext() }
+                        .keyboardShortcut(.defaultAction)
+                    Button(workspace.tr("Find Previous")) { findPrev() }
+                    Button(workspace.tr("Count")) { countOccurrences() }
+                    Button(workspace.tr("Find All in Current Document")) {
+                        workspace.findAllInCurrentDoc(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+                    }
+                    Button(workspace.tr("Find All in All Opened Documents")) {
+                        workspace.findAllInAllOpenedDocs(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Spacer().frame(width: 75)
+                    Toggle(workspace.tr("Match case"), isOn: $matchCase)
+                        .toggleStyle(CheckboxToggleStyle())
+                        .font(.system(size: 11))
+                    Toggle(workspace.tr("Match whole word only"), isOn: $matchWholeWord)
+                        .toggleStyle(CheckboxToggleStyle())
+                        .font(.system(size: 11))
+                    Toggle(workspace.tr("Regular expression"), isOn: $useRegex)
+                        .toggleStyle(CheckboxToggleStyle())
+                        .font(.system(size: 11))
+                    Spacer()
+                }
+            } else {
+                // MARK: - Dedicated Replace Mode
+                HStack(spacing: 8) {
+                    Text(workspace.tr("Find what:"))
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 75, alignment: .trailing)
+
+                    TextField(workspace.tr("Find what:"), text: $findText, onCommit: {
+                        findNext()
+                    })
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .frame(maxWidth: .infinity)
 
-                Button("Replace") { replaceOne() }
-                Button("Replace All") { replaceAll() }
+                    Button(workspace.tr("Find Next")) { findNext() }
+                    Button(workspace.tr("Find Previous")) { findPrev() }
+                    Button(workspace.tr("Find All in Current Document")) {
+                        workspace.findAllInCurrentDoc(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+                    }
+                }
 
-                // Match Options
-                Toggle("Match Case", isOn: $matchCase)
-                    .toggleStyle(CheckboxToggleStyle())
-                    .font(.system(size: 11))
-                Toggle("Whole Word", isOn: $matchWholeWord)
-                    .toggleStyle(CheckboxToggleStyle())
-                    .font(.system(size: 11))
-                Toggle("Regex", isOn: $useRegex)
-                    .toggleStyle(CheckboxToggleStyle())
-                    .font(.system(size: 11))
+                HStack(spacing: 8) {
+                    Text(workspace.tr("Replace with:"))
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 75, alignment: .trailing)
 
-                if !statusMessage.isEmpty {
-                    Text(statusMessage)
+                    TextField(workspace.tr("Replace with:"), text: $replaceText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(maxWidth: .infinity)
+
+                    Button(workspace.tr("Replace")) { replaceOne() }
+                    Button(workspace.tr("Replace All")) { replaceAll() }
+                }
+
+                HStack(spacing: 12) {
+                    Spacer().frame(width: 75)
+                    Toggle(workspace.tr("Match case"), isOn: $matchCase)
+                        .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
-                        .foregroundColor(.accentColor)
+                    Toggle(workspace.tr("Match whole word only"), isOn: $matchWholeWord)
+                        .toggleStyle(CheckboxToggleStyle())
+                        .font(.system(size: 11))
+                    Toggle(workspace.tr("Regular expression"), isOn: $useRegex)
+                        .toggleStyle(CheckboxToggleStyle())
+                        .font(.system(size: 11))
+                    Spacer()
                 }
             }
         }
@@ -92,10 +178,38 @@ public struct NppSearchBarView: View {
         )
     }
 
+    private func findIncremental() {
+        guard !findText.isEmpty, let doc = workspace.activeDocument else { return }
+        workspace.lastSearchQuery = findText
+        let content = doc.content as NSString
+        let startPos = min(max(0, doc.cursorPos), content.length)
+        let searchRange = NSRange(location: startPos, length: content.length - startPos)
+
+        var options: NSString.CompareOptions = []
+        if !matchCase { options.insert(.caseInsensitive) }
+        if useRegex { options.insert(.regularExpression) }
+
+        var foundRange = content.range(of: findText, options: options, range: searchRange)
+        if foundRange.location == NSNotFound {
+            let wrapRange = NSRange(location: 0, length: startPos)
+            foundRange = content.range(of: findText, options: options, range: wrapRange)
+        }
+
+        if foundRange.location != NSNotFound {
+            doc.cursorPos = foundRange.location
+            doc.selectionLength = foundRange.length
+            workspace.selectRange(foundRange)
+            statusMessage = "Found at line \(doc.cursorLine)"
+        } else {
+            statusMessage = "Phrase not found"
+        }
+    }
+
     private func findNext() {
         guard !findText.isEmpty, let doc = workspace.activeDocument else { return }
+        workspace.lastSearchQuery = findText
         let content = doc.content as NSString
-        let startPos = min(doc.cursorPos + 1, content.length)
+        let startPos = min(doc.cursorPos + max(1, doc.selectionLength), content.length)
         let searchRange = NSRange(location: startPos, length: content.length - startPos)
 
         var options: NSString.CompareOptions = []
@@ -112,6 +226,7 @@ public struct NppSearchBarView: View {
         if foundRange.location != NSNotFound {
             doc.cursorPos = foundRange.location
             doc.selectionLength = foundRange.length
+            workspace.selectRange(foundRange)
             statusMessage = "Found at line \(doc.cursorLine)"
         } else {
             statusMessage = "Cannot find '\(findText)'"
@@ -120,6 +235,7 @@ public struct NppSearchBarView: View {
 
     private func findPrev() {
         guard !findText.isEmpty, let doc = workspace.activeDocument else { return }
+        workspace.lastSearchQuery = findText
         let content = doc.content as NSString
         let endPos = max(doc.cursorPos, 0)
         let searchRange = NSRange(location: 0, length: endPos)
@@ -132,6 +248,7 @@ public struct NppSearchBarView: View {
         if foundRange.location != NSNotFound {
             doc.cursorPos = foundRange.location
             doc.selectionLength = foundRange.length
+            workspace.selectRange(foundRange)
             statusMessage = "Found at line \(doc.cursorLine)"
         } else {
             statusMessage = "Cannot find '\(findText)'"
@@ -159,9 +276,11 @@ public struct NppSearchBarView: View {
     }
 
     private func replaceOne() {
-        guard !findText.isEmpty, let doc = workspace.activeDocument else { return }
+        guard !findText.isEmpty,
+              let doc = workspace.activeDocument,
+              !(doc.isReadOnly || workspace.isAllDocumentsReadOnly) else { return }
         let content = doc.content as NSString
-        let searchRange = NSRange(location: doc.cursorPos, length: content.length - doc.cursorPos)
+        let searchRange = NSRange(location: min(doc.cursorPos, content.length), length: max(0, content.length - min(doc.cursorPos, content.length)))
 
         var options: NSString.CompareOptions = []
         if !matchCase { options.insert(.caseInsensitive) }
@@ -172,12 +291,21 @@ public struct NppSearchBarView: View {
             let newStr = content.replacingCharacters(in: found, with: replaceText)
             doc.content = newStr
             doc.isDirty = true
+            if let tv = workspace.activeTextView {
+                tv.string = newStr
+            }
+            let replacedRange = NSRange(location: found.location, length: (replaceText as NSString).length)
+            workspace.selectRange(replacedRange)
+            statusMessage = "1 occurrence replaced"
+        } else {
             findNext()
         }
     }
 
     private func replaceAll() {
-        guard !findText.isEmpty, let doc = workspace.activeDocument else { return }
+        guard !findText.isEmpty,
+              let doc = workspace.activeDocument,
+              !(doc.isReadOnly || workspace.isAllDocumentsReadOnly) else { return }
         var options: NSString.CompareOptions = []
         if !matchCase { options.insert(.caseInsensitive) }
         if useRegex { options.insert(.regularExpression) }
@@ -185,6 +313,9 @@ public struct NppSearchBarView: View {
         let (newStr, count) = replaceAllOccurrences(in: doc.content, target: findText, with: replaceText, options: options)
         doc.content = newStr
         doc.isDirty = true
+        if let tv = workspace.activeTextView {
+            tv.string = newStr
+        }
         statusMessage = "Replaced \(count) occurrence(s)"
     }
 

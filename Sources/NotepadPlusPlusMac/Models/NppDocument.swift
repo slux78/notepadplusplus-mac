@@ -11,15 +11,40 @@ public final class NppDocument: ObservableObject, Identifiable {
     @Published public var hasBOM: Bool
     @Published public var eolFormat: NppEol
     @Published public var isDirty: Bool = false
+    @Published public var isPinned: Bool = false
+    @Published public var isReadOnly: Bool = false
+    @Published public var tabColorId: Int = 0 // 0: None, 1..5: Color 1..5 (IDM_VIEW_TAB_COLOUR_1..5)
+    @Published public var isMonitoring: Bool = false // Monitoring (tail -f) (IDM_VIEW_MONITORING)
+    @Published public var styledTokenRanges: [Int: [NSRange]] = [:] // 1..5 -> styled NSRanges
     @Published public var language: String = "Plain Text"
+    @Published public var bookmarkedLines: Set<Int> = [] // 1-indexed line numbers
 
     @Published public var cursorLine: Int = 1
     @Published public var cursorCol: Int = 1
     @Published public var cursorPos: Int = 0
     @Published public var selectionLength: Int = 0
 
+    public func toggleBookmark(line: Int) {
+        if bookmarkedLines.contains(line) {
+            bookmarkedLines.remove(line)
+        } else {
+            bookmarkedLines.insert(line)
+        }
+    }
+
+    public func isLineBookmarked(_ line: Int) -> Bool {
+        return bookmarkedLines.contains(line)
+    }
+
+    public func clearBookmarks() {
+        bookmarkedLines.removeAll()
+    }
+
     // Raw bytes kept for lossless re-interpretation
     public var rawFileBytes: Data?
+
+    // Last known modification date on disk for File Status Auto-Detection
+    public var lastKnownModificationDate: Date?
 
     public init(title: String = "new 1", content: String = "", encoding: String = "UTF-8", hasBOM: Bool = false, eol: NppEol = .crlf) {
         self.title = title
@@ -60,6 +85,10 @@ public final class NppDocument: ObservableObject, Identifiable {
 
         doc.language = detectLanguage(for: url)
         doc.isDirty = false
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let modDate = attrs[.modificationDate] as? Date {
+            doc.lastKnownModificationDate = modDate
+        }
         return doc
     }
 
@@ -93,6 +122,10 @@ public final class NppDocument: ObservableObject, Identifiable {
             self.rawFileBytes = data
             self.isDirty = false
             self.language = NppDocument.detectLanguage(for: url)
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let modDate = attrs[.modificationDate] as? Date {
+                self.lastKnownModificationDate = modDate
+            }
             return true
         } catch {
             print("Failed to save file: \(error)")

@@ -18,6 +18,7 @@ public struct NppTabBarView: View {
                             workspace: workspace,
                             isActive: workspace.activeDocumentId == doc.id,
                             onSelect: {
+                                guard workspace.documents.contains(where: { $0.id == doc.id }) else { return }
                                 workspace.activeDocumentId = doc.id
                             },
                             onClose: {
@@ -29,32 +30,38 @@ public struct NppTabBarView: View {
                     // Empty space next to tabs: double-click to create new tab!
                     Color.clear
                         .frame(minWidth: 80, maxWidth: .infinity)
-                        .frame(height: 28)
+                        .frame(height: workspace.tabReduce ? 22 : 28)
                         .contentShape(Rectangle())
                         .onTapGesture(count: 2) {
-                            workspace.newDocument()
+                            if workspace.doubleClickSpaceToNewTab {
+                                workspace.newDocument()
+                            }
                         }
                 }
                 .padding(.horizontal, 4)
-                .padding(.vertical, 3)
+                .padding(.vertical, workspace.tabReduce ? 1 : 3)
             }
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
-                workspace.newDocument()
+                if workspace.doubleClickSpaceToNewTab {
+                    workspace.newDocument()
+                }
             }
 
-            // New Tab "+" Button
-            Button(action: {
-                workspace.newDocument()
-            }) {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 24, height: 24)
+            // New Tab "+" Button (respects hideRightShortcuts)
+            if !workspace.hideRightShortcuts {
+                Button(action: {
+                    workspace.newDocument()
+                }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: workspace.tabReduce ? 9 : 11, weight: .bold))
+                        .foregroundColor(.secondary)
+                        .frame(width: workspace.tabReduce ? 20 : 24, height: workspace.tabReduce ? 20 : 24)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.trailing, 6)
+                .help("New Document (Double-click tab bar space or Cmd+N)")
             }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.trailing, 6)
-            .help("New Document (Double-click tab bar space or Cmd+N)")
         }
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(
@@ -79,86 +86,174 @@ public struct NppTabItemView: View {
 
     @State private var isHovering: Bool = false
 
-    public var body: some View {
-        HStack(spacing: 6) {
-            // Notepad++ Floppy Disk / Pencil Icon: Blue for saved, Red for dirty, Pencil when active
-            Image(systemName: doc.isDirty ? "circle.fill" : (isActive ? "pencil.line" : "doc.text"))
-                .font(.system(size: 10))
-                .foregroundColor(doc.isDirty ? .red : (isActive ? .accentColor : .secondary))
-
-            Text(doc.title)
-                .font(.system(size: 12, weight: isActive ? .semibold : .regular))
-                .foregroundColor(isActive ? .primary : .secondary)
-                .lineLimit(1)
-
-            // Close button [x]
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(isHovering || isActive ? .secondary : .clear)
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-            .help("Close (or double click tab)")
+    public static func formattedTitle(title: String, maxLen: Int) -> String {
+        let limit = max(4, maxLen)
+        if title.count > limit {
+            return String(title.prefix(limit)) + "…"
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        return title
+    }
+
+    private var displayedTitle: String {
+        Self.formattedTitle(title: doc.title, maxLen: workspace.tabMaxLabelLen)
+    }
+
+    private var tabIconName: String {
+        if doc.isDirty {
+            return "circle.fill"
+        }
+        if workspace.tabAltIcons {
+            return isActive ? "doc.fill" : "doc.plaintext"
+        }
+        return isActive ? "pencil.line" : "doc.text"
+    }
+
+    private var verticalPadding: CGFloat {
+        workspace.tabReduce ? 2.5 : 5.0
+    }
+
+    private var titleFontSize: CGFloat {
+        workspace.tabReduce ? 10.5 : 12.0
+    }
+
+    public var body: some View {
+        HStack(spacing: 4) {
+            // Clickable tab label (Icon + Title)
+            HStack(spacing: 6) {
+                if doc.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: workspace.tabReduce ? 8 : 9))
+                        .foregroundColor(.orange)
+                }
+
+                Image(systemName: tabIconName)
+                    .font(.system(size: workspace.tabReduce ? 9 : 10))
+                    .foregroundColor(doc.isDirty ? .red : (isActive ? .accentColor : .secondary))
+
+                Text(displayedTitle)
+                    .font(.system(size: titleFontSize, weight: isActive ? .semibold : .regular))
+                    .foregroundColor(isActive ? .primary : .secondary)
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                if workspace.doubleClickTabToClose && !doc.isPinned {
+                    onClose()
+                }
+            }
+            .onTapGesture(count: 1) {
+                onSelect()
+            }
+
+            // Close button [x] (respects showTabCloseButton, hidden if pinned)
+            if workspace.showTabCloseButton && !doc.isPinned {
+                Button(action: {
+                    onClose()
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: workspace.tabReduce ? 8 : 9, weight: .semibold))
+                        .foregroundColor(isHovering || isActive ? .secondary : (workspace.tabShowButtonsOnInactive ? .secondary.opacity(0.5) : .clear))
+                        .frame(width: workspace.tabReduce ? 12 : 14, height: workspace.tabReduce ? 12 : 14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Close (or double click tab)")
+            }
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .padding(.vertical, verticalPadding)
         .background(
             RoundedRectangle(cornerRadius: 5)
-                .fill(isActive ? Color(NSColor.controlBackgroundColor) : (isHovering ? Color(NSColor.controlBackgroundColor).opacity(0.5) : Color.clear))
+                .fill(tabBackground)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 5)
-                .stroke(isActive ? Color(NSColor.separatorColor) : Color.clear, lineWidth: 1)
+                .stroke(isActive ? Color(NSColor.separatorColor) : (workspace.tabChangeInactiveColor ? Color(NSColor.separatorColor).opacity(0.3) : Color.clear), lineWidth: 1)
+        )
+        .overlay(
+            VStack {
+                if doc.tabColorId >= 1 && doc.tabColorId <= 5 {
+                    Rectangle()
+                        .fill(Self.tabAccentColor(for: doc.tabColorId))
+                        .frame(height: 3.0)
+                        .cornerRadius(1)
+                } else if isActive && workspace.tabColorIndicator {
+                    Rectangle()
+                        .fill(Color.orange)
+                        .frame(height: 2.5)
+                        .cornerRadius(1)
+                }
+                Spacer()
+            }
         )
         .onHover { hovering in
             isHovering = hovering
         }
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded {
-                // Notepad++ signature: Double-click tab to close it
-                onClose()
-            }
-        )
-        .simultaneousGesture(
-            TapGesture(count: 1).onEnded {
-                onSelect()
-            }
-        )
         // MARK: - Notepad++ Tab Right Click Context Menu (tabContextMenu.xml)
         .contextMenu {
-            Button("Close") { onClose() }
+            if !doc.isPinned {
+                Button(workspace.tr("Close")) { onClose() }
+            }
 
-            Menu("Close Multiple Tabs") {
-                Button("Close All but Active Document") {
+            Button(workspace.tr(doc.isPinned ? "Unpin Tab" : "Pin Tab")) {
+                workspace.togglePin(id: doc.id)
+            }
+
+            Menu(workspace.tr("Apply Color to Tab")) {
+                ForEach(1...5, id: \.self) { colorIdx in
+                    Button(workspace.tr("Apply Color \(colorIdx)")) {
+                        doc.tabColorId = colorIdx
+                        workspace.objectWillChange.send()
+                    }
+                }
+                Divider()
+                Button(workspace.tr("Remove Color")) {
+                    doc.tabColorId = 0
+                    workspace.objectWillChange.send()
+                }
+            }
+
+            Divider()
+
+            Menu(workspace.tr("Close Multiple Documents")) {
+                Button(workspace.tr("Close All but Active Document")) {
                     workspace.closeAllBut(id: doc.id)
                 }
-                Button("Close All to the Left") {
+                Button(workspace.tr("Close All but Pinned Documents")) {
+                    workspace.closeAllButPinned()
+                }
+                Button(workspace.tr("Close All to the Left")) {
                     workspace.closeAllToLeft(of: doc.id)
                 }
-                Button("Close All to the Right") {
+                Button(workspace.tr("Close All to the Right")) {
                     workspace.closeAllToRight(of: doc.id)
                 }
-                Button("Close All Unchanged") {
+                Button(workspace.tr("Close All Unchanged")) {
                     workspace.closeAllUnchanged()
                 }
             }
 
             Divider()
 
-            Button("Save") {
+            Button(workspace.tr("Save")) {
                 if doc.filePath != nil {
                     _ = doc.save()
                 } else {
                     workspace.promptSaveAs(for: doc)
                 }
             }
-            Button("Save As...") {
+            Button(workspace.tr("Save As...")) {
                 workspace.promptSaveAs(for: doc)
             }
+            Button(workspace.tr("Save a Copy As...")) {
+                workspace.promptSaveCopyAs(for: doc)
+            }
+            Button(workspace.tr("Rename...")) {
+                workspace.promptRenameDocument(for: doc)
+            }
             if doc.filePath != nil {
-                Button("Reload from Disk") {
+                Button(workspace.tr("Reload from Disk")) {
                     workspace.reloadFromDisk(for: doc)
                 }
             }
@@ -166,37 +261,60 @@ public struct NppTabItemView: View {
             Divider()
 
             if let path = doc.filePath {
-                Menu("Open into") {
-                    Button("Open Containing Folder in Finder") {
+                Menu(workspace.tr("Open Containing Folder")) {
+                    Button(workspace.tr("Open Containing Folder in Finder")) {
                         NSWorkspace.shared.activateFileViewerSelecting([path])
                     }
-                    Button("Open in Terminal") {
-                        let dir = path.deletingLastPathComponent().path
-                        let script = "tell application \"Terminal\" to do script \"cd '\(dir)'\""
-                        if let appleScript = NSAppleScript(source: script) {
-                            var error: NSDictionary?
-                            appleScript.executeAndReturnError(&error)
-                        }
+                    Button(workspace.tr("Open in Terminal")) {
+                        let dir = path.deletingLastPathComponent()
+                        NppTools.openTerminal(at: dir)
+                    }
+                    Button(workspace.tr("Folder as Workspace")) {
+                        workspace.openFolderAsWorkspace(url: path.deletingLastPathComponent())
                     }
                 }
 
                 Divider()
 
-                Menu("Copy to Clipboard") {
-                    Button("Copy Current Full File Path") {
+                Menu(workspace.tr("Copy to Clipboard")) {
+                    Button(workspace.tr("Copy Current Full File path")) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(path.path, forType: .string)
                     }
-                    Button("Copy Current Filename") {
+                    Button(workspace.tr("Copy Current Filename")) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(path.lastPathComponent, forType: .string)
                     }
-                    Button("Copy Current Dir. Path") {
+                    Button(workspace.tr("Copy Current Dir. Path")) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(path.deletingLastPathComponent().path, forType: .string)
                     }
                 }
             }
         }
+    }
+
+    public static func tabAccentColor(for colorId: Int) -> Color {
+        switch colorId {
+        case 1: return Color(red: 0.95, green: 0.78, blue: 0.15) // Yellow (Color 1)
+        case 2: return Color(red: 0.25, green: 0.80, blue: 0.45) // Green (Color 2)
+        case 3: return Color(red: 0.25, green: 0.65, blue: 0.95) // Blue (Color 3)
+        case 4: return Color(red: 0.95, green: 0.50, blue: 0.20) // Orange (Color 4)
+        case 5: return Color(red: 0.85, green: 0.40, blue: 0.85) // Pink/Magenta (Color 5)
+        default: return Color.orange
+        }
+    }
+
+    private var tabBackground: Color {
+        if isActive {
+            return Color(NSColor.controlBackgroundColor)
+        }
+        if isHovering {
+            return Color(NSColor.controlBackgroundColor).opacity(0.5)
+        }
+        if workspace.tabChangeInactiveColor {
+            return Color(NSColor.controlBackgroundColor).opacity(0.35)
+        }
+        return Color.clear
     }
 }

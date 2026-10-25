@@ -2,6 +2,10 @@ import SwiftUI
 import AppKit
 
 public struct NppStatusBarView: View {
+    public static let box2Width: CGFloat = 240
+    public static let box3WidthUnselected: CGFloat = 270
+    public static let box3WidthSelected: CGFloat = 340
+
     @ObservedObject var workspace: NppWorkspace
 
     public init(workspace: NppWorkspace) {
@@ -39,29 +43,39 @@ public struct NppActiveStatusBarContent: View {
 
     public var body: some View {
         HStack(spacing: 0) {
-            // Box 1: length : 108   lines : 10 (Notepad++ exact format)
-            let charCount = doc.content.count
-            let lineCount = max(1, doc.content.components(separatedBy: .newlines).count)
-            NppStatusBarBox(width: 175) {
-                Text("length : \(charCount)   lines : \(lineCount)")
+            // Box 1: File Type / Language (Notepad++ exact format)
+            NppStatusBarBox(width: 130) {
+                Text(doc.language.isEmpty ? "Normal text file" : "\(doc.language) file")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
             }
 
-            // Box 2: Ln : 8   Col : 21   Pos : 102 (and Sel if selected)
-            NppStatusBarBox(width: doc.selectionLength > 0 ? 210 : 170) {
+            // Box 2: length : 108   lines : 10 (Notepad++ exact format)
+            let charCount = (doc.content as NSString).length
+            let lineCount = max(1, doc.content.nppLines().count)
+            let box2Text = "length : \(charCount)   lines : \(lineCount)"
+            let box2TextWidth = (box2Text as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)]).width
+            let box2ActualWidth = max(NppStatusBarView.box2Width, box2TextWidth + 24)
+            NppStatusBarBox(width: box2ActualWidth) {
+                Text(box2Text)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+
+            // Box 3: Ln : 8   Col : 21   Pos : 102 (and Sel if selected)
+            let box3Text = (doc.selectionLength > 0)
+                ? "Ln : \(doc.cursorLine)  Col : \(doc.cursorCol)  Pos : \(doc.cursorPos + 1)  Sel : \(doc.selectionLength)"
+                : "Ln : \(doc.cursorLine)   Col : \(doc.cursorCol)   Pos : \(doc.cursorPos + 1)"
+            let box3MinWidth = doc.selectionLength > 0 ? NppStatusBarView.box3WidthSelected : NppStatusBarView.box3WidthUnselected
+            let box3TextWidth = (box3Text as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)]).width
+            let box3ActualWidth = max(box3MinWidth, box3TextWidth + 24)
+            NppStatusBarBox(width: box3ActualWidth) {
                 Button(action: {
                     showGoToLineDialog()
                 }) {
-                    if doc.selectionLength > 0 {
-                        Text("Ln : \(doc.cursorLine)  Col : \(doc.cursorCol)  Pos : \(doc.cursorPos + 1)  Sel : \(doc.selectionLength)")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    } else {
-                        Text("Ln : \(doc.cursorLine)   Col : \(doc.cursorCol)   Pos : \(doc.cursorPos + 1)")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
+                    Text(box3Text)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -71,20 +85,20 @@ public struct NppActiveStatusBarContent: View {
             // Box 3: Windows (CR LF) / Unix (LF) / Macintosh (CR)
             NppStatusBarBox(width: 130) {
                 Menu {
-                    Button("Windows (CR LF)") {
+                    Button(workspace.tr("Windows (CR LF)")) {
                         doc.convertEOL(to: .crlf)
                         workspace.objectWillChange.send()
                     }
-                    Button("Unix (LF)") {
+                    Button(workspace.tr("Unix (LF)")) {
                         doc.convertEOL(to: .lf)
                         workspace.objectWillChange.send()
                     }
-                    Button("Macintosh (CR)") {
+                    Button(workspace.tr("Macintosh (CR)")) {
                         doc.convertEOL(to: .cr)
                         workspace.objectWillChange.send()
                     }
                 } label: {
-                    Text(doc.eolFormat.displayName)
+                    Text(workspace.tr(doc.eolFormat.displayName))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.primary)
                 }
@@ -94,32 +108,32 @@ public struct NppActiveStatusBarContent: View {
             // Box 4: Encoding (UTF-8, Windows-949, ANSI, etc.)
             NppStatusBarBox(width: 130) {
                 Menu {
-                    Section("Convert to...") {
-                        Button("Convert to UTF-8") {
+                    Section(workspace.tr("Encoding")) {
+                        Button(workspace.tr("Convert to UTF-8")) {
                             doc.convertEncoding(to: "UTF-8", addBOM: false)
                             workspace.objectWillChange.send()
                         }
-                        Button("Convert to UTF-8 with BOM") {
+                        Button(workspace.tr("Convert to UTF-8-BOM")) {
                             doc.convertEncoding(to: "UTF-8", addBOM: true)
                             workspace.objectWillChange.send()
                         }
-                        Button("Convert to Korean (Windows 949 / CP949)") {
+                        Button(workspace.tr("Convert to Korean (Windows 949 / CP949)")) {
                             doc.convertEncoding(to: "CP949")
                             workspace.objectWillChange.send()
                         }
-                        Button("Convert to Korean (EUC-KR)") {
+                        Button(workspace.tr("Convert to Korean (EUC-KR)")) {
                             doc.convertEncoding(to: "EUC-KR")
                             workspace.objectWillChange.send()
                         }
-                        Button("Convert to ANSI (Windows-1252)") {
+                        Button(workspace.tr("Convert to ANSI")) {
                             doc.convertEncoding(to: "WINDOWS-1252")
                             workspace.objectWillChange.send()
                         }
-                        Button("Convert to UTF-16 LE") {
+                        Button("UTF-16 LE BOM") {
                             doc.convertEncoding(to: "UTF-16LE")
                             workspace.objectWillChange.send()
                         }
-                        Button("Convert to UTF-16 BE") {
+                        Button("UTF-16 BE BOM") {
                             doc.convertEncoding(to: "UTF-16BE")
                             workspace.objectWillChange.send()
                         }
@@ -127,32 +141,32 @@ public struct NppActiveStatusBarContent: View {
 
                     Divider()
 
-                    Section("Character Sets (Re-interpret)") {
-                        Button("Unicode -> UTF-8") {
+                    Section(workspace.tr("Character sets")) {
+                        Button("UTF-8") {
                             doc.reencodeAs(targetCharset: "UTF-8")
                             workspace.objectWillChange.send()
                         }
-                        Button("Korean -> Windows 949 (CP949)") {
+                        Button("Windows 949 (CP949)") {
                             doc.reencodeAs(targetCharset: "CP949")
                             workspace.objectWillChange.send()
                         }
-                        Button("Korean -> EUC-KR") {
+                        Button("EUC-KR") {
                             doc.reencodeAs(targetCharset: "EUC-KR")
                             workspace.objectWillChange.send()
                         }
-                        Button("Japanese -> Shift-JIS") {
+                        Button("Shift-JIS") {
                             doc.reencodeAs(targetCharset: "CP932")
                             workspace.objectWillChange.send()
                         }
-                        Button("Chinese -> Simplified (GB18030)") {
+                        Button("GB2312 (Simplified)") {
                             doc.reencodeAs(targetCharset: "GB18030")
                             workspace.objectWillChange.send()
                         }
-                        Button("Chinese -> Traditional (Big5)") {
+                        Button("Big5 (Traditional)") {
                             doc.reencodeAs(targetCharset: "BIG5")
                             workspace.objectWillChange.send()
                         }
-                        Button("Western -> ANSI (Windows-1252)") {
+                        Button("ANSI") {
                             doc.reencodeAs(targetCharset: "WINDOWS-1252")
                             workspace.objectWillChange.send()
                         }
@@ -181,11 +195,12 @@ public struct NppActiveStatusBarContent: View {
     }
 
     private func showGoToLineDialog() {
+        let totalLines = max(1, doc.content.nppLines().count)
         let alert = NSAlert()
-        alert.messageText = "Go to Line"
-        alert.informativeText = "Enter line number (1 - \(max(1, doc.content.components(separatedBy: .newlines).count))):"
-        alert.addButton(withTitle: "Go")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = workspace.tr("Go to...")
+        alert.informativeText = "1 - \(totalLines):"
+        alert.addButton(withTitle: workspace.tr("OK"))
+        alert.addButton(withTitle: workspace.tr("Cancel"))
 
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
         input.stringValue = "\(doc.cursorLine)"
@@ -193,16 +208,7 @@ public struct NppActiveStatusBarContent: View {
 
         if alert.runModal() == .alertFirstButtonReturn {
             if let targetLine = Int(input.stringValue), targetLine >= 1 {
-                let lines = doc.content.components(separatedBy: .newlines)
-                let clampedLine = min(targetLine, lines.count)
-                var charIndex = 0
-                for i in 0..<(clampedLine - 1) {
-                    charIndex += lines[i].count + 1
-                }
-                doc.cursorPos = charIndex
-                doc.cursorLine = clampedLine
-                doc.cursorCol = 1
-                doc.selectionLength = 0
+                workspace.jumpToLine(min(targetLine, totalLines))
                 workspace.objectWillChange.send()
             }
         }
@@ -219,13 +225,14 @@ public struct NppStatusBarBox<Content: View>: View {
     }
 
     public var body: some View {
-        HStack {
+        HStack(spacing: 4) {
             content
                 .lineLimit(1)
-            Spacer()
+            Spacer(minLength: 2)
             Divider().frame(height: 14)
         }
+        .padding(.leading, 3)
+        .padding(.trailing, 1)
         .frame(width: width)
-        .padding(.horizontal, 6)
     }
 }
