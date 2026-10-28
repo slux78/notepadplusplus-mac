@@ -44,11 +44,63 @@ public struct NppFolderAsWorkspaceView: View {
 
             Divider()
 
+            // 3-Button Toolbar (session.md:110-140): Unfold All, Fold All, Locate Current File
+            HStack(spacing: 8) {
+                Button(action: {
+                    expandedPaths = NppWorkspace.unfoldAllDirectories(in: workspace.workspaceFolders)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            .font(.system(size: 9))
+                        Text(workspace.tr("Unfold All"))
+                            .font(.system(size: 10))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(workspace.tr("Unfold All"))
+
+                Button(action: {
+                    expandedPaths.removeAll()
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 9))
+                        Text(workspace.tr("Fold All"))
+                            .font(.system(size: 10))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(workspace.tr("Fold All"))
+
+                Spacer()
+
+                Button(action: {
+                    if let activeUrl = workspace.activeDocument?.filePath {
+                        let dirs = NppWorkspace.locateAncestorDirectories(for: activeUrl, in: workspace.workspaceFolders)
+                        expandedPaths.formUnion(dirs)
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "scope")
+                            .font(.system(size: 10))
+                        Text(workspace.tr("Locate Current File"))
+                            .font(.system(size: 10))
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(workspace.tr("Locate Current File in Tree"))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
             // Folder Tree
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(workspace.workspaceFolders, id: \.self) { rootUrl in
-                        FolderItemView(url: rootUrl, depth: 0, expandedPaths: $expandedPaths, onSelectFile: { fileUrl in
+                        FolderItemView(url: rootUrl, depth: 0, expandedPaths: $expandedPaths, workspace: workspace, onSelectFile: { fileUrl in
                             workspace.openFile(url: fileUrl)
                         })
                     }
@@ -64,6 +116,7 @@ private struct FolderItemView: View {
     let url: URL
     let depth: Int
     @Binding var expandedPaths: Set<String>
+    let workspace: NppWorkspace
     let onSelectFile: (URL) -> Void
 
     var isDirectory: Bool {
@@ -128,6 +181,23 @@ private struct FolderItemView: View {
                     onSelectFile(url)
                 }
             }
+            .contextMenu {
+                Button(workspace.tr("Finder에서 보기")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+                Button(workspace.tr("전체 경로 복사")) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.path, forType: .string)
+                }
+                Button(workspace.tr("파일명 복사")) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url.lastPathComponent, forType: .string)
+                }
+                Divider()
+                Button(workspace.tr("파일에서 찾기...")) {
+                    workspace.openFindInFiles(directory: isDirectory ? url.path : url.deletingLastPathComponent().path)
+                }
+            }
 
             if isDirectory && isExpanded {
                 let children = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
@@ -135,7 +205,7 @@ private struct FolderItemView: View {
                     a.lastPathComponent.localizedCaseInsensitiveCompare(b.lastPathComponent) == .orderedAscending
                 }
                 ForEach(sortedChildren, id: \.self) { child in
-                    FolderItemView(url: child, depth: depth + 1, expandedPaths: $expandedPaths, onSelectFile: onSelectFile)
+                    FolderItemView(url: child, depth: depth + 1, expandedPaths: $expandedPaths, workspace: workspace, onSelectFile: onSelectFile)
                 }
             }
         }

@@ -65,6 +65,7 @@ public struct NppSearchBarView: View {
                 }
 
                 Button(action: {
+                    workspace.clearIncrementalHighlight()
                     workspace.showSearchBar = false
                 }) {
                     Image(systemName: "xmark")
@@ -81,15 +82,30 @@ public struct NppSearchBarView: View {
                         .font(.system(size: 11, weight: .medium))
                         .frame(width: 75, alignment: .trailing)
 
-                    TextField(workspace.tr("Find what:"), text: $findText, onCommit: {
-                        findNext()
-                    })
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    HStack(spacing: 4) {
+                        TextField(workspace.tr("Find what:"), text: $findText, onCommit: {
+                            findNext()
+                        })
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                        if !findText.isEmpty {
+                            let total = workspace.incrementalSearchMatches.count
+                            let current = workspace.incrementalCurrentMatchIndex
+                            Text("[\(current)/\(total)]")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(total > 0 ? .accentColor : .red)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(Color(NSColor.controlBackgroundColor))
+                                .cornerRadius(4)
+                        }
+                    }
                     .frame(maxWidth: .infinity)
                     .onChange(of: findText) { newValue in
                         if !newValue.isEmpty {
                             findIncremental()
                         } else {
+                            workspace.updateIncrementalSearch(query: "", matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
                             statusMessage = ""
                         }
                     }
@@ -111,12 +127,21 @@ public struct NppSearchBarView: View {
                     Toggle(workspace.tr("Match case"), isOn: $matchCase)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
+                        .onChange(of: matchCase) { _ in findIncremental() }
                     Toggle(workspace.tr("Match whole word only"), isOn: $matchWholeWord)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
+                        .onChange(of: matchWholeWord) { _ in findIncremental() }
                     Toggle(workspace.tr("Regular expression"), isOn: $useRegex)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
+                        .onChange(of: useRegex) { _ in findIncremental() }
+                    Toggle(workspace.tr("Highlight all"), isOn: $workspace.incrementalHighlightAll)
+                        .toggleStyle(CheckboxToggleStyle())
+                        .font(.system(size: 11))
+                        .onChange(of: workspace.incrementalHighlightAll) { _ in
+                            workspace.updateIncrementalSearch(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+                        }
                     Spacer()
                 }
             } else {
@@ -176,29 +201,40 @@ public struct NppSearchBarView: View {
                 .foregroundColor(Color(NSColor.separatorColor)),
             alignment: .bottom
         )
+        .onAppear {
+            if !workspace.findQueryText.isEmpty {
+                findText = workspace.findQueryText
+            } else if !workspace.lastSearchQuery.isEmpty {
+                findText = workspace.lastSearchQuery
+            }
+        }
+        .onExitCommand {
+            workspace.clearIncrementalHighlight()
+            workspace.showSearchBar = false
+            if let tv = workspace.activeTextView {
+                tv.window?.makeFirstResponder(tv)
+            }
+        }
     }
 
     private func findIncremental() {
-        guard !findText.isEmpty, let doc = workspace.activeDocument else { return }
-        workspace.lastSearchQuery = findText
-        let content = doc.content as NSString
-        let startPos = min(max(0, doc.cursorPos), content.length)
-        let searchRange = NSRange(location: startPos, length: content.length - startPos)
-
-        var options: NSString.CompareOptions = []
-        if !matchCase { options.insert(.caseInsensitive) }
-        if useRegex { options.insert(.regularExpression) }
-
-        var foundRange = content.range(of: findText, options: options, range: searchRange)
-        if foundRange.location == NSNotFound {
-            let wrapRange = NSRange(location: 0, length: startPos)
-            foundRange = content.range(of: findText, options: options, range: wrapRange)
+        guard !findText.isEmpty, let doc = workspace.activeDocument else {
+            workspace.updateIncrementalSearch(query: "", matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
+            return
         }
+        workspace.lastSearchQuery = findText
+        workspace.updateIncrementalSearch(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
 
-        if foundRange.location != NSNotFound {
-            doc.cursorPos = foundRange.location
-            doc.selectionLength = foundRange.length
-            workspace.selectRange(foundRange)
+        let matches = workspace.incrementalSearchMatches
+        if !matches.isEmpty {
+            let startPos = min(max(0, doc.cursorPos), (doc.content as NSString).length)
+            let matchRange = matches.first(where: { $0.location >= startPos }) ?? matches.first!
+            doc.cursorPos = matchRange.location
+            doc.selectionLength = matchRange.length
+            workspace.selectRange(matchRange, makeFirstResponder: false)
+            if let idx = matches.firstIndex(of: matchRange) {
+                workspace.incrementalCurrentMatchIndex = idx + 1
+            }
             statusMessage = "Found at line \(doc.cursorLine)"
         } else {
             statusMessage = "Phrase not found"
@@ -208,25 +244,18 @@ public struct NppSearchBarView: View {
     private func findNext() {
         guard !findText.isEmpty, let doc = workspace.activeDocument else { return }
         workspace.lastSearchQuery = findText
-        let content = doc.content as NSString
-        let startPos = min(doc.cursorPos + max(1, doc.selectionLength), content.length)
-        let searchRange = NSRange(location: startPos, length: content.length - startPos)
+        workspace.updateIncrementalSearch(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
 
-        var options: NSString.CompareOptions = []
-        if !matchCase { options.insert(.caseInsensitive) }
-        if useRegex { options.insert(.regularExpression) }
-
-        var foundRange = content.range(of: findText, options: options, range: searchRange)
-        if foundRange.location == NSNotFound {
-            // Wrap around
-            let wrapRange = NSRange(location: 0, length: startPos)
-            foundRange = content.range(of: findText, options: options, range: wrapRange)
-        }
-
-        if foundRange.location != NSNotFound {
-            doc.cursorPos = foundRange.location
-            doc.selectionLength = foundRange.length
-            workspace.selectRange(foundRange)
+        let matches = workspace.incrementalSearchMatches
+        if !matches.isEmpty {
+            let currentLoc = doc.cursorPos + max(1, doc.selectionLength)
+            let nextMatch = matches.first(where: { $0.location >= currentLoc }) ?? matches.first!
+            doc.cursorPos = nextMatch.location
+            doc.selectionLength = nextMatch.length
+            workspace.selectRange(nextMatch, makeFirstResponder: false)
+            if let idx = matches.firstIndex(of: nextMatch) {
+                workspace.incrementalCurrentMatchIndex = idx + 1
+            }
             statusMessage = "Found at line \(doc.cursorLine)"
         } else {
             statusMessage = "Cannot find '\(findText)'"
@@ -236,19 +265,18 @@ public struct NppSearchBarView: View {
     private func findPrev() {
         guard !findText.isEmpty, let doc = workspace.activeDocument else { return }
         workspace.lastSearchQuery = findText
-        let content = doc.content as NSString
-        let endPos = max(doc.cursorPos, 0)
-        let searchRange = NSRange(location: 0, length: endPos)
+        workspace.updateIncrementalSearch(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
 
-        var options: NSString.CompareOptions = [.backwards]
-        if !matchCase { options.insert(.caseInsensitive) }
-        if useRegex { options.insert(.regularExpression) }
-
-        let foundRange = content.range(of: findText, options: options, range: searchRange)
-        if foundRange.location != NSNotFound {
-            doc.cursorPos = foundRange.location
-            doc.selectionLength = foundRange.length
-            workspace.selectRange(foundRange)
+        let matches = workspace.incrementalSearchMatches
+        if !matches.isEmpty {
+            let currentLoc = doc.cursorPos
+            let prevMatch = matches.last(where: { $0.location < currentLoc }) ?? matches.last!
+            doc.cursorPos = prevMatch.location
+            doc.selectionLength = prevMatch.length
+            workspace.selectRange(prevMatch, makeFirstResponder: false)
+            if let idx = matches.firstIndex(of: prevMatch) {
+                workspace.incrementalCurrentMatchIndex = idx + 1
+            }
             statusMessage = "Found at line \(doc.cursorLine)"
         } else {
             statusMessage = "Cannot find '\(findText)'"

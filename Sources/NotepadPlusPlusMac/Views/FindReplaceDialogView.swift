@@ -188,8 +188,6 @@ public struct NppFindReplaceDialogView: View {
                                 Toggle(workspace.tr("Backward direction"), isOn: $backwardDirection)
                                     .font(.system(size: 11))
                                     .toggleStyle(CheckboxToggleStyle())
-                            }
-                            if workspace.findReplaceTab == 1 {
                                 Toggle(workspace.tr("In selection"), isOn: $inSelection)
                                     .font(.system(size: 11))
                                     .toggleStyle(CheckboxToggleStyle())
@@ -475,22 +473,16 @@ public struct NppFindReplaceDialogView: View {
 
     private func processedQuery() -> String {
         var q = findText
-        if searchMode == 1 { // Extended
-            q = q.replacingOccurrences(of: "\\n", with: "\n")
-                .replacingOccurrences(of: "\\r", with: "\r")
-                .replacingOccurrences(of: "\\t", with: "\t")
-                .replacingOccurrences(of: "\\0", with: "\0")
+        if searchMode == 1 { // Extended (searching.md:120-135)
+            q = NppWorkspace.expandExtendedEscapes(q)
         }
         return q
     }
 
     private func processedReplacement() -> String {
         var r = replaceText
-        if searchMode == 1 { // Extended
-            r = r.replacingOccurrences(of: "\\n", with: "\n")
-                .replacingOccurrences(of: "\\r", with: "\r")
-                .replacingOccurrences(of: "\\t", with: "\t")
-                .replacingOccurrences(of: "\\0", with: "\0")
+        if searchMode == 1 { // Extended (searching.md:120-135)
+            r = NppWorkspace.expandExtendedEscapes(r)
         }
         return r
     }
@@ -575,22 +567,28 @@ public struct NppFindReplaceDialogView: View {
         guard let tv = workspace.activeTextView, !findText.isEmpty else { return }
         let query = processedQuery()
         let content = tv.string
+        let fullLength = (content as NSString).length
+        let currentSel = tv.selectedRange()
+        let targetRange = (inSelection && currentSel.length > 0 && NSMaxRange(currentSel) <= fullLength)
+            ? currentSel
+            : NSRange(location: 0, length: fullLength)
         var count = 0
 
         if searchMode == 2 || matchWholeWord {
             if let regex = buildSearchRegex(for: query) {
-                count = regex.numberOfMatches(in: content, range: NSRange(location: 0, length: (content as NSString).length))
+                count = regex.numberOfMatches(in: content, range: targetRange)
             }
         } else {
-            var searchRange = NSRange(location: 0, length: (content as NSString).length)
+            var searchRange = targetRange
+            let endLocation = NSMaxRange(targetRange)
             var options: NSString.CompareOptions = []
             if !matchCase { options.insert(.caseInsensitive) }
-            while searchRange.location < (content as NSString).length {
+            while searchRange.location < endLocation {
                 let r = (content as NSString).range(of: query, options: options, range: searchRange)
                 if r.location != NSNotFound {
                     count += 1
                     searchRange.location = NSMaxRange(r)
-                    searchRange.length = (content as NSString).length - searchRange.location
+                    searchRange.length = max(0, endLocation - searchRange.location)
                 } else {
                     break
                 }
@@ -710,13 +708,17 @@ public struct NppFindReplaceDialogView: View {
 
     private func runMarkAll() {
         guard !findText.isEmpty else { return }
+        let currentSel = workspace.activeTextView?.selectedRange()
+        let contentLen = (workspace.activeDocument?.content as NSString?)?.length ?? 0
+        let targetRange = (inSelection && (currentSel?.length ?? 0) > 0 && NSMaxRange(currentSel!) <= contentLen) ? currentSel : nil
         let count = workspace.markAll(
             query: processedQuery(),
             matchCase: matchCase,
             wholeWord: matchWholeWord,
             useRegex: searchMode == 2,
             bookmarkLine: bookmarkLine,
-            purgeExisting: purgeEachSearch
+            purgeExisting: purgeEachSearch,
+            inRange: targetRange
         )
         statusMessage = "Mark: \(count) match\(count == 1 ? "" : "es") marked."
     }

@@ -67,8 +67,8 @@ public struct NppEditorView: NSViewRepresentable {
         context.coordinator.gutter = gutter
         workspace.activeTextView = textView
 
-        // Initial syntax highlighting
-        if let textStorage = textView.textStorage {
+        // Initial syntax highlighting (guarded by performanceLargeFileSizeMB per programing-languages.md:80-95)
+        if !workspace.isLargeFile(doc: document), let textStorage = textView.textStorage {
             NppSyntaxHighlighter.highlight(
                 textStorage: textStorage,
                 language: document.language,
@@ -300,6 +300,7 @@ public struct NppEditorView: NSViewRepresentable {
 
         func applyHighlighting() {
             guard let tv = textView, let ts = tv.textStorage else { return }
+            guard !parent.workspace.isLargeFile(doc: parent.document) else { return }
             let isDark = tv.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             NppSyntaxHighlighter.highlight(textStorage: ts, language: parent.document.language, isDarkMode: isDark, baseFont: tv.font, theme: parent.workspace.currentTheme)
             if !parent.document.styledTokenRanges.isEmpty {

@@ -4,6 +4,8 @@ import AppKit
 public struct NppSearchResultsView: View {
     @ObservedObject var workspace: NppWorkspace
     @State private var collapsedGroupIds: Set<UUID> = []
+    @State private var selectedMatchId: UUID? = nil
+    @State private var selectedGroupId: UUID? = nil
 
     public init(workspace: NppWorkspace) {
         self.workspace = workspace
@@ -103,12 +105,37 @@ public struct NppSearchResultsView: View {
                             }
                             .padding(.vertical, 3)
                             .padding(.horizontal, 6)
-                            .background(Color(NSColor.selectedControlColor).opacity(0.12))
+                            .background(selectedGroupId == group.id ? Color.accentColor.opacity(0.25) : Color(NSColor.selectedControlColor).opacity(0.12))
                             .cornerRadius(3)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectedGroupId = group.id
+                                selectedMatchId = nil
+                            }
+                            .contextMenu {
+                                Button(workspace.tr("Copy Selected Pathname(s)")) {
+                                    workspace.copySelectedSearchPathnames(filePaths: [group.filePath?.path ?? group.documentTitle])
+                                }
+                                Button(workspace.tr("Open selected pathname(s)")) {
+                                    workspace.openSelectedSearchPathname(filePath: group.filePath)
+                                }
+                                Divider()
+                                Button(workspace.tr("Delete")) {
+                                    workspace.deleteSearchGroup(groupId: group.id)
+                                }
+                                Button(workspace.tr("Clear all")) {
+                                    workspace.clearSearchResults()
+                                }
+                            }
 
                             // Matches inside File
                             if !collapsedGroupIds.contains(group.id) {
                                 ForEach(group.matches) { match in
+                                    let allMatches = workspace.searchFileGroups.flatMap { $0.matches }
+                                    let isCurrentMatch = workspace.currentSearchResultIndex >= 0 &&
+                                                         workspace.currentSearchResultIndex < allMatches.count &&
+                                                         allMatches[workspace.currentSearchResultIndex].id == match.id
+
                                     HStack(spacing: 6) {
                                         Text("Line \(match.lineNumber):")
                                             .font(.system(size: 11, design: .monospaced))
@@ -125,9 +152,31 @@ public struct NppSearchResultsView: View {
                                     }
                                     .padding(.vertical, 2)
                                     .padding(.horizontal, 8)
+                                    .background((selectedMatchId == match.id || isCurrentMatch) ? Color.accentColor.opacity(0.25) : Color.clear)
+                                    .cornerRadius(2)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
+                                        selectedMatchId = match.id
+                                        selectedGroupId = nil
                                         workspace.jumpToMatch(match)
+                                    }
+                                    .contextMenu {
+                                        Button(workspace.tr("Copy Selected Line(s)")) {
+                                            workspace.copySelectedSearchLines(matches: [match])
+                                        }
+                                        Button(workspace.tr("Copy Selected Pathname(s)")) {
+                                            workspace.copySelectedSearchPathnames(filePaths: [group.filePath?.path ?? group.documentTitle])
+                                        }
+                                        Button(workspace.tr("Open selected pathname(s)")) {
+                                            workspace.openSelectedSearchPathname(filePath: group.filePath, match: match)
+                                        }
+                                        Divider()
+                                        Button(workspace.tr("Delete")) {
+                                            workspace.deleteSearchResult(matchId: match.id)
+                                        }
+                                        Button(workspace.tr("Clear all")) {
+                                            workspace.clearSearchResults()
+                                        }
                                     }
                                 }
                             }
@@ -140,6 +189,36 @@ public struct NppSearchResultsView: View {
             }
             .frame(height: 180)
             .background(Color(NSColor.textBackgroundColor))
+            // Hidden buttons to capture Delete and Backspace keys (searching.md:420-450)
+            .background(
+                Group {
+                    Button(action: {
+                        if let mId = selectedMatchId {
+                            workspace.deleteSearchResult(matchId: mId)
+                            selectedMatchId = nil
+                        } else if let gId = selectedGroupId {
+                            workspace.deleteSearchGroup(groupId: gId)
+                            selectedGroupId = nil
+                        }
+                    }) {
+                        EmptyView()
+                    }
+                    .keyboardShortcut(.delete, modifiers: [])
+
+                    Button(action: {
+                        if let mId = selectedMatchId {
+                            workspace.deleteSearchResult(matchId: mId)
+                            selectedMatchId = nil
+                        } else if let gId = selectedGroupId {
+                            workspace.deleteSearchGroup(groupId: gId)
+                            selectedGroupId = nil
+                        }
+                    }) {
+                        EmptyView()
+                    }
+                    .keyboardShortcut(.deleteForward, modifiers: [])
+                }
+            )
         }
         .overlay(
             Rectangle()

@@ -1385,6 +1385,11 @@ final class NppAutomatedTestSuite {
             // ---------------------------------------------------------
             runSprint1ParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
+            // ---------------------------------------------------------
+            // 35. SPRINT 2: MANUAL AUDIT 8 CORE PARITY FEATURES SUITE
+            // ---------------------------------------------------------
+            runSprint2ParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -3453,6 +3458,309 @@ final class NppAutomatedTestSuite {
         let fMultiSemicolon = NppWorkspace.matchesFileFilter(filename: "test_suite.swift", filePath: "/proj/test_suite.swift", filterString: "*.swift;*.txt;!*test*")
         assertTest("Sprint 1.9.C: Find in Files handles semicolon delimiters and multiple wildcard patterns",
                    fMultiSemicolon == false)
+
+        // Clean up
+        ws.closeAll()
+    }
+
+    // =========================================================================
+    // 35. SPRINT 2: MANUAL AUDIT 8 CORE PARITY FEATURES SUITE
+    // =========================================================================
+    static func runSprint2ParityTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("🚀 SPRINT 2: MANUAL AUDIT 8 CORE PARITY FEATURES SUITE")
+        print("========================================================")
+
+        // -------------------------------------------------------------
+        // TASK 1: Search Results Context Menu & Delete Key Removal
+        // -------------------------------------------------------------
+        let docId1 = UUID()
+        let match1 = NppSearchMatch(
+            documentId: docId1,
+            documentTitle: "doc1.txt",
+            filePath: URL(fileURLWithPath: "/tmp/doc1.txt"),
+            lineNumber: 10,
+            lineContent: "let searchHit1 = 1",
+            matchRangeInLine: NSRange(location: 4, length: 10),
+            charPosition: 100,
+            matchLength: 10
+        )
+        let match2 = NppSearchMatch(
+            documentId: docId1,
+            documentTitle: "doc1.txt",
+            filePath: URL(fileURLWithPath: "/tmp/doc1.txt"),
+            lineNumber: 20,
+            lineContent: "let searchHit2 = 2",
+            matchRangeInLine: NSRange(location: 4, length: 10),
+            charPosition: 200,
+            matchLength: 10
+        )
+        let group1 = NppSearchFileGroup(
+            documentId: docId1,
+            documentTitle: "doc1.txt",
+            filePath: URL(fileURLWithPath: "/tmp/doc1.txt"),
+            matches: [match1, match2]
+        )
+
+        let docId2 = UUID()
+        let match3 = NppSearchMatch(
+            documentId: docId2,
+            documentTitle: "doc2.txt",
+            filePath: URL(fileURLWithPath: "/tmp/doc2.txt"),
+            lineNumber: 5,
+            lineContent: "let otherHit = 3",
+            matchRangeInLine: NSRange(location: 4, length: 8),
+            charPosition: 50,
+            matchLength: 8
+        )
+        let group2 = NppSearchFileGroup(
+            documentId: docId2,
+            documentTitle: "doc2.txt",
+            filePath: URL(fileURLWithPath: "/tmp/doc2.txt"),
+            matches: [match3]
+        )
+
+        ws.searchFileGroups = [group1, group2]
+        ws.showSearchResultsPanel = true
+        assertTest("Sprint 2.1.A: searchFileGroups initialized with 2 groups and 3 total hits",
+                   ws.searchFileGroups.count == 2 && ws.totalSearchHits == 3)
+
+        // Delete single match: totalSearchHits drops to 2
+        ws.deleteSearchResult(matchId: match1.id)
+        assertTest("Sprint 2.1.B: deleteSearchResult removes single match and decrements total hits",
+                   ws.totalSearchHits == 2 && ws.searchFileGroups.count == 2 && ws.searchFileGroups[0].matches.count == 1)
+
+        // Delete remaining match in group 1: group 1 automatically removed
+        ws.deleteSearchResult(matchId: match2.id)
+        assertTest("Sprint 2.1.C: deleteSearchResult removes empty group when its last match is deleted",
+                   ws.searchFileGroups.count == 1 && ws.searchFileGroups[0].documentTitle == "doc2.txt")
+
+        // Test copySelectedSearchLines & copySelectedSearchPathnames
+        ws.copySelectedSearchLines(matches: [match3])
+        let copiedLine = NSPasteboard.general.string(forType: .string) ?? ""
+        assertTest("Sprint 2.1.D: copySelectedSearchLines copies formatted 'Line N: Content' to pasteboard",
+                   copiedLine == "Line 5: let otherHit = 3")
+
+        ws.copySelectedSearchPathnames(filePaths: ["/tmp/doc1.txt", "/tmp/doc2.txt"])
+        let copiedPaths = NSPasteboard.general.string(forType: .string) ?? ""
+        assertTest("Sprint 2.1.E: copySelectedSearchPathnames copies newline-separated paths to pasteboard",
+                   copiedPaths == "/tmp/doc1.txt\n/tmp/doc2.txt")
+
+        // Delete whole group: dock panel automatically closes when last group deleted
+        ws.deleteSearchGroup(groupId: group2.id)
+        assertTest("Sprint 2.1.F: deleteSearchGroup clears groups and automatically hides search results panel",
+                   ws.searchFileGroups.isEmpty && ws.showSearchResultsPanel == false)
+
+        // -------------------------------------------------------------
+        // TASK 2: In-Selection Checkbox for Find Count & Mark All Scoping
+        // -------------------------------------------------------------
+        ws.newDocument()
+        if let selDoc = ws.activeDocument {
+            selDoc.content = "apple banana apple\ncherry apple date"
+            let line1Range = NSRange(location: 0, length: 19) // "apple banana apple\n"
+
+            // Mark All with inRange restricted to line 1
+            let markedInSelection = ws.markAll(
+                query: "apple",
+                matchCase: true,
+                wholeWord: true,
+                useRegex: false,
+                bookmarkLine: true,
+                purgeExisting: true,
+                inRange: line1Range
+            )
+            assertTest("Sprint 2.2.A: markAll scoped with inRange only marks occurrences within selection",
+                       markedInSelection == 2 && selDoc.isLineBookmarked(1) && !selDoc.isLineBookmarked(2))
+
+            // Mark All without inRange marks all across entire buffer
+            let markedGlobal = ws.markAll(
+                query: "apple",
+                matchCase: true,
+                wholeWord: true,
+                useRegex: false,
+                bookmarkLine: true,
+                purgeExisting: true
+            )
+            assertTest("Sprint 2.2.B: markAll without inRange marks occurrences across entire document",
+                       markedGlobal == 3 && selDoc.isLineBookmarked(1) && selDoc.isLineBookmarked(2))
+
+            ws.closeDocument(id: selDoc.id)
+        } else {
+            assertTest("Sprint 2.2.A: Selection scoping document test", false)
+            assertTest("Sprint 2.2.B: Global scoping document test", false)
+        }
+
+        // -------------------------------------------------------------
+        // TASK 3: Extended Search Mode Escapes (\, \n, \r, \t, \0, \xHH, \uHHHH)
+        // -------------------------------------------------------------
+        let stdEscapes = NppWorkspace.expandExtendedEscapes("Line1\\nLine2\\r\\tNull\\0End")
+        assertTest("Sprint 2.3.A: expandExtendedEscapes expands \\n, \\r, \\t, and \\0 correctly",
+                   stdEscapes == "Line1\nLine2\r\tNull\0End")
+
+        let literalBackslash = NppWorkspace.expandExtendedEscapes("C:\\\\path\\\\file.txt\\\\n")
+        assertTest("Sprint 2.3.B: expandExtendedEscapes handles literal backslash \\\\ and \\\\n without converting to newline",
+                   literalBackslash == "C:\\path\\file.txt\\n")
+
+        let hexEscapes = NppWorkspace.expandExtendedEscapes("\\x41\\x42\\x43\\x31\\x32")
+        assertTest("Sprint 2.3.C: expandExtendedEscapes converts \\xHH (2 hex digits) to ASCII characters",
+                   hexEscapes == "ABC12")
+
+        let unicodeEscapes = NppWorkspace.expandExtendedEscapes("\\u0041\\uAC00\\uD55C")
+        assertTest("Sprint 2.3.D: expandExtendedEscapes converts \\uHHHH (4 hex digits) to Unicode characters",
+                   unicodeEscapes == "A가한")
+
+        // -------------------------------------------------------------
+        // TASK 4: Incremental Search [n/total] Counter & Highlight All
+        // -------------------------------------------------------------
+        ws.newDocument()
+        if let incDoc = ws.activeDocument {
+            incDoc.content = "apple orange apple banana apple grape"
+            let tv = ws.activeTextView ?? NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+            tv.string = incDoc.content
+            ws.activeTextView = tv
+
+            incDoc.cursorPos = 0
+            ws.updateIncrementalSearch(query: "apple", matchCase: true, wholeWord: true, useRegex: false)
+            assertTest("Sprint 2.4.A: updateIncrementalSearch finds 3 matches and sets index [1/3]",
+                       ws.incrementalSearchMatches.count == 3 && ws.incrementalCurrentMatchIndex == 1)
+
+            // Move cursor to middle and re-evaluate index
+            incDoc.cursorPos = 14 // After first apple, before second apple
+            ws.updateIncrementalSearch(query: "apple", matchCase: true, wholeWord: true, useRegex: false)
+            assertTest("Sprint 2.4.B: updateIncrementalSearch calculates active index based on cursor position [2/3]",
+                       ws.incrementalCurrentMatchIndex == 2)
+
+            // Test Highlight All
+            ws.incrementalHighlightAll = true
+            ws.updateIncrementalSearch(query: "apple", matchCase: true, wholeWord: true, useRegex: false)
+            assertTest("Sprint 2.4.C: incrementalHighlightAll applies background highlight to all matches",
+                       ws.incrementalHighlightedRanges.count == 3)
+
+            ws.clearIncrementalHighlight()
+            assertTest("Sprint 2.4.D: clearIncrementalHighlight removes all highlight ranges cleanly",
+                       ws.incrementalHighlightedRanges.isEmpty)
+
+            ws.closeDocument(id: incDoc.id)
+        } else {
+            assertTest("Sprint 2.4.A: Incremental search test", false)
+            assertTest("Sprint 2.4.B: Incremental search index test", false)
+            assertTest("Sprint 2.4.C: Incremental highlight all test", false)
+            assertTest("Sprint 2.4.D: Incremental clear highlight test", false)
+        }
+
+        // -------------------------------------------------------------
+        // TASK 5: Function List Parser, Order of Appearance vs A-Z, & Search Filter
+        // -------------------------------------------------------------
+        let codeSnippet = """
+        class ZooKeeper {
+        }
+        func zebraStripes() {
+        }
+        func alphaBeta() {
+        }
+        func monkeyJungle() {
+        }
+        """
+
+        // Order of appearance (sortedAlphabetically: false)
+        let appearanceOrder = NppWorkspace.parseFunctions(content: codeSnippet, filter: "", sortedAlphabetically: false)
+        assertTest("Sprint 2.5.A: parseFunctions preserves Order of Appearance by line number",
+                   appearanceOrder.count == 4 &&
+                   appearanceOrder[0].name == "ZooKeeper" &&
+                   appearanceOrder[1].name == "zebraStripes" &&
+                   appearanceOrder[2].name == "alphaBeta" &&
+                   appearanceOrder[3].name == "monkeyJungle")
+
+        // Alphabetical sort (sortedAlphabetically: true)
+        let alphaOrder = NppWorkspace.parseFunctions(content: codeSnippet, filter: "", sortedAlphabetically: true)
+        assertTest("Sprint 2.5.B: parseFunctions sorts functions alphabetically (A-Z)",
+                   alphaOrder.count == 4 &&
+                   alphaOrder[0].name == "alphaBeta" &&
+                   alphaOrder[1].name == "monkeyJungle" &&
+                   alphaOrder[2].name == "zebraStripes" &&
+                   alphaOrder[3].name == "ZooKeeper")
+
+        // Search filter query
+        let filteredFuncs = NppWorkspace.parseFunctions(content: codeSnippet, filter: "monk", sortedAlphabetically: false)
+        assertTest("Sprint 2.5.C: parseFunctions filters functions by query substring",
+                   filteredFuncs.count == 1 && filteredFuncs[0].name == "monkeyJungle")
+
+        // -------------------------------------------------------------
+        // TASK 6: Folder as Workspace Navigation Helpers & Find in Files Preload
+        // -------------------------------------------------------------
+        let rootUrl = URL(fileURLWithPath: "/Workspace/Project")
+        let subFileUrl = URL(fileURLWithPath: "/Workspace/Project/Sources/Core/Engine.swift")
+        let ancestorDirs = NppWorkspace.locateAncestorDirectories(for: subFileUrl, in: [rootUrl])
+        assertTest("Sprint 2.6.A: locateAncestorDirectories locates ancestor directories up to workspace root",
+                   ancestorDirs.contains("/Workspace/Project/Sources/Core") &&
+                   ancestorDirs.contains("/Workspace/Project/Sources") &&
+                   ancestorDirs.contains("/Workspace/Project"))
+
+        ws.openFindInFiles(directory: "/Workspace/Project/Sources")
+        assertTest("Sprint 2.6.B: openFindInFiles switches to tab 2 and sets pre-filled directory path",
+                   ws.showFindReplaceDialog == true &&
+                   ws.findReplaceTab == 2 &&
+                   ws.findDirectoryPath == "/Workspace/Project/Sources")
+        ws.showFindReplaceDialog = false
+
+        // -------------------------------------------------------------
+        // TASK 7: Fullscreen & Post-It State & Overlay Button Mechanics
+        // -------------------------------------------------------------
+        assertTest("Sprint 2.7.A: Default state has isPostItMode and isFullScreen false",
+                   ws.isPostItMode == false && ws.isFullScreen == false)
+
+        ws.togglePostItMode()
+        assertTest("Sprint 2.7.B: togglePostItMode enables Post-It mode and hides toolbar/tabbar",
+                   ws.isPostItMode == true && ws.hideToolbar == true && ws.hideTabBar == true)
+
+        ws.togglePostItMode()
+        assertTest("Sprint 2.7.C: togglePostItMode again restores normal view and unhides toolbar/tabbar",
+                   ws.isPostItMode == false && ws.hideToolbar == false && ws.hideTabBar == false)
+
+        // -------------------------------------------------------------
+        // TASK 8: Performance Guard for Large Files (>200MB)
+        // -------------------------------------------------------------
+        ws.newDocument()
+        if let perfDoc = ws.activeDocument {
+            ws.performanceLargeFileEnabled = true
+            ws.performanceLargeFileSizeMB = 1 // Set test threshold to 1MB
+
+            // Document size: 500KB -> Not large
+            perfDoc.rawFileBytes = Data(count: 500 * 1024)
+            assertTest("Sprint 2.8.A: isLargeFile returns false when file size is under threshold",
+                       ws.isLargeFile(doc: perfDoc) == false)
+
+            // Document size: 2MB -> Exceeds 1MB threshold -> Large file
+            perfDoc.rawFileBytes = Data(count: 2 * 1024 * 1024)
+            assertTest("Sprint 2.8.B: isLargeFile returns true when file size exceeds threshold",
+                       ws.isLargeFile(doc: perfDoc) == true)
+
+            // When disabled, isLargeFile returns false regardless of size
+            ws.performanceLargeFileEnabled = false
+            assertTest("Sprint 2.8.C: isLargeFile returns false when performanceLargeFileEnabled is toggled off",
+                       ws.isLargeFile(doc: perfDoc) == false)
+
+            // Restore defaults
+            ws.performanceLargeFileEnabled = true
+            ws.performanceLargeFileSizeMB = 200
+
+            // Syntax Highlighter maxFileSizeMB guard check
+            let smallStorage = NSTextStorage(string: "func quick() -> Int { return 1 }")
+            NppSyntaxHighlighter.highlight(textStorage: smallStorage, language: "Swift", isDarkMode: true, maxFileSizeMB: 200)
+            let highlighted = smallStorage.attribute(.foregroundColor, at: 0, effectiveRange: nil) != nil
+            assertTest("Sprint 2.8.D: NppSyntaxHighlighter highlights files within size threshold", highlighted)
+
+            ws.closeDocument(id: perfDoc.id)
+        } else {
+            assertTest("Sprint 2.8.A: Large file test", false)
+            assertTest("Sprint 2.8.B: Large file test", false)
+            assertTest("Sprint 2.8.C: Large file test", false)
+            assertTest("Sprint 2.8.D: Large file test", false)
+        }
 
         // Clean up
         ws.closeAll()

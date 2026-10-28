@@ -127,14 +127,46 @@ public struct NppMainWindowView: View {
             }
             return true
         }
+        .overlay(alignment: .topTrailing) {
+            if workspace.isFullScreen || workspace.isPostItMode {
+                Button(action: {
+                    if workspace.isPostItMode {
+                        workspace.togglePostItMode(window: NSApp.keyWindow)
+                    } else if workspace.isFullScreen {
+                        NSApp.keyWindow?.toggleFullScreen(nil)
+                        workspace.isFullScreen = false
+                    }
+                }) {
+                    Text("⊞")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.primary)
+                        .frame(width: 28, height: 24)
+                        .background(Color(NSColor.windowBackgroundColor).opacity(0.85))
+                        .cornerRadius(4)
+                        .shadow(radius: 2)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.top, 8)
+                .padding(.trailing, 12)
+                .help(workspace.tr("Restore View (F11/F12)"))
+            }
+        }
     }
 }
 
 public struct NppFunctionListView: View {
     @ObservedObject var workspace: NppWorkspace
+    @State private var isAlphabetical: Bool = false
+    @State private var filterQuery: String = ""
+    @State private var refreshId: UUID = UUID()
 
     public var body: some View {
         VStack(spacing: 0) {
+            // Header Bar
             HStack {
                 Label(workspace.tr("Function List"), systemImage: "function")
                     .font(.system(size: 11, weight: .semibold))
@@ -151,7 +183,64 @@ public struct NppFunctionListView: View {
 
             Divider()
 
-            let functions = parseFunctions()
+            // Function List 3-Control Toolbar (function-list.md:30-55)
+            HStack(spacing: 6) {
+                // Real-time Search Filter Field
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    TextField(workspace.tr("Filter..."), text: $filterQuery)
+                        .textFieldStyle(PlainTextFieldStyle())
+                        .font(.system(size: 11))
+                    if !filterQuery.isEmpty {
+                        Button(action: { filterQuery = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 3)
+                .background(Color(NSColor.textBackgroundColor))
+                .cornerRadius(4)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(NSColor.separatorColor), lineWidth: 0.5))
+
+                // Sort Button (Toggle Appearance Order vs Alphabetical A-Z)
+                Button(action: { isAlphabetical.toggle() }) {
+                    Image(systemName: isAlphabetical ? "arrow.up.and.down.text.horizontal" : "arrow.up.arrow.down")
+                        .font(.system(size: 10))
+                        .foregroundColor(isAlphabetical ? .accentColor : .primary)
+                        .frame(width: 20, height: 20)
+                        .background(isAlphabetical ? Color.accentColor.opacity(0.15) : Color.clear)
+                        .cornerRadius(3)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(workspace.tr("Sort (A-Z vs Order of Appearance)"))
+
+                // Refresh Button (Reparse current buffer)
+                Button(action: { refreshId = UUID() }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10))
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(workspace.tr("Refresh"))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(Color(NSColor.controlBackgroundColor))
+
+            Divider()
+
+            let functions = NppWorkspace.parseFunctions(
+                content: workspace.activeDocument?.content ?? "",
+                filter: filterQuery,
+                sortedAlphabetically: isAlphabetical
+            )
+
             if functions.isEmpty {
                 VStack {
                     Spacer()
@@ -181,38 +270,10 @@ public struct NppFunctionListView: View {
                     .buttonStyle(PlainButtonStyle())
                 }
                 .listStyle(PlainListStyle())
+                .id(refreshId)
             }
         }
         .background(Color(NSColor.windowBackgroundColor))
-    }
-
-    struct FuncItem {
-        let name: String
-        let line: Int
-        let isClass: Bool
-    }
-
-    private func parseFunctions() -> [FuncItem] {
-        guard let doc = workspace.activeDocument else { return [] }
-        let lines = doc.content.nppLines()
-        var results: [FuncItem] = []
-        for (idx, line) in lines.enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let isClass = trimmed.hasPrefix("class ") || trimmed.hasPrefix("struct ")
-            let isFunc = trimmed.hasPrefix("func ") || trimmed.hasPrefix("def ") || trimmed.hasPrefix("function ") ||
-                         (trimmed.contains("(") && trimmed.contains(")") && (trimmed.hasPrefix("void ") || trimmed.hasPrefix("int ") || trimmed.hasPrefix("public ") || trimmed.hasPrefix("private ")))
-            if isClass || isFunc {
-                var name = trimmed
-                if let paren = name.firstIndex(of: "(") {
-                    name = String(name[..<paren])
-                }
-                if let brace = name.firstIndex(of: "{") {
-                    name = String(name[..<brace])
-                }
-                results.append(FuncItem(name: name.trimmingCharacters(in: .whitespaces), line: idx + 1, isClass: isClass))
-            }
-        }
-        return results
     }
 
     private func jumpToLine(_ lineNum: Int) {

@@ -65,9 +65,12 @@ public struct NppSyntaxRules {
 }
 
 public final class NppSyntaxHighlighter {
-    public static func highlight(textStorage: NSTextStorage, language: String, isDarkMode: Bool, baseFont: NSFont? = nil, theme: NppTheme? = nil) {
+    public static func highlight(textStorage: NSTextStorage, language: String, isDarkMode: Bool, baseFont: NSFont? = nil, theme: NppTheme? = nil, maxFileSizeMB: Int = 200) {
         let string = textStorage.string
         guard !string.isEmpty else { return }
+        if maxFileSizeMB > 0 && (string as NSString).length > maxFileSizeMB * 1024 * 1024 {
+            return
+        }
 
         textStorage.beginEditing()
         let fullRange = NSRange(location: 0, length: (string as NSString).length)

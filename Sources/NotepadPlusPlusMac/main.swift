@@ -529,11 +529,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         selFindPrevItem.keyEquivalentModifierMask = [.command, .shift]
         searchMenu.addItem(selFindPrevItem)
 
-        let volFindNextItem = NSMenuItem(title: tr("Find (Volatile) Next"), action: #selector(menuSelectAndFindNext), keyEquivalent: f3Key)
+        let volFindNextItem = NSMenuItem(title: tr("Find (Volatile) Next"), action: #selector(menuFindVolatileNext), keyEquivalent: f3Key)
         volFindNextItem.keyEquivalentModifierMask = [.command, .option]
         searchMenu.addItem(volFindNextItem)
 
-        let volFindPrevItem = NSMenuItem(title: tr("Find (Volatile) Previous"), action: #selector(menuSelectAndFindPrev), keyEquivalent: f3Key)
+        let volFindPrevItem = NSMenuItem(title: tr("Find (Volatile) Previous"), action: #selector(menuFindVolatilePrev), keyEquivalent: f3Key)
         volFindPrevItem.keyEquivalentModifierMask = [.command, .option, .shift]
         searchMenu.addItem(volFindPrevItem)
 
@@ -1146,6 +1146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func menuFindPrev() { workspace.findNext(forward: false) }
     @objc func menuSelectAndFindNext() { workspace.selectAndFindNext(forward: true) }
     @objc func menuSelectAndFindPrev() { workspace.selectAndFindNext(forward: false) }
+    @objc func menuFindVolatileNext() { workspace.findVolatile(forward: true) }
+    @objc func menuFindVolatilePrev() { workspace.findVolatile(forward: false) }
     @objc func menuIncrementalSearch() { workspace.toggleIncrementalSearch() }
     @objc func menuSearchResultsWindow() { workspace.toggleSearchResultsWindow() }
     @objc func menuNextSearchResult() { workspace.nextSearchResult() }
@@ -1165,51 +1167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspace.clearAllStyles()
     }
     @objc func menuFindCharsInRange() {
-        let alert = NSAlert()
-        alert.messageText = workspace.tr("Find characters in range...")
-        alert.informativeText = "Select character code range to search:"
-        alert.addButton(withTitle: workspace.tr("Find"))
-        alert.addButton(withTitle: workspace.tr("Cancel"))
-
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 84))
-        let modePopup = NSPopUpButton(frame: NSRect(x: 0, y: 54, width: 280, height: 26))
-        modePopup.addItems(withTitles: [
-            "Non-ASCII Characters (128 - 255)",
-            "ASCII Characters (0 - 127)",
-            "My Range:"
-        ])
-        let minLabel = NSTextField(labelWithString: "Min:")
-        minLabel.frame = NSRect(x: 0, y: 20, width: 36, height: 20)
-        let minField = NSTextField(frame: NSRect(x: 40, y: 18, width: 70, height: 24))
-        minField.stringValue = "128"
-        let maxLabel = NSTextField(labelWithString: "Max:")
-        maxLabel.frame = NSRect(x: 130, y: 20, width: 38, height: 20)
-        let maxField = NSTextField(frame: NSRect(x: 172, y: 18, width: 70, height: 24))
-        maxField.stringValue = "255"
-
-        container.addSubview(modePopup)
-        container.addSubview(minLabel)
-        container.addSubview(minField)
-        container.addSubview(maxLabel)
-        container.addSubview(maxField)
-        alert.accessoryView = container
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            let idx = modePopup.indexOfSelectedItem
-            let minCode: Int
-            let maxCode: Int
-            if idx == 0 {
-                minCode = 128
-                maxCode = Int(UInt32.max)
-            } else if idx == 1 {
-                minCode = 0
-                maxCode = 127
-            } else {
-                minCode = Int(minField.stringValue) ?? 128
-                maxCode = Int(maxField.stringValue) ?? 255
-            }
-            _ = workspace.findCharactersInRange(minCode: minCode, maxCode: maxCode, forward: true, wrap: true)
-        }
+        workspace.openFindCharsInRange()
     }
 
     @objc func menuToggleBookmark() { workspace.toggleBookmark() }
@@ -2255,14 +2213,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return isEditable
         }
 
-        // Search menu checkmarks
+        // Search menu checkmarks & validation
         if menuItem.action == #selector(menuIncrementalSearch) {
             menuItem.state = workspace.showSearchBar ? .on : .off
             return true
         }
         if menuItem.action == #selector(menuSearchResultsWindow) {
             menuItem.state = workspace.showSearchResultsPanel ? .on : .off
-            return true
+            return !workspace.searchFileGroups.isEmpty
+        }
+        if menuItem.action == #selector(menuNextSearchResult) ||
+           menuItem.action == #selector(menuPrevSearchResult) {
+            return !workspace.searchFileGroups.isEmpty
         }
 
         // View menu checkmarks

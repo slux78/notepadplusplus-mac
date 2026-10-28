@@ -129,6 +129,11 @@ public final class NppWorkspace: ObservableObject {
     private var savedPreModeTabBar: Bool = false
     private var savedPreModeStatusBar: Bool = false
     @Published public var currentSearchResultIndex: Int = -1
+    // Sprint 2: Incremental Search & Highlighting State (searching.md:380-410)
+    @Published public var incrementalSearchMatches: [NSRange] = []
+    @Published public var incrementalCurrentMatchIndex: Int = 0
+    @Published public var incrementalHighlightAll: Bool = false
+    public var incrementalHighlightedRanges: [NSRange] = []
     // Authentic Notepad++ Panels
     @Published public var showDocumentList: Bool = false
     @Published public var showFolderAsWorkspace: Bool = false
@@ -164,6 +169,27 @@ public final class NppWorkspace: ObservableObject {
             }
         }
     }
+    @Published public var showFindCharsInRangeDialog: Bool = false {
+        didSet {
+            let shouldShow = showFindCharsInRangeDialog
+            if Thread.isMainThread {
+                if shouldShow {
+                    NppFindCharsInRangeWindowController.shared.show(workspace: self)
+                } else {
+                    NppFindCharsInRangeWindowController.shared.close()
+                }
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    if shouldShow {
+                        NppFindCharsInRangeWindowController.shared.show(workspace: self)
+                    } else {
+                        NppFindCharsInRangeWindowController.shared.close()
+                    }
+                }
+            }
+        }
+    }
     @Published public var findReplaceTab: Int = 0 { // 0: Find, 1: Replace, 2: Find in Files, 3: Mark
         didSet {
             NppFindReplaceWindowController.shared.updateTitle()
@@ -191,6 +217,7 @@ public final class NppWorkspace: ObservableObject {
 
     // Authentic Notepad++ Find/Replace Initial Query & Word-Under-Caret Expansion State (FindReplaceDlg.cpp L5643)
     @Published public var findQueryText: String = ""
+    @Published public var findDirectoryPath: String = ""
     @Published public var findInvocationCounter: Int = 0
     @Published public var findAutoInSelection: Bool = false
 
@@ -322,9 +349,12 @@ public final class NppWorkspace: ObservableObject {
         showSearchBar = false
     }
 
-    public func openFindInFiles() {
+    public func openFindInFiles(directory: String? = nil) {
         prepareFindDialogFromEditor()
         findReplaceTab = 2
+        if let dir = directory {
+            findDirectoryPath = dir
+        }
         if showFindReplaceDialog {
             NppFindReplaceWindowController.shared.show(workspace: self)
         } else {
@@ -1280,6 +1310,11 @@ public final class NppWorkspace: ObservableObject {
         }
         targetJumpMatch = match
 
+        let allMatches = searchFileGroups.flatMap { $0.matches }
+        if let idx = allMatches.firstIndex(where: { $0.id == match.id }) {
+            currentSearchResultIndex = idx
+        }
+
         if let doc = activeDocument {
             doc.cursorPos = match.charPosition
             doc.selectionLength = match.matchLength
@@ -1353,6 +1388,51 @@ public final class NppWorkspace: ObservableObject {
         searchFileGroups.removeAll()
         currentSearchResultIndex = -1
         showSearchResultsPanel = false
+    }
+
+    // MARK: - Search Results Item Management & Context Menu (searching.md:420-450)
+    public func deleteSearchResult(matchId: UUID) {
+        for i in 0..<searchFileGroups.count {
+            if let mIdx = searchFileGroups[i].matches.firstIndex(where: { $0.id == matchId }) {
+                searchFileGroups[i].matches.remove(at: mIdx)
+                if searchFileGroups[i].matches.isEmpty {
+                    searchFileGroups.remove(at: i)
+                }
+                if searchFileGroups.isEmpty {
+                    showSearchResultsPanel = false
+                }
+                objectWillChange.send()
+                return
+            }
+        }
+    }
+
+    public func deleteSearchGroup(groupId: UUID) {
+        searchFileGroups.removeAll(where: { $0.id == groupId })
+        if searchFileGroups.isEmpty {
+            showSearchResultsPanel = false
+        }
+        objectWillChange.send()
+    }
+
+    public func copySelectedSearchLines(matches: [NppSearchMatch]) {
+        let text = matches.map { "Line \($0.lineNumber): \($0.lineContent)" }.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    public func copySelectedSearchPathnames(filePaths: [String]) {
+        let text = filePaths.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    public func openSelectedSearchPathname(filePath: URL?, match: NppSearchMatch? = nil) {
+        if let match = match {
+            jumpToMatch(match)
+        } else if let fp = filePath {
+            openFile(url: fp)
+        }
     }
 
     // MARK: - Notepad++ Bookmark Operations (Scintilla Parity)
@@ -1514,12 +1594,15 @@ public final class NppWorkspace: ObservableObject {
         doc.cursorPos = charPos
     }
 
-    public func markAll(query: String, matchCase: Bool, wholeWord: Bool, useRegex: Bool, bookmarkLine: Bool, purgeExisting: Bool) -> Int {
+    public func markAll(query: String, matchCase: Bool, wholeWord: Bool, useRegex: Bool, bookmarkLine: Bool, purgeExisting: Bool, inRange: NSRange? = nil) -> Int {
         guard let doc = activeDocument, !query.isEmpty else { return 0 }
         if purgeExisting {
             doc.clearBookmarks()
         }
-        let matches = searchInDocument(doc: doc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
+        var matches = searchInDocument(doc: doc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
+        if let limitRange = inRange, limitRange.length > 0 {
+            matches = matches.filter { NSIntersectionRange(NSRange(location: $0.charPosition, length: $0.matchLength), limitRange).length > 0 }
+        }
         if bookmarkLine {
             for match in matches {
                 doc.bookmarkedLines.insert(match.lineNumber)
@@ -1698,6 +1781,149 @@ public final class NppWorkspace: ObservableObject {
         }
         objectWillChange.send()
         return (totalReplacements, filesModified)
+    }
+
+    // MARK: - Notepad++ Extended Search Mode Escapes (searching.md:120-135)
+    public static func expandExtendedEscapes(_ input: String) -> String {
+        var result = ""
+        var i = input.startIndex
+        while i < input.endIndex {
+            if input[i] == "\\" {
+                let next = input.index(after: i)
+                if next < input.endIndex {
+                    let c = input[next]
+                    switch c {
+                    case "\\":
+                        result.append("\\")
+                        i = input.index(after: next)
+                        continue
+                    case "n":
+                        result.append("\n")
+                        i = input.index(after: next)
+                        continue
+                    case "r":
+                        result.append("\r")
+                        i = input.index(after: next)
+                        continue
+                    case "t":
+                        result.append("\t")
+                        i = input.index(after: next)
+                        continue
+                    case "0":
+                        result.append("\0")
+                        i = input.index(after: next)
+                        continue
+                    case "x", "X":
+                        // \xHH: 2 hex characters
+                        let hexStart = input.index(after: next)
+                        if let hexEnd = input.index(hexStart, offsetBy: 2, limitedBy: input.endIndex) {
+                            let hexStr = String(input[hexStart..<hexEnd])
+                            if let byteVal = UInt8(hexStr, radix: 16) {
+                                result.append(Character(UnicodeScalar(byteVal)))
+                                i = hexEnd
+                                continue
+                            }
+                        }
+                    case "u", "U":
+                        // \uHHHH: 4 hex characters
+                        let hexStart = input.index(after: next)
+                        if let hexEnd = input.index(hexStart, offsetBy: 4, limitedBy: input.endIndex) {
+                            let hexStr = String(input[hexStart..<hexEnd])
+                            if let codePoint = UInt32(hexStr, radix: 16), let scalar = UnicodeScalar(codePoint) {
+                                result.append(Character(scalar))
+                                i = hexEnd
+                                continue
+                            }
+                        }
+                    default:
+                        break
+                    }
+                }
+            }
+            result.append(input[i])
+            i = input.index(after: i)
+        }
+        return result
+    }
+
+    // MARK: - Incremental Search Engine (searching.md:380-410)
+    public func updateIncrementalSearch(query: String, matchCase: Bool, wholeWord: Bool, useRegex: Bool) {
+        guard let doc = activeDocument, !query.isEmpty else {
+            incrementalSearchMatches = []
+            incrementalCurrentMatchIndex = 0
+            clearIncrementalHighlight()
+            objectWillChange.send()
+            return
+        }
+        let content = doc.content as NSString
+        var options: NSString.CompareOptions = []
+        if !matchCase { options.insert(.caseInsensitive) }
+        if useRegex { options.insert(.regularExpression) }
+
+        var ranges: [NSRange] = []
+        var searchRange = NSRange(location: 0, length: content.length)
+        while searchRange.location < content.length {
+            let r = content.range(of: query, options: options, range: searchRange)
+            if r.location == NSNotFound { break }
+            if wholeWord {
+                let leftOk = (r.location == 0 || !CharacterSet.alphanumerics.contains(UnicodeScalar(content.character(at: r.location - 1))!))
+                let rightPos = NSMaxRange(r)
+                let rightOk = (rightPos == content.length || !CharacterSet.alphanumerics.contains(UnicodeScalar(content.character(at: rightPos))!))
+                if leftOk && rightOk {
+                    ranges.append(r)
+                }
+            } else {
+                ranges.append(r)
+            }
+            let nextLoc = max(NSMaxRange(r), searchRange.location + 1)
+            searchRange = NSRange(location: nextLoc, length: content.length - nextLoc)
+        }
+        incrementalSearchMatches = ranges
+
+        if let idx = ranges.firstIndex(where: { NSLocationInRange(doc.cursorPos, $0) || $0.location >= doc.cursorPos }) {
+            incrementalCurrentMatchIndex = idx + 1
+        } else if !ranges.isEmpty {
+            incrementalCurrentMatchIndex = 1
+        } else {
+            incrementalCurrentMatchIndex = 0
+        }
+
+        if incrementalHighlightAll {
+            applyIncrementalHighlight(ranges: ranges)
+        } else {
+            clearIncrementalHighlight()
+        }
+        objectWillChange.send()
+    }
+
+    public func applyIncrementalHighlight(ranges: [NSRange]) {
+        guard let tv = activeTextView, let ts = tv.textStorage else { return }
+        clearIncrementalHighlight()
+        let highlightColor = NSColor.systemYellow.withAlphaComponent(0.35)
+        ts.beginEditing()
+        for r in ranges where NSMaxRange(r) <= ts.length {
+            ts.addAttribute(.backgroundColor, value: highlightColor, range: r)
+        }
+        ts.endEditing()
+        incrementalHighlightedRanges = ranges
+    }
+
+    public func clearIncrementalHighlight() {
+        guard let tv = activeTextView, let ts = tv.textStorage, !incrementalHighlightedRanges.isEmpty else { return }
+        ts.beginEditing()
+        for r in incrementalHighlightedRanges where NSMaxRange(r) <= ts.length {
+            ts.removeAttribute(.backgroundColor, range: r)
+        }
+        ts.endEditing()
+        incrementalHighlightedRanges.removeAll()
+    }
+
+    // MARK: - Performance Large File Guard (programing-languages.md:80-95)
+    public func isLargeFile(doc: NppDocument) -> Bool {
+        guard performanceLargeFileEnabled else { return false }
+        let threshold = performanceLargeFileSizeMB * 1024 * 1024
+        let size = doc.rawFileBytes?.count ?? doc.content.utf8.count
+        return size > threshold
     }
 
     // MARK: - Notepad++ Column Editor (Alt+C)
@@ -3050,9 +3276,11 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // Direct editor actions working reliably regardless of UI focus
-    public func selectRange(_ range: NSRange) {
+    public func selectRange(_ range: NSRange, makeFirstResponder: Bool = true) {
         if let tv = activeTextView ?? (NSApp.keyWindow?.firstResponder as? NSTextView) {
-            tv.window?.makeFirstResponder(tv)
+            if makeFirstResponder {
+                tv.window?.makeFirstResponder(tv)
+            }
             tv.setSelectedRange(range)
             tv.scrollRangeToVisible(range)
         }
@@ -3192,6 +3420,7 @@ public final class NppWorkspace: ObservableObject {
     /// `IDM_SEARCH_SETANDFINDNEXT` (`Cmd+F3`) & `IDM_SEARCH_SETANDFINDPREV` (`Cmd+Shift+F3`):
     /// Selects word under caret if no selection exists, sets `lastSearchQuery` & `findQueryText`, and finds next/previous occurrence.
     public func selectAndFindNext(forward: Bool = true) {
+        var targetFound = false
         if let tv = activeTextView, let doc = activeDocument {
             if tv.string != doc.content {
                 syncDocumentToTextView(doc: doc, tv: tv)
@@ -3212,6 +3441,7 @@ public final class NppWorkspace: ObservableObject {
                 if !token.isEmpty {
                     lastSearchQuery = token
                     findQueryText = token
+                    targetFound = true
                 }
             }
         } else if let doc = activeDocument {
@@ -3233,16 +3463,104 @@ public final class NppWorkspace: ObservableObject {
                 if !token.isEmpty {
                     lastSearchQuery = token
                     findQueryText = token
+                    targetFound = true
                 }
             }
         }
+        // Upstream parity: if (str.empty()) return;
+        guard targetFound else { return }
         findNext(forward: forward)
+    }
+
+    /// `IDM_SEARCH_VOLATILE_FINDNEXT` (`Cmd+Option+F3`) & `IDM_SEARCH_VOLATILE_FINDPREV` (`Cmd+Option+Shift+F3`)
+    /// Upstream NppCommands.cpp:1690-1715:
+    /// Expands word under caret if needed, wraps around, case-insensitive, normal search.
+    /// MUST NOT modify `lastSearchQuery` or `findQueryText`.
+    public func findVolatile(forward: Bool = true) {
+        guard let doc = activeDocument else { return }
+        let nsStr: NSString
+        var sel: NSRange
+
+        if let tv = activeTextView {
+            if tv.string != doc.content {
+                syncDocumentToTextView(doc: doc, tv: tv)
+            }
+            nsStr = tv.string as NSString
+            sel = tv.selectedRange()
+            if sel.length == 0 {
+                let expanded = expandWordRange(at: sel.location, in: nsStr)
+                if expanded.length > 0 {
+                    tv.setSelectedRange(expanded)
+                    sel = expanded
+                    doc.cursorPos = expanded.location
+                    doc.selectionLength = expanded.length
+                }
+            }
+        } else {
+            nsStr = doc.content as NSString
+            sel = NSRange(
+                location: min(doc.cursorPos, nsStr.length),
+                length: min(doc.selectionLength, max(0, nsStr.length - min(doc.cursorPos, nsStr.length)))
+            )
+            if sel.length == 0 {
+                let expanded = expandWordRange(at: sel.location, in: nsStr)
+                if expanded.length > 0 {
+                    sel = expanded
+                    doc.cursorPos = expanded.location
+                    doc.selectionLength = expanded.length
+                }
+            }
+        }
+
+        guard sel.length > 0, NSMaxRange(sel) <= nsStr.length else { return }
+        let targetText = nsStr.substring(with: sel)
+        guard !targetText.isEmpty else { return }
+
+        // Upstream: op._isMatchCase = false, op._isWrapAround = true, op._searchType = FindNormal
+        let options: NSString.CompareOptions = forward ? [.caseInsensitive] : [.caseInsensitive, .backwards]
+        let searchRange: NSRange
+        if forward {
+            let start = NSMaxRange(sel)
+            searchRange = NSRange(location: min(start, nsStr.length), length: max(0, nsStr.length - min(start, nsStr.length)))
+        } else {
+            searchRange = NSRange(location: 0, length: min(sel.location, nsStr.length))
+        }
+
+        var found = nsStr.range(of: targetText, options: options, range: searchRange)
+        if found.location == NSNotFound {
+            // Wrap around (always true for volatile find in upstream)
+            found = nsStr.range(of: targetText, options: options)
+        }
+
+        if found.location != NSNotFound {
+            if let tv = activeTextView {
+                tv.setSelectedRange(found)
+                tv.scrollRangeToVisible(found)
+            }
+            doc.cursorPos = found.location
+            doc.selectionLength = found.length
+        }
+        // Notice: lastSearchQuery and findQueryText are intentionally NOT modified!
     }
 
     /// `IDM_SEARCH_FINDINCREMENT` (`Cmd+Option+I`)
     public func toggleIncrementalSearch() {
         searchBarMode = .find
-        showSearchBar.toggle()
+        if !showSearchBar {
+            // Opening: pre-fill from selection without expanding (upstream getSelectedTextToWChar(false))
+            if let tv = activeTextView {
+                let sel = tv.selectedRange()
+                if sel.length > 0 && NSMaxRange(sel) <= (tv.string as NSString).length {
+                    let selectedStr = (tv.string as NSString).substring(with: sel)
+                    if !selectedStr.isEmpty && !selectedStr.contains("\n") && !selectedStr.contains("\r") {
+                        findQueryText = selectedStr
+                    }
+                }
+            }
+            showSearchBar = true
+        } else {
+            showSearchBar = false
+        }
     }
 
     /// `IDM_FOCUS_ON_FOUND_RESULTS` (`F7`)
@@ -3321,12 +3639,12 @@ public final class NppWorkspace: ObservableObject {
 
     public static func tokenStyleColor(for styleIndex: Int) -> NSColor {
         switch styleIndex {
-        case 1: return NSColor(calibratedRed: 0.15, green: 0.65, blue: 0.40, alpha: 0.50) // 1st Style: Mint Green
-        case 2: return NSColor(calibratedRed: 0.15, green: 0.55, blue: 0.85, alpha: 0.50) // 2nd Style: Cyan
-        case 3: return NSColor(calibratedRed: 0.85, green: 0.75, blue: 0.20, alpha: 0.50) // 3rd Style: Yellow
-        case 4: return NSColor(calibratedRed: 0.90, green: 0.50, blue: 0.20, alpha: 0.50) // 4th Style: Orange
-        case 5: return NSColor(calibratedRed: 0.65, green: 0.35, blue: 0.85, alpha: 0.50) // 5th Style: Purple
-        default: return NSColor(calibratedRed: 0.15, green: 0.65, blue: 0.40, alpha: 0.50)
+        case 1: return NSColor(calibratedRed: 0.00, green: 1.00, blue: 1.00, alpha: 0.40) // 1st Style: Cyan (#00FFFF)
+        case 2: return NSColor(calibratedRed: 1.00, green: 0.50, blue: 0.00, alpha: 0.40) // 2nd Style: Orange (#FF8000)
+        case 3: return NSColor(calibratedRed: 1.00, green: 1.00, blue: 0.00, alpha: 0.40) // 3rd Style: Yellow (#FFFF00)
+        case 4: return NSColor(calibratedRed: 0.50, green: 0.00, blue: 1.00, alpha: 0.40) // 4th Style: Purple (#8000FF)
+        case 5: return NSColor(calibratedRed: 0.00, green: 0.50, blue: 0.00, alpha: 0.40) // 5th Style: Dark Green (#008000)
+        default: return NSColor(calibratedRed: 0.00, green: 1.00, blue: 1.00, alpha: 0.40)
         }
     }
 
@@ -3367,7 +3685,11 @@ public final class NppWorkspace: ObservableObject {
         }
 
         var existing = doc.styledTokenRanges[styleIndex] ?? []
-        existing.append(contentsOf: matchedRanges)
+        for r in matchedRanges {
+            if !existing.contains(r) {
+                existing.append(r)
+            }
+        }
         doc.styledTokenRanges[styleIndex] = existing
 
         if let ts = activeTextView?.textStorage {
@@ -3407,7 +3729,9 @@ public final class NppWorkspace: ObservableObject {
         guard sel.length > 0 && NSMaxRange(sel) <= nsStr.length else { return false }
 
         var existing = doc.styledTokenRanges[styleIndex] ?? []
-        existing.append(sel)
+        if !existing.contains(sel) {
+            existing.append(sel)
+        }
         doc.styledTokenRanges[styleIndex] = existing
 
         if let ts = activeTextView?.textStorage, NSMaxRange(sel) <= ts.length {
@@ -3541,10 +3865,24 @@ public final class NppWorkspace: ObservableObject {
     private func applyFoundCharRange(_ range: NSRange, doc: NppDocument) {
         doc.cursorPos = range.location
         doc.selectionLength = range.length
+        let content = doc.content as NSString
+        let clampedLoc = min(range.location, content.length)
+        var lineCount = 1
+        for i in 0..<clampedLoc {
+            if content.character(at: i) == 10 { // '\n'
+                lineCount += 1
+            }
+        }
+        doc.cursorLine = lineCount
         if let tv = activeTextView {
             tv.setSelectedRange(range)
             tv.scrollRangeToVisible(range)
         }
+    }
+
+    public func openFindCharsInRange() {
+        showFindCharsInRangeDialog = true
+        NppFindCharsInRangeWindowController.shared.show(workspace: self)
     }
 
     // MARK: - Pass 4 (M4): View Menu Parity (Notepad_plus.rc L746-880)
@@ -3625,5 +3963,93 @@ public final class NppWorkspace: ObservableObject {
             reloadFromDisk(for: doc)
         }
         objectWillChange.send()
+    }
+
+    // MARK: - Function List Parser & Sorter (function-list.md:30-55)
+    public static func parseFunctions(content: String, filter: String = "", sortedAlphabetically: Bool = false) -> [NppFunctionItem] {
+        let lines = content.nppLines()
+        var results: [NppFunctionItem] = []
+        for (idx, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let isClass = trimmed.hasPrefix("class ") || trimmed.hasPrefix("struct ")
+            let isFunc = trimmed.hasPrefix("func ") || trimmed.hasPrefix("def ") || trimmed.hasPrefix("function ") ||
+                         (trimmed.contains("(") && trimmed.contains(")") && (trimmed.hasPrefix("void ") || trimmed.hasPrefix("int ") || trimmed.hasPrefix("public ") || trimmed.hasPrefix("private ")))
+            if isClass || isFunc {
+                var name = trimmed
+                if let paren = name.firstIndex(of: "(") {
+                    name = String(name[..<paren])
+                }
+                if let brace = name.firstIndex(of: "{") {
+                    name = String(name[..<brace])
+                }
+                name = name.trimmingCharacters(in: .whitespaces)
+                for prefix in ["class ", "struct ", "func ", "def ", "function ", "void ", "int ", "public ", "private "] {
+                    if name.hasPrefix(prefix) {
+                        name = String(name.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                        break
+                    }
+                }
+                results.append(NppFunctionItem(name: name, line: idx + 1, isClass: isClass))
+            }
+        }
+
+        if !filter.isEmpty {
+            results = results.filter { $0.name.localizedCaseInsensitiveContains(filter) }
+        }
+
+        if sortedAlphabetically {
+            results.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        } else {
+            results.sort { $0.line < $1.line }
+        }
+
+        return results
+    }
+
+    // MARK: - Folder As Workspace Helpers (session.md:110-140)
+    public static func unfoldAllDirectories(in roots: [URL]) -> Set<String> {
+        var allDirs: Set<String> = []
+        let fm = FileManager.default
+        for root in roots {
+            allDirs.insert(root.path)
+            if let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+                for case let fileUrl as URL in enumerator {
+                    var isDir: AnyObject?
+                    try? (fileUrl as NSURL).getResourceValue(&isDir, forKey: .isDirectoryKey)
+                    if let isDir = isDir as? Bool, isDir {
+                        allDirs.insert(fileUrl.path)
+                    }
+                }
+            }
+        }
+        return allDirs
+    }
+
+    public static func locateAncestorDirectories(for fileUrl: URL, in roots: [URL]) -> Set<String> {
+        var dirs: Set<String> = []
+        var current = fileUrl.deletingLastPathComponent()
+        while current.path != "/" && !current.path.isEmpty {
+            dirs.insert(current.path)
+            if roots.contains(where: { $0.standardizedFileURL.path == current.standardizedFileURL.path }) {
+                break
+            }
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path { break }
+            current = parent
+        }
+        return dirs
+    }
+}
+
+public struct NppFunctionItem: Identifiable, Equatable {
+    public var id: Int { line }
+    public let name: String
+    public let line: Int
+    public let isClass: Bool
+
+    public init(name: String, line: Int, isClass: Bool) {
+        self.name = name
+        self.line = line
+        self.isClass = isClass
     }
 }
