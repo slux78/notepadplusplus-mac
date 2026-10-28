@@ -222,6 +222,18 @@ public struct NppLocalization {
         "Clear 5th Style": "다섯 번째 스타일 지우기",
         "Clear all Styles": "모든 스타일 지우기",
         "Find characters in range...": "코드 범위로 문자 찾기...",
+        "Find Characters in Range...": "범위에서 문자 찾기...",
+        "Non-ASCII characters (128–255)": "Non-ASCII 문자 (128-255)",
+        "Non-ASCII characters (128-255)": "Non-ASCII 문자 (128-255)",
+        "ASCII characters (0–127)": "ASCII 문자 (0-127)",
+        "ASCII characters (0-127)": "ASCII 문자 (0-127)",
+        "Custom range (0–255):": "사용자 범위 (0-255):",
+        "Custom range (0-255):": "사용자 범위 (0-255):",
+        "Direction": "방향",
+        "Up": "위로",
+        "Down": "아래로",
+        "Range Value problem": "범위 값 오류",
+        "You should type between 0 and 255.": "0과 255 사이의 값을 입력해야 합니다.",
 
         // View Menu
         "Always on Top": "항상 위에 표시",

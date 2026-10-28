@@ -194,11 +194,21 @@ public struct NppEditorView: NSViewRepresentable {
         var lastLanguage: String = ""
         var smartHighlightedRanges: [NSRange] = []
         var lastSmartHighlightedWord: String = ""
+        var activeBraceRanges: [NSRange] = []
 
         init(_ parent: NppEditorView) {
             self.parent = parent
             self.lastWordWrap = parent.workspace.isWordWrapEnabled
             self.lastLanguage = parent.document.language
+        }
+
+        public func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            let replLen = (replacementString as NSString?)?.length ?? 0
+            let delta = replLen - affectedCharRange.length
+            if delta != 0 || affectedCharRange.length > 0 {
+                parent.document.adjustStyledRanges(affectedRange: affectedCharRange, delta: delta)
+            }
+            return true
         }
 
         public func textDidChange(_ notification: Notification) {
@@ -215,6 +225,48 @@ public struct NppEditorView: NSViewRepresentable {
             gutter?.needsDisplay = true
             textView?.needsDisplay = true
             updateSmartHighlighting()
+            updateBraceHighlighting()
+        }
+
+        func updateBraceHighlighting() {
+            guard let tv = textView, let ts = tv.textStorage else { return }
+            let sel = tv.selectedRange()
+            let str = tv.string as NSString
+
+            // Clear previous real-time brace highlights
+            if !activeBraceRanges.isEmpty {
+                ts.beginEditing()
+                for r in activeBraceRanges where NSMaxRange(r) <= ts.length {
+                    ts.removeAttribute(.backgroundColor, range: r)
+                }
+                // Restore manual token styles if any overlapped
+                for (styleIdx, tokenRanges) in parent.document.styledTokenRanges {
+                    let styleColor = NppWorkspace.tokenStyleColor(for: styleIdx)
+                    for r in tokenRanges where NSMaxRange(r) <= ts.length {
+                        ts.addAttribute(.backgroundColor, value: styleColor, range: r)
+                    }
+                }
+                ts.endEditing()
+                activeBraceRanges.removeAll()
+            }
+
+            guard str.length >= 2 else { return }
+            // Upstream Notepad++ matching brace detection
+            if let pair = NppEditOperations.findMatchingBracePair(in: str, at: sel.location, allowEnclosing: false) {
+                let openRange = NSRange(location: pair.openPos, length: 1)
+                let closeRange = NSRange(location: pair.closePos, length: 1)
+                let braceHighlightColor = NSColor.systemTeal.withAlphaComponent(0.35)
+
+                ts.beginEditing()
+                if NSMaxRange(openRange) <= ts.length {
+                    ts.addAttribute(.backgroundColor, value: braceHighlightColor, range: openRange)
+                }
+                if NSMaxRange(closeRange) <= ts.length {
+                    ts.addAttribute(.backgroundColor, value: braceHighlightColor, range: closeRange)
+                }
+                ts.endEditing()
+                activeBraceRanges = [openRange, closeRange]
+            }
         }
 
         func updateSmartHighlighting() {
@@ -995,9 +1047,51 @@ public final class NppTextView: NSTextView {
         styleMenuItem.submenu = styleMenu
         menu.addItem(styleMenuItem)
 
-        let clearStyleItem = NSMenuItem(title: tr("Clear all Styles"), action: #selector(contextClearStyle), keyEquivalent: "")
-        clearStyleItem.target = self
-        menu.addItem(clearStyleItem)
+        // Style one token Submenu
+        let styleOneMenuItem = NSMenuItem(title: tr("Style one token"), action: nil, keyEquivalent: "")
+        let styleOneMenu = NSMenu(title: tr("Style one token"))
+        let styleOne1 = NSMenuItem(title: tr("Using 1st Style"), action: #selector(contextStyleOne1), keyEquivalent: "")
+        styleOne1.target = self
+        styleOneMenu.addItem(styleOne1)
+        let styleOne2 = NSMenuItem(title: tr("Using 2nd Style"), action: #selector(contextStyleOne2), keyEquivalent: "")
+        styleOne2.target = self
+        styleOneMenu.addItem(styleOne2)
+        let styleOne3 = NSMenuItem(title: tr("Using 3rd Style"), action: #selector(contextStyleOne3), keyEquivalent: "")
+        styleOne3.target = self
+        styleOneMenu.addItem(styleOne3)
+        let styleOne4 = NSMenuItem(title: tr("Using 4th Style"), action: #selector(contextStyleOne4), keyEquivalent: "")
+        styleOne4.target = self
+        styleOneMenu.addItem(styleOne4)
+        let styleOne5 = NSMenuItem(title: tr("Using 5th Style"), action: #selector(contextStyleOne5), keyEquivalent: "")
+        styleOne5.target = self
+        styleOneMenu.addItem(styleOne5)
+        styleOneMenuItem.submenu = styleOneMenu
+        menu.addItem(styleOneMenuItem)
+
+        // Clear Style Submenu
+        let clearStyleMenuItem = NSMenuItem(title: tr("Clear style"), action: nil, keyEquivalent: "")
+        let clearStyleMenu = NSMenu(title: tr("Clear style"))
+        let clearStyle1 = NSMenuItem(title: tr("Clear 1st Style"), action: #selector(contextClearStyle1), keyEquivalent: "")
+        clearStyle1.target = self
+        clearStyleMenu.addItem(clearStyle1)
+        let clearStyle2 = NSMenuItem(title: tr("Clear 2nd Style"), action: #selector(contextClearStyle2), keyEquivalent: "")
+        clearStyle2.target = self
+        clearStyleMenu.addItem(clearStyle2)
+        let clearStyle3 = NSMenuItem(title: tr("Clear 3rd Style"), action: #selector(contextClearStyle3), keyEquivalent: "")
+        clearStyle3.target = self
+        clearStyleMenu.addItem(clearStyle3)
+        let clearStyle4 = NSMenuItem(title: tr("Clear 4th Style"), action: #selector(contextClearStyle4), keyEquivalent: "")
+        clearStyle4.target = self
+        clearStyleMenu.addItem(clearStyle4)
+        let clearStyle5 = NSMenuItem(title: tr("Clear 5th Style"), action: #selector(contextClearStyle5), keyEquivalent: "")
+        clearStyle5.target = self
+        clearStyleMenu.addItem(clearStyle5)
+        clearStyleMenu.addItem(NSMenuItem.separator())
+        let clearAllStyle = NSMenuItem(title: tr("Clear all Styles"), action: #selector(contextClearStyle), keyEquivalent: "")
+        clearAllStyle.target = self
+        clearStyleMenu.addItem(clearAllStyle)
+        clearStyleMenuItem.submenu = clearStyleMenu
+        menu.addItem(clearStyleMenuItem)
         menu.addItem(NSMenuItem.separator())
 
         // 3. Notepad++ Plugin commands (Base64, URL, Hashes)
@@ -1404,6 +1498,18 @@ public final class NppTextView: NSTextView {
     @objc func contextStyle3() { _ = resolvedWorkspace?.styleAllOccurrencesOfToken(styleIndex: 3) }
     @objc func contextStyle4() { _ = resolvedWorkspace?.styleAllOccurrencesOfToken(styleIndex: 4) }
     @objc func contextStyle5() { _ = resolvedWorkspace?.styleAllOccurrencesOfToken(styleIndex: 5) }
+
+    @objc func contextStyleOne1() { _ = resolvedWorkspace?.styleOneToken(styleIndex: 1) }
+    @objc func contextStyleOne2() { _ = resolvedWorkspace?.styleOneToken(styleIndex: 2) }
+    @objc func contextStyleOne3() { _ = resolvedWorkspace?.styleOneToken(styleIndex: 3) }
+    @objc func contextStyleOne4() { _ = resolvedWorkspace?.styleOneToken(styleIndex: 4) }
+    @objc func contextStyleOne5() { _ = resolvedWorkspace?.styleOneToken(styleIndex: 5) }
+
+    @objc func contextClearStyle1() { resolvedWorkspace?.clearStyle(styleIndex: 1) }
+    @objc func contextClearStyle2() { resolvedWorkspace?.clearStyle(styleIndex: 2) }
+    @objc func contextClearStyle3() { resolvedWorkspace?.clearStyle(styleIndex: 3) }
+    @objc func contextClearStyle4() { resolvedWorkspace?.clearStyle(styleIndex: 4) }
+    @objc func contextClearStyle5() { resolvedWorkspace?.clearStyle(styleIndex: 5) }
 
     @objc func contextClearStyle() {
         resolvedWorkspace?.clearAllStyles()

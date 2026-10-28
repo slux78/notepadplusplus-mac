@@ -1139,16 +1139,91 @@ public final class NppEditOperations {
         let openBraces: [unichar: unichar] = [0x7B: 0x7D, 0x5B: 0x5D, 0x28: 0x29] // { -> }, [ -> ], ( -> )
         let closeBraces: [unichar: unichar] = [0x7D: 0x7B, 0x5D: 0x5B, 0x29: 0x28] // } -> {, ] -> [, ) -> (
 
+        // Build mask of characters inside string literals or comments to prevent false matches (Scintilla StyleIndexAt guard)
+        var ignored = [Bool](repeating: false, count: len)
+        var idx = 0
+        while idx < len {
+            let ch = nsString.character(at: idx)
+            if ch == 0x22 { // '"'
+                ignored[idx] = true
+                idx += 1
+                while idx < len {
+                    ignored[idx] = true
+                    let c = nsString.character(at: idx)
+                    if c == 0x5C { // '\'
+                        idx += 1
+                        if idx < len { ignored[idx] = true; idx += 1 }
+                        continue
+                    }
+                    if c == 0x22 || c == 0x0A || c == 0x0D {
+                        idx += 1
+                        break
+                    }
+                    idx += 1
+                }
+            } else if ch == 0x27 { // '\''
+                ignored[idx] = true
+                idx += 1
+                while idx < len {
+                    ignored[idx] = true
+                    let c = nsString.character(at: idx)
+                    if c == 0x5C { // '\'
+                        idx += 1
+                        if idx < len { ignored[idx] = true; idx += 1 }
+                        continue
+                    }
+                    if c == 0x27 || c == 0x0A || c == 0x0D {
+                        idx += 1
+                        break
+                    }
+                    idx += 1
+                }
+            } else if ch == 0x2F && idx + 1 < len { // '/'
+                let nextCh = nsString.character(at: idx + 1)
+                if nextCh == 0x2F { // '//'
+                    ignored[idx] = true
+                    ignored[idx + 1] = true
+                    idx += 2
+                    while idx < len {
+                        let c = nsString.character(at: idx)
+                        if c == 0x0A || c == 0x0D { break }
+                        ignored[idx] = true
+                        idx += 1
+                    }
+                } else if nextCh == 0x2A { // '/*'
+                    ignored[idx] = true
+                    ignored[idx + 1] = true
+                    idx += 2
+                    while idx < len {
+                        ignored[idx] = true
+                        let c = nsString.character(at: idx)
+                        if c == 0x2A && idx + 1 < len && nsString.character(at: idx + 1) == 0x2F {
+                            ignored[idx + 1] = true
+                            idx += 2
+                            break
+                        }
+                        idx += 1
+                    }
+                } else {
+                    idx += 1
+                }
+            } else {
+                idx += 1
+            }
+        }
+
         func scanForward(from openIdx: Int, openChar: unichar, closeChar: unichar) -> Int? {
             var depth = 1
             var i = openIdx + 1
             while i < len {
-                let c = nsString.character(at: i)
-                if c == openChar {
-                    depth += 1
-                } else if c == closeChar {
-                    depth -= 1
-                    if depth == 0 { return i }
+                if !ignored[i] {
+                    let c = nsString.character(at: i)
+                    if c == openChar {
+                        depth += 1
+                    } else if c == closeChar {
+                        depth -= 1
+                        if depth == 0 { return i }
+                    }
                 }
                 i += 1
             }
@@ -1159,21 +1234,24 @@ public final class NppEditOperations {
             var depth = 1
             var i = closeIdx - 1
             while i >= 0 {
-                let c = nsString.character(at: i)
-                if c == closeChar {
-                    depth += 1
-                } else if c == openChar {
-                    depth -= 1
-                    if depth == 0 { return i }
+                if !ignored[i] {
+                    let c = nsString.character(at: i)
+                    if c == closeChar {
+                        depth += 1
+                    } else if c == openChar {
+                        depth -= 1
+                        if depth == 0 { return i }
+                    }
                 }
                 i -= 1
             }
             return nil
         }
 
-        // Check character at caretPos, then at caretPos - 1 (Scintilla findMatchingBracePos order)
-        let candidates = [clamped, clamped - 1].filter { $0 >= 0 && $0 < len }
+        // Upstream Notepad_plus.cpp L3120: "Priority goes to character before caret"
+        let candidates = [clamped - 1, clamped].filter { $0 >= 0 && $0 < len }
         for pos in candidates {
+            if ignored[pos] { continue }
             let ch = nsString.character(at: pos)
             if let closeCh = openBraces[ch], let matchIdx = scanForward(from: pos, openChar: ch, closeChar: closeCh) {
                 return (openPos: pos, closePos: matchIdx, caretWasAtOpen: true)
@@ -1187,9 +1265,11 @@ public final class NppEditOperations {
             // Find nearest enclosing opening brace before clamped that closes at or after clamped
             var i = min(clamped - 1, len - 1)
             while i >= 0 {
-                let ch = nsString.character(at: i)
-                if let closeCh = openBraces[ch], let matchIdx = scanForward(from: i, openChar: ch, closeChar: closeCh), matchIdx >= clamped {
-                    return (openPos: i, closePos: matchIdx, caretWasAtOpen: true)
+                if !ignored[i] {
+                    let ch = nsString.character(at: i)
+                    if let closeCh = openBraces[ch], let matchIdx = scanForward(from: i, openChar: ch, closeChar: closeCh), matchIdx >= clamped {
+                        return (openPos: i, closePos: matchIdx, caretWasAtOpen: true)
+                    }
                 }
                 i -= 1
             }

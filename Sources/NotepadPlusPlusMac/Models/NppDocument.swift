@@ -40,6 +40,31 @@ public final class NppDocument: ObservableObject, Identifiable {
         bookmarkedLines.removeAll()
     }
 
+    /// Shifts and adjusts styled token ranges when text is edited (preventing highlight offset drift)
+    public func adjustStyledRanges(affectedRange: NSRange, delta: Int) {
+        guard !styledTokenRanges.isEmpty else { return }
+        for (styleIdx, ranges) in styledTokenRanges {
+            var newRanges: [NSRange] = []
+            for r in ranges {
+                if NSMaxRange(r) <= affectedRange.location {
+                    // Range lies strictly before the edit: unmodified
+                    newRanges.append(r)
+                } else if r.location >= NSMaxRange(affectedRange) {
+                    // Range lies strictly after the edit: shifted by delta
+                    let shifted = NSRange(location: max(0, r.location + delta), length: r.length)
+                    newRanges.append(shifted)
+                } else {
+                    // Range overlaps with the edited range
+                    let newLen = max(0, r.length + delta)
+                    if newLen > 0 {
+                        newRanges.append(NSRange(location: r.location, length: newLen))
+                    }
+                }
+            }
+            styledTokenRanges[styleIdx] = newRanges
+        }
+    }
+
     // Raw bytes kept for lossless re-interpretation
     public var rawFileBytes: Data?
 
