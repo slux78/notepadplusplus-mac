@@ -43,23 +43,49 @@ public struct NppActiveStatusBarContent: View {
 
     public var body: some View {
         HStack(spacing: 0) {
-            // Box 1: File Type / Language (Notepad++ exact format)
-            NppStatusBarBox(width: 130) {
-                Text(doc.language.isEmpty ? "Normal text file" : "\(doc.language) file")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
+            // Box 1: File Type / Language (Click to open Language Menu per user-interface.md:295)
+            NppStatusBarBox(width: 140) {
+                Menu {
+                    Button(workspace.tr("None (Normal Text)")) {
+                        doc.language = ""
+                        workspace.objectWillChange.send()
+                    }
+                    Divider()
+                    ForEach(NppWorkspace.defaultLanguages, id: \.self) { lang in
+                        Button(action: {
+                            doc.language = lang
+                            workspace.objectWillChange.send()
+                        }) {
+                            let check = (doc.language == lang) ? "✓ " : "   "
+                            Text("\(check)\(lang)")
+                        }
+                    }
+                } label: {
+                    Text(doc.language.isEmpty ? "Normal text file" : "\(doc.language) file")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                }
+                .menuStyle(BorderlessButtonMenuStyle())
+                .help(workspace.tr("Language Menu (Click to change language)"))
             }
 
-            // Box 2: length : 108   lines : 10 (Notepad++ exact format)
+            // Box 2: length : 108   lines : 10 (Double click opens View > Summary per user-interface.md:301)
             let charCount = (doc.content as NSString).length
             let lineCount = max(1, doc.content.nppLines().count)
             let box2Text = "length : \(charCount)   lines : \(lineCount)"
             let box2TextWidth = (box2Text as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)]).width
             let box2ActualWidth = max(NppStatusBarView.box2Width, box2TextWidth + 24)
             NppStatusBarBox(width: box2ActualWidth) {
-                Text(box2Text)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
+                Button(action: {
+                    workspace.showDocumentSummary()
+                }) {
+                    Text(box2Text)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help(workspace.tr("Document Summary (Double-click or click to open Summary)"))
             }
 
             // Box 3: Ln : 8   Col : 21   Pos : 102 (and Sel if selected)
@@ -82,7 +108,7 @@ public struct NppActiveStatusBarContent: View {
 
             Spacer()
 
-            // Box 3: Windows (CR LF) / Unix (LF) / Macintosh (CR)
+            // Box 4: Windows (CR LF) / Unix (LF) / Macintosh (CR)
             NppStatusBarBox(width: 130) {
                 Menu {
                     Button(workspace.tr("Windows (CR LF)")) {
@@ -105,7 +131,7 @@ public struct NppActiveStatusBarContent: View {
                 .menuStyle(BorderlessButtonMenuStyle())
             }
 
-            // Box 4: Encoding (UTF-8, Windows-949, ANSI, etc.)
+            // Box 5: Encoding (UTF-8, Windows-949, ANSI, etc.)
             NppStatusBarBox(width: 130) {
                 Menu {
                     Section(workspace.tr("Encoding")) {
@@ -179,16 +205,18 @@ public struct NppActiveStatusBarContent: View {
                 .menuStyle(BorderlessButtonMenuStyle())
             }
 
-            // Box 5: INS / OVR
-            NppStatusBarBox(width: 45) {
+            // Box 6: Typing Mode (INS / OVR, width 48, toggles on click per user-interface.md:315)
+            NppStatusBarBox(width: 48) {
                 Button(action: {
                     workspace.isOverwriteMode.toggle()
                 }) {
                     Text(workspace.isOverwriteMode ? "OVR" : "INS")
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(workspace.isOverwriteMode ? .red : .secondary)
+                        .foregroundColor(workspace.isOverwriteMode ? .red : .primary)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .buttonStyle(PlainButtonStyle())
+                .help(workspace.tr("Typing Mode: Insert (INS) / Overwrite (OVR). Click to toggle."))
             }
         }
         .frame(height: 22)

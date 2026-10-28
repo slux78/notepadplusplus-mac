@@ -984,6 +984,10 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
+    public func closeAllDocuments() {
+        closeAll()
+    }
+
     // Notepad++ Tab Pinning (Buffer::isPinned & TabBar.cpp)
     public func togglePin(id: UUID) {
         guard let doc = documents.first(where: { $0.id == id }) else { return }
@@ -2363,6 +2367,64 @@ public final class NppWorkspace: ObservableObject {
 
     public func resetZoom() {
         fontSize = 13.0
+    }
+
+    public static let defaultLanguages: [String] = [
+        "C", "C++", "C#", "Swift", "Python", "JavaScript", "TypeScript",
+        "HTML", "CSS", "JSON", "XML", "SQL", "Shell", "Markdown",
+        "Java", "Rust", "Go", "PHP", "Ruby", "YAML"
+    ]
+
+    public func showDocumentSummary() {
+        guard let doc = activeDocument else { return }
+        let lineCount = max(1, doc.content.nppLines().count)
+        let words = doc.content.split { $0.isWhitespace || $0.isNewline }.count
+        let nonSpace = doc.content.filter { !$0.isWhitespace && !$0.isNewline }.count
+        let utf8Bytes = (doc.content.data(using: .utf8) ?? Data()).count
+
+        let pathStr = doc.filePath?.path ?? tr("[New Document]")
+        var createdStr = tr("Unknown")
+        var modifiedStr = tr("Unknown")
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+
+        if let filePath = doc.filePath,
+           let attrs = try? FileManager.default.attributesOfItem(atPath: filePath.path) {
+            if let crDate = attrs[.creationDate] as? Date {
+                createdStr = formatter.string(from: crDate)
+            }
+            if let modDate = attrs[.modificationDate] as? Date {
+                modifiedStr = formatter.string(from: modDate)
+            }
+        } else {
+            createdStr = formatter.string(from: Date())
+            modifiedStr = formatter.string(from: Date())
+        }
+
+        var info = ""
+        info += "\(tr("Full file path")): \(pathStr)\n"
+        info += "\(tr("Created")): \(createdStr)\n"
+        info += "\(tr("Modified")): \(modifiedStr)\n"
+        info += "\(tr("Characters (without line endings)")): \(nonSpace)\n"
+        info += "\(tr("Words")): \(words)\n"
+        info += "\(tr("Lines")): \(lineCount)\n"
+        info += "\(tr("Document length")): \(utf8Bytes) bytes"
+
+        if doc.selectionLength > 0 {
+            let nsStr = doc.content as NSString
+            let safeLoc = min(doc.cursorPos, nsStr.length)
+            let safeLen = min(doc.selectionLength, max(0, nsStr.length - safeLoc))
+            let selText = nsStr.substring(with: NSRange(location: safeLoc, length: safeLen))
+            let selBytes = (selText.data(using: .utf8) ?? Data()).count
+            info += "\n\(doc.selectionLength) \(tr("selected characters")) (\(selBytes) bytes) \(tr("in 1 range"))"
+        }
+
+        let alert = NSAlert()
+        alert.messageText = tr("Summary")
+        alert.informativeText = info
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: tr("OK"))
+        alert.runModal()
     }
 
     // MARK: - Tab Navigation & Sorting (Window Menu)

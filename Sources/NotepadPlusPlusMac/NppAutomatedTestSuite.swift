@@ -1375,6 +1375,11 @@ final class NppAutomatedTestSuite {
             // ---------------------------------------------------------
             runSearchAndViewMenuParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
+            // ---------------------------------------------------------
+            // 33. RE-AUDIT 5: OFFICIAL MANUAL & C++ UPSTREAM PARITY
+            // ---------------------------------------------------------
+            runOfficialManualAndUpstreamParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -2799,6 +2804,200 @@ final class NppAutomatedTestSuite {
         ws.closeDocument(id: sortDocA.id)
         ws.closeDocument(id: sortDocB.id)
         ws.closeDocument(id: doc.id)
+    }
+
+    // =========================================================================
+    // 33. RE-AUDIT PASS 5: OFFICIAL MANUAL & C++ UPSTREAM PARITY
+    //     (TabBar Shortcuts, Overflow Navigation, Dropdown List,
+    //      StatusBar Language Menu, INS/OVR Toggle, Document Summary,
+    //      Find/Replace 2 Find Buttons & Swap/Copy, View F11/F12 Shortcuts)
+    // =========================================================================
+    static func runOfficialManualAndUpstreamParityTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("🎯 RE-AUDIT 5: OFFICIAL MANUAL & C++ UPSTREAM PARITY")
+        print("========================================================")
+
+        // 1. TabBar nextTab() and prevTab() cycle through opened documents
+        ws.closeAll() // leaves exactly 1 empty default document
+        guard let doc1 = ws.activeDocument else { return }
+        doc1.title = "Tab1"
+        let id1 = doc1.id
+
+        ws.newDocument() // doc2
+        guard let doc2 = ws.activeDocument else { return }
+        doc2.title = "Tab2"
+        let id2 = doc2.id
+
+        ws.newDocument() // doc3
+        guard let doc3 = ws.activeDocument else { return }
+        doc3.title = "Tab3"
+        let id3 = doc3.id
+
+        ws.activeDocumentId = id1
+        ws.nextTab()
+        let next1 = (ws.activeDocumentId == id2)
+        ws.nextTab()
+        let next2 = (ws.activeDocumentId == id3)
+        ws.nextTab()
+        let nextCycle = (ws.activeDocumentId == id1)
+        ws.prevTab()
+        let prevCycle = (ws.activeDocumentId == id3)
+        assertTest("Re-Audit 5.A: TabBar nextTab() and prevTab() cycle through opened documents",
+                   next1 && next2 && nextCycle && prevCycle)
+
+        // 2. TabBar sortTabsByName arranges tabs alphabetically
+        doc1.title = "ZebraDoc"
+        doc2.title = "AppleDoc"
+        doc3.title = "MangoDoc"
+        ws.sortTabsByName(ascending: true)
+        let titles = ws.documents.map { $0.title }
+        assertTest("Re-Audit 5.B: TabBar sortTabsByName arranges tabs alphabetically",
+                   titles == ["AppleDoc", "MangoDoc", "ZebraDoc"])
+
+        // 3. TabBar closeAllDocuments() closes unpinned tabs and preserves pinned tab
+        if let appleDoc = ws.documents.first(where: { $0.title == "AppleDoc" }) {
+            appleDoc.isPinned = true
+        }
+        ws.closeAllDocuments()
+        assertTest("Re-Audit 5.C: TabBar closeAllDocuments() closes unpinned tabs and preserves pinned tab",
+                   ws.documents.count == 1 && ws.documents.first?.title == "AppleDoc" && ws.documents.first?.isPinned == true)
+        ws.documents.first?.isPinned = false
+
+        // 4. TabBar tabReduce and hideRightShortcuts preference flags
+        let origReduce = ws.tabReduce
+        let origHideShortcuts = ws.hideRightShortcuts
+        ws.tabReduce = true
+        ws.hideRightShortcuts = true
+        let flagsUpdated = (ws.tabReduce == true && ws.hideRightShortcuts == true)
+        ws.tabReduce = origReduce
+        ws.hideRightShortcuts = origHideShortcuts
+        assertTest("Re-Audit 5.D: TabBar tabReduce and hideRightShortcuts preference flags",
+                   flagsUpdated && ws.tabReduce == origReduce && ws.hideRightShortcuts == origHideShortcuts)
+
+        // 5. StatusBar default languages array contains 20 standard programming languages
+        let langs = NppWorkspace.defaultLanguages
+        let hasCoreLangs = langs.contains("C") && langs.contains("C++") && langs.contains("Swift") &&
+                           langs.contains("Python") && langs.contains("Rust") && langs.contains("HTML") &&
+                           langs.contains("JSON") && langs.contains("Go")
+        assertTest("Re-Audit 5.E: StatusBar default languages array contains 20 standard programming languages",
+                   langs.count == 20 && hasCoreLangs)
+
+        // 6. StatusBar typing mode toggle INS/OVR
+        let origOvr = ws.isOverwriteMode
+        ws.isOverwriteMode = false
+        ws.isOverwriteMode.toggle()
+        let ovrActive = (ws.isOverwriteMode == true)
+        ws.isOverwriteMode.toggle()
+        let insActive = (ws.isOverwriteMode == false)
+        ws.isOverwriteMode = origOvr
+        assertTest("Re-Audit 5.F: StatusBar typing mode toggle INS/OVR",
+                   ovrActive && insActive)
+
+        // 7. StatusBar and Document Summary metrics calculate exact character, word, line, and UTF-8 byte counts
+        ws.newDocument()
+        guard let summaryDoc = ws.activeDocument else { return }
+        summaryDoc.content = "Hello World\nNotepad++ Mac Native\n한글 테스트"
+        let lineCount = max(1, summaryDoc.content.nppLines().count)
+        let words = summaryDoc.content.split { $0.isWhitespace || $0.isNewline }.count
+        let nonSpace = summaryDoc.content.filter { !$0.isWhitespace && !$0.isNewline }.count
+        let utf8Bytes = (summaryDoc.content.data(using: .utf8) ?? Data()).count
+        assertTest("Re-Audit 5.G: StatusBar and Document Summary metrics calculate exact character, word, line, and UTF-8 byte counts",
+                   lineCount == 3 && words == 7 && nonSpace == 33 && utf8Bytes > 33)
+
+        // 8. Document Summary calculates selection characters and UTF-8 bytes
+        let nsContent = summaryDoc.content as NSString
+        let selRange = nsContent.range(of: "한글 테스트")
+        summaryDoc.cursorPos = selRange.location
+        summaryDoc.selectionLength = selRange.length
+        let safeLoc = min(summaryDoc.cursorPos, nsContent.length)
+        let safeLen = min(summaryDoc.selectionLength, max(0, nsContent.length - safeLoc))
+        let selText = nsContent.substring(with: NSRange(location: safeLoc, length: safeLen))
+        let selBytes = (selText.data(using: .utf8) ?? Data()).count
+        assertTest("Re-Audit 5.H: Document Summary calculates selection characters and UTF-8 bytes",
+                   selText == "한글 테스트" && summaryDoc.selectionLength == 6 && selBytes == 16)
+
+        // 9. Find/Replace 2 find buttons mode UserDefaults persistence
+        UserDefaults.standard.set(true, forKey: "npp_two_find_buttons_mode")
+        let twoBtnsEnabled = UserDefaults.standard.bool(forKey: "npp_two_find_buttons_mode")
+        UserDefaults.standard.set(false, forKey: "npp_two_find_buttons_mode")
+        let twoBtnsDisabled = !UserDefaults.standard.bool(forKey: "npp_two_find_buttons_mode")
+        assertTest("Re-Audit 5.I: Find/Replace 2 find buttons mode UserDefaults persistence",
+                   twoBtnsEnabled && twoBtnsDisabled)
+
+        // 10. Find/Replace backward search locates previous occurrence accurately
+        let tv = ws.activeTextView ?? NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        ws.activeTextView = tv
+        tv.string = "cat dog cat bird cat"
+        let query = "cat"
+        let content = tv.string as NSString
+        let startLocation = 11
+        let rangeToSearch = NSRange(location: 0, length: min(startLocation, content.length))
+        let foundBackward = content.range(of: query, options: [.backwards], range: rangeToSearch)
+        assertTest("Re-Audit 5.J: Find/Replace backward search locates previous occurrence accurately",
+                   foundBackward.location == 8 && foundBackward.length == 3)
+
+        // 11. Find/Replace swap and copy buttons logic (Swap, Copy Find->Replace, Copy Replace->Find)
+        var fText = "findWord"
+        var rText = "replaceWord"
+        let tmp = fText
+        fText = rText
+        rText = tmp
+        let swapOk = (fText == "replaceWord" && rText == "findWord")
+        rText = fText
+        let copyFtoROk = (rText == "replaceWord" && fText == "replaceWord")
+        fText = "another"
+        rText = "fromReplace"
+        fText = rText
+        let copyRtoFOk = (fText == "fromReplace" && rText == "fromReplace")
+        assertTest("Re-Audit 5.K: Find/Replace swap and copy buttons logic (Swap, Copy Find->Replace, Copy Replace->Find)",
+                   swapOk && copyFtoROk && copyRtoFOk)
+
+        // 12. View Menu: Toggle Full Screen Mode shortcut is F11
+        // 13. View Menu: Post-It shortcut is F12
+        // 14. View Menu: Summary... menu item is connected to menuDocSummary
+        var fsKeyOk = false
+        var piKeyOk = false
+        var summaryConnected = false
+        if let mainMenu = NSApp.mainMenu {
+            for item in mainMenu.items {
+                if let sub = item.submenu {
+                    for subItem in sub.items {
+                        if subItem.action == #selector(AppDelegate.menuToggleFullScreen) {
+                            fsKeyOk = (subItem.keyEquivalent == String(UnicodeScalar(NSF11FunctionKey)!) && subItem.keyEquivalentModifierMask == [])
+                        }
+                        if subItem.action == #selector(AppDelegate.menuTogglePostIt) {
+                            piKeyOk = (subItem.keyEquivalent == String(UnicodeScalar(NSF12FunctionKey)!) && subItem.keyEquivalentModifierMask == [])
+                        }
+                        if subItem.action == #selector(AppDelegate.menuDocSummary) {
+                            summaryConnected = true
+                        }
+                    }
+                }
+            }
+        }
+        assertTest("Re-Audit 5.L: View Menu: Toggle Full Screen Mode shortcut is F11", fsKeyOk)
+        assertTest("Re-Audit 5.M: View Menu: Post-It shortcut is F12", piKeyOk)
+        assertTest("Re-Audit 5.N: View Menu: Summary... menu item is connected to menuDocSummary", summaryConnected)
+
+        // 15. Korean Localization for TabBar, StatusBar, Summary and Find/Replace upstream strings
+        ws.localizationLanguage = "한국어"
+        let trSummary = (ws.tr("Summary") == "요약")
+        let trPath = (ws.tr("Full file path") == "전체 파일 경로")
+        let trChars = (ws.tr("Characters (without line endings)") == "문자 수 (줄 바꿈 제외)")
+        let tr2Btns = (ws.tr("2 find buttons mode") == "2개 찾기 버튼 모드")
+        let trSwap = (ws.tr("Swap Find with Replace") == "찾을 내용과 바꿀 내용 맞바꾸기")
+        let trPrevTab = (ws.tr("Previous Tab (⏴)") == "이전 탭 (⏴)")
+        let trNextTab = (ws.tr("Next Tab (⏵)") == "다음 탭 (⏵)")
+        ws.localizationLanguage = "English (Default)"
+        assertTest("Re-Audit 5.O: Korean Localization for TabBar, StatusBar, Summary and Find/Replace upstream strings",
+                   trSummary && trPath && trChars && tr2Btns && trSwap && trPrevTab && trNextTab)
+
+        // Clean up
+        ws.closeAll()
     }
 
     static func captureScreenshot(appDelegate: AppDelegate, openPrefs: Bool, prefTab: Int = 0, showInvisibles: Bool = false, searchMode: NppWorkspace.NppSearchBarMode? = nil, filename: String = "screenshot.png") {

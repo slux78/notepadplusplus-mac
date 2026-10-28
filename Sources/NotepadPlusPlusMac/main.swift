@@ -644,8 +644,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenuItem = NSMenuItem()
         let viewMenu = NSMenu(title: tr("View"))
         viewMenu.addItem(withTitle: tr("Always on Top"), action: #selector(menuToggleAlwaysOnTop(_:)), keyEquivalent: "")
-        viewMenu.addItem(withTitle: tr("Toggle Full Screen Mode"), action: #selector(menuToggleFullScreen), keyEquivalent: "")
-        viewMenu.addItem(withTitle: tr("Post-It"), action: #selector(menuTogglePostIt), keyEquivalent: "")
+        let fsItem = viewMenu.addItem(withTitle: tr("Toggle Full Screen Mode"), action: #selector(menuToggleFullScreen), keyEquivalent: String(UnicodeScalar(NSF11FunctionKey)!))
+        fsItem.keyEquivalentModifierMask = []
+        let piItem = viewMenu.addItem(withTitle: tr("Post-It"), action: #selector(menuTogglePostIt), keyEquivalent: String(UnicodeScalar(NSF12FunctionKey)!))
+        piItem.keyEquivalentModifierMask = []
         viewMenu.addItem(withTitle: tr("Distraction Free Mode"), action: #selector(menuToggleDistractionFree), keyEquivalent: "")
         viewMenu.addItem(NSMenuItem.separator())
 
@@ -709,7 +711,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(withTitle: tr("Function List"), action: #selector(menuToggleFunctionList), keyEquivalent: "")
         viewMenu.addItem(withTitle: tr("Document Map"), action: #selector(menuToggleDocumentMap), keyEquivalent: "")
         viewMenu.addItem(NSMenuItem.separator())
-        viewMenu.addItem(withTitle: tr("Document Summary..."), action: #selector(menuDocSummary), keyEquivalent: "")
+        viewMenu.addItem(withTitle: tr("Summary..."), action: #selector(menuDocSummary), keyEquivalent: "")
         viewMenu.addItem(withTitle: tr("Monitoring (tail -f)"), action: #selector(menuToggleMonitoring), keyEquivalent: "")
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
@@ -1272,16 +1274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func menuZoomOut() { workspace.zoomOut() }
     @objc func menuResetZoom() { workspace.resetZoom() }
     @objc func menuDocSummary() {
-        guard let doc = workspace.activeDocument else { return }
-        let charCount = doc.content.count
-        let lineCount = max(1, doc.content.components(separatedBy: .newlines).count)
-        let words = doc.content.split { $0.isWhitespace || $0.isNewline }.count
-        let nonSpace = doc.content.filter { !$0.isWhitespace && !$0.isNewline }.count
-        let alert = NSAlert()
-        alert.messageText = "Summary for \(doc.title)"
-        alert.informativeText = "Characters (without spaces): \(nonSpace)\nCharacters (with spaces): \(charCount)\nWords: \(words)\nLines: \(lineCount)\nDocument length: \(charCount) bytes"
-        alert.alertStyle = .informational
-        alert.runModal()
+        workspace.showDocumentSummary()
     }
 
     // Clipboard & Path

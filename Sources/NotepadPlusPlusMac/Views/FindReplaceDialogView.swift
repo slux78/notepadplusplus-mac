@@ -25,6 +25,8 @@ public struct NppFindReplaceDialogView: View {
     @State private var bookmarkLine: Bool = true
     @State private var purgeEachSearch: Bool = false
 
+    @AppStorage("npp_two_find_buttons_mode") private var twoFindButtonsMode: Bool = false
+
     @State private var statusMessage: String = ""
 
     public init(workspace: NppWorkspace, isPresented: Binding<Bool>) {
@@ -75,15 +77,32 @@ public struct NppFindReplaceDialogView: View {
                             TextField("", text: $replaceText)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .font(.system(size: 12, design: .monospaced))
-                            Button(action: {
-                                let tmp = findText
-                                findText = replaceText
-                                replaceText = tmp
-                            }) {
+                            Menu {
+                                Button(action: {
+                                    let tmp = findText
+                                    findText = replaceText
+                                    replaceText = tmp
+                                }) {
+                                    Label(workspace.tr("Swap Find with Replace"), systemImage: "arrow.up.arrow.down")
+                                }
+                                Button(action: {
+                                    replaceText = findText
+                                }) {
+                                    Label(workspace.tr("Copy from Find to Replace"), systemImage: "arrow.down.right")
+                                }
+                                Button(action: {
+                                    findText = replaceText
+                                }) {
+                                    Label(workspace.tr("Copy from Replace to Find"), systemImage: "arrow.up.left")
+                                }
+                            } label: {
                                 Image(systemName: "arrow.up.arrow.down")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .frame(width: 24, height: 20)
                             }
-                            .help("Swap Find and Replace strings")
+                            .menuStyle(BorderlessButtonMenuStyle())
+                            .help(workspace.tr("Swap or Copy Find and Replace strings (⇅)"))
                         }
                     }
 
@@ -191,7 +210,7 @@ public struct NppFindReplaceDialogView: View {
                 VStack(spacing: 6) {
                     if workspace.findReplaceTab == 0 {
                         // Find Tab Buttons
-                        actionBtn(workspace.tr("Find Next"), isDefault: true) { runFindNext() }
+                        findNextButtonCluster
                         actionBtn(workspace.tr("Count")) { runCount() }
                         actionBtn(workspace.tr("Find All in All Opened Documents")) {
                             workspace.findAllInAllOpenedDocs(query: processedQuery(), matchCase: matchCase, wholeWord: matchWholeWord, useRegex: searchMode == 2)
@@ -204,7 +223,7 @@ public struct NppFindReplaceDialogView: View {
                         }
                     } else if workspace.findReplaceTab == 1 {
                         // Replace Tab Buttons
-                        actionBtn(workspace.tr("Find Next")) { runFindNext() }
+                        findNextButtonCluster
                         actionBtn(workspace.tr("Replace")) { runReplaceOne() }
                         actionBtn(workspace.tr("Replace All"), isDefault: true) { runReplaceAll() }
                         actionBtn(workspace.tr("Replace All in All Opened Docs")) {
@@ -234,7 +253,7 @@ public struct NppFindReplaceDialogView: View {
                         }
                     } else if workspace.findReplaceTab == 3 {
                         // Mark Tab Buttons
-                        actionBtn(workspace.tr("Find Next")) { runFindNext() }
+                        findNextButtonCluster
                         actionBtn(workspace.tr("Mark All"), isDefault: true) { runMarkAll() }
                         actionBtn(workspace.tr("Clear all marks")) {
                             workspace.clearAllBookmarks()
@@ -287,6 +306,38 @@ public struct NppFindReplaceDialogView: View {
         .onChange(of: workspace.findQueryText) { newQuery in
             if findText != newQuery {
                 findText = newQuery
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var findNextButtonCluster: some View {
+        HStack(spacing: 4) {
+            Toggle("", isOn: $twoFindButtonsMode)
+                .labelsHidden()
+                .toggleStyle(CheckboxToggleStyle())
+                .help(workspace.tr("2 find buttons mode"))
+
+            if twoFindButtonsMode {
+                Button(action: { runFindNext(backward: true) }) {
+                    Text("▲ \(workspace.tr("Find Next"))")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 3)
+                }
+                .buttonStyle(DefaultButtonStyle())
+                .help(workspace.tr("Find Previous"))
+
+                Button(action: { runFindNext(backward: false) }) {
+                    Text("▼ \(workspace.tr("Find Next"))")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 3)
+                }
+                .buttonStyle(DefaultButtonStyle())
+                .help(workspace.tr("Find Next"))
+            } else {
+                actionBtn(workspace.tr("Find Next"), isDefault: true) { runFindNext() }
             }
         }
     }
@@ -456,18 +507,19 @@ public struct NppFindReplaceDialogView: View {
         return try? NSRegularExpression(pattern: pattern, options: options)
     }
 
-    private func runFindNext() {
+    private func runFindNext(backward: Bool? = nil) {
         guard let tv = workspace.activeTextView, !findText.isEmpty else { return }
+        let effectiveBackward = backward ?? backwardDirection
         let query = processedQuery()
         let content = tv.string
         let currentRange = tv.selectedRange()
-        let startLocation = backwardDirection ? currentRange.location : NSMaxRange(currentRange)
+        let startLocation = effectiveBackward ? currentRange.location : NSMaxRange(currentRange)
 
         var foundRange: NSRange?
         if searchMode == 2 || matchWholeWord {
             if let regex = buildSearchRegex(for: query) {
                 let matches = regex.matches(in: content, range: NSRange(location: 0, length: (content as NSString).length))
-                if backwardDirection {
+                if effectiveBackward {
                     foundRange = matches.last(where: { $0.range.location < startLocation })?.range
                     if foundRange == nil && wrapAround {
                         foundRange = matches.last?.range
@@ -483,7 +535,7 @@ public struct NppFindReplaceDialogView: View {
             var options: NSString.CompareOptions = []
             if !matchCase { options.insert(.caseInsensitive) }
             let searchLength = (content as NSString).length
-            if backwardDirection {
+            if effectiveBackward {
                 let rangeToSearch = NSRange(location: 0, length: min(startLocation, searchLength))
                 let r = (content as NSString).range(of: query, options: options.union(.backwards), range: rangeToSearch)
                 if r.location != NSNotFound {

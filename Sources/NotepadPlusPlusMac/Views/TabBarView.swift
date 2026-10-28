@@ -9,58 +9,150 @@ public struct NppTabBarView: View {
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(workspace.documents) { doc in
-                        NppTabItemView(
-                            doc: doc,
-                            workspace: workspace,
-                            isActive: workspace.activeDocumentId == doc.id,
-                            onSelect: {
-                                guard workspace.documents.contains(where: { $0.id == doc.id }) else { return }
-                                workspace.activeDocumentId = doc.id
-                            },
-                            onClose: {
-                                workspace.closeDocument(id: doc.id)
-                            }
-                        )
-                    }
-
-                    // Empty space next to tabs: double-click to create new tab!
-                    Color.clear
-                        .frame(minWidth: 80, maxWidth: .infinity)
-                        .frame(height: workspace.tabReduce ? 22 : 28)
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2) {
-                            if workspace.doubleClickSpaceToNewTab {
-                                workspace.newDocument()
-                            }
+        ScrollViewReader { proxy in
+            HStack(spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        ForEach(workspace.documents) { doc in
+                            NppTabItemView(
+                                doc: doc,
+                                workspace: workspace,
+                                isActive: workspace.activeDocumentId == doc.id,
+                                onSelect: {
+                                    guard workspace.documents.contains(where: { $0.id == doc.id }) else { return }
+                                    workspace.activeDocumentId = doc.id
+                                },
+                                onClose: {
+                                    workspace.closeDocument(id: doc.id)
+                                }
+                            )
+                            .id(doc.id)
                         }
-                }
-                .padding(.horizontal, 4)
-                .padding(.vertical, workspace.tabReduce ? 1 : 3)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                if workspace.doubleClickSpaceToNewTab {
-                    workspace.newDocument()
-                }
-            }
 
-            // New Tab "+" Button (respects hideRightShortcuts)
-            if !workspace.hideRightShortcuts {
-                Button(action: {
-                    workspace.newDocument()
-                }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: workspace.tabReduce ? 9 : 11, weight: .bold))
-                        .foregroundColor(.secondary)
-                        .frame(width: workspace.tabReduce ? 20 : 24, height: workspace.tabReduce ? 20 : 24)
+                        // Empty space next to tabs: double-click to create new tab!
+                        Color.clear
+                            .frame(minWidth: 80, maxWidth: .infinity)
+                            .frame(height: workspace.tabReduce ? 22 : 28)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) {
+                                if workspace.doubleClickSpaceToNewTab {
+                                    workspace.newDocument()
+                                }
+                            }
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, workspace.tabReduce ? 1 : 3)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .padding(.trailing, 6)
-                .help("New Document (Double-click tab bar space or Cmd+N)")
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) {
+                    if workspace.doubleClickSpaceToNewTab {
+                        workspace.newDocument()
+                    }
+                }
+                .onChange(of: workspace.activeDocumentId) { newId in
+                    if let id = newId {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            proxy.scrollTo(id, anchor: .center)
+                        }
+                    }
+                }
+
+                // Tab overflow navigation arrows ⏴ ⏵ (per user-interface.md:130)
+                HStack(spacing: 1) {
+                    Button(action: {
+                        workspace.prevTab()
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: workspace.tabReduce ? 8 : 10, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .frame(width: workspace.tabReduce ? 16 : 18, height: workspace.tabReduce ? 20 : 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(workspace.tr("Previous Tab (⏴)"))
+
+                    Button(action: {
+                        workspace.nextTab()
+                    }) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: workspace.tabReduce ? 8 : 10, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .frame(width: workspace.tabReduce ? 16 : 18, height: workspace.tabReduce ? 20 : 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(workspace.tr("Next Tab (⏵)"))
+                }
+                .padding(.horizontal, 2)
+
+                // Right shortcuts cluster: ＋ ▼ ✕ (Notepad_plus.rc:1366-1372, respects hideRightShortcuts)
+                if !workspace.hideRightShortcuts {
+                    HStack(spacing: 2) {
+                        Divider().frame(height: 14)
+
+                        // 1. ＋ New Document (IDM_FILE_NEW)
+                        Button(action: {
+                            workspace.newDocument()
+                        }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: workspace.tabReduce ? 9 : 11, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .frame(width: workspace.tabReduce ? 18 : 22, height: workspace.tabReduce ? 20 : 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(workspace.tr("New Document (＋)"))
+
+                        // 2. ▼ Document list popup menu (IDM_DROPLIST_LIST)
+                        Menu {
+                            ForEach(Array(workspace.documents.enumerated()), id: \.element.id) { index, doc in
+                                Button(action: {
+                                    workspace.activeDocumentId = doc.id
+                                }) {
+                                    let check = (workspace.activeDocumentId == doc.id) ? "✓ " : "   "
+                                    let dirty = doc.isDirty ? "*" : ""
+                                    let pinned = doc.isPinned ? "📌 " : ""
+                                    Text("\(check)\(index + 1): \(pinned)\(doc.title)\(dirty)")
+                                }
+                            }
+                            Divider()
+                            Button(workspace.tr("Sort by Name")) {
+                                workspace.sortTabsByName(ascending: true)
+                            }
+                            Button(workspace.tr("Close All")) {
+                                workspace.closeAll()
+                            }
+                            Button(workspace.tr("Windows...")) {
+                                workspace.showDocumentList = true
+                            }
+                        } label: {
+                            Image(systemName: "arrowtriangle.down.fill")
+                                .font(.system(size: workspace.tabReduce ? 7 : 8, weight: .semibold))
+                                .foregroundColor(.secondary)
+                                .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
+                                .contentShape(Rectangle())
+                        }
+                        .menuStyle(BorderlessButtonMenuStyle())
+                        .help(workspace.tr("Open Documents List (▼)"))
+
+                        // 3. ✕ Close active tab (IDM_FILE_CLOSE)
+                        Button(action: {
+                            if let activeId = workspace.activeDocumentId {
+                                workspace.closeDocument(id: activeId)
+                            }
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: workspace.tabReduce ? 9 : 10, weight: .bold))
+                                .foregroundColor(workspace.activeDocument == nil ? .secondary.opacity(0.3) : .secondary)
+                                .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(workspace.activeDocument == nil)
+                        .help(workspace.tr("Close Current Tab (✕)"))
+                    }
+                    .padding(.trailing, 4)
+                }
             }
         }
         .background(Color(NSColor.windowBackgroundColor))
