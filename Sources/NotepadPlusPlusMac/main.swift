@@ -73,6 +73,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        workspace.$compactLanguageMenu
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.setupMenuBar()
+            }
+            .store(in: &cancellables)
+
         workspace.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -81,6 +89,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         bindActiveDocument()
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didEnterFullScreenNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notif in
+            if notif.object as? NSWindow == self?.window {
+                self?.workspace.isFullScreen = true
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didExitFullScreenNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notif in
+            if notif.object as? NSWindow == self?.window {
+                self?.workspace.isFullScreen = false
+            }
+        }
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
@@ -691,6 +719,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tabSubMenu.addItem(withTitle: tr("Next Tab"), action: #selector(menuNextTab), keyEquivalent: "")
         tabSubMenu.addItem(withTitle: tr("Previous Tab"), action: #selector(menuPrevTab), keyEquivalent: "")
         tabSubMenu.addItem(NSMenuItem.separator())
+        tabSubMenu.addItem(withTitle: tr("Move to Start"), action: #selector(menuMoveTabToStart), keyEquivalent: "")
+        tabSubMenu.addItem(withTitle: tr("Move to End"), action: #selector(menuMoveTabToEnd), keyEquivalent: "")
         tabSubMenu.addItem(withTitle: tr("Move Tab Forward"), action: #selector(menuMoveTabForward), keyEquivalent: "")
         tabSubMenu.addItem(withTitle: tr("Move Tab Backward"), action: #selector(menuMoveTabBackward), keyEquivalent: "")
         tabSubMenu.addItem(NSMenuItem.separator())
@@ -728,25 +758,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         encMenu.addItem(withTitle: "UTF-16 LE BOM", action: #selector(menuEncodeUtf16LE), keyEquivalent: "")
 
         let charSetsMenu = NSMenu(title: tr("Character sets"))
-        let koreanMenu = NSMenu(title: tr("Korean"))
-        koreanMenu.addItem(withTitle: "Windows 949 (CP949)", action: #selector(menuEncodeCP949), keyEquivalent: "")
-        koreanMenu.addItem(withTitle: "EUC-KR", action: #selector(menuEncodeEucKr), keyEquivalent: "")
-        let koreanItem = NSMenuItem(title: tr("Korean"), action: nil, keyEquivalent: "")
-        koreanItem.submenu = koreanMenu
-        charSetsMenu.addItem(koreanItem)
-
-        let japaneseMenu = NSMenu(title: tr("Japanese"))
-        japaneseMenu.addItem(withTitle: "Shift-JIS", action: #selector(menuEncodeShiftJis), keyEquivalent: "")
-        let japaneseItem = NSMenuItem(title: tr("Japanese"), action: nil, keyEquivalent: "")
-        japaneseItem.submenu = japaneseMenu
-        charSetsMenu.addItem(japaneseItem)
-
-        let chineseMenu = NSMenu(title: tr("Chinese"))
-        chineseMenu.addItem(withTitle: "GB2312 (Simplified)", action: #selector(menuEncodeGB18030), keyEquivalent: "")
-        chineseMenu.addItem(withTitle: "Big5 (Traditional)", action: #selector(menuEncodeBig5), keyEquivalent: "")
-        let chineseItem = NSMenuItem(title: tr("Chinese"), action: nil, keyEquivalent: "")
-        chineseItem.submenu = chineseMenu
-        charSetsMenu.addItem(chineseItem)
+        let charSetsData: [(name: String, items: [(title: String, charset: String)])] = [
+            ("Arabic", [("ISO 8859-6", "ISO-8859-6"), ("OEM 720", "CP720"), ("Windows-1256", "WINDOWS-1256")]),
+            ("Baltic", [("ISO 8859-4", "ISO-8859-4"), ("ISO 8859-13", "ISO-8859-13"), ("OEM 775", "CP775"), ("Windows-1257", "WINDOWS-1257")]),
+            ("Celtic", [("ISO 8859-14", "ISO-8859-14")]),
+            ("Cyrillic", [("ISO 8859-5", "ISO-8859-5"), ("KOI8-R", "KOI8-R"), ("KOI8-U", "KOI8-U"), ("Macintosh", "MACINTOSH"), ("OEM 855", "CP855"), ("OEM 866", "CP866"), ("Windows-1251", "WINDOWS-1251")]),
+            ("Central European", [("OEM 852", "CP852"), ("Windows-1250", "WINDOWS-1250")]),
+            ("Chinese", [("Big5 (Traditional)", "BIG5"), ("GB2312 (Simplified)", "GB18030")]),
+            ("Eastern European", [("ISO 8859-2", "ISO-8859-2")]),
+            ("Greek", [("ISO 8859-7", "ISO-8859-7"), ("OEM 737", "CP737"), ("OEM 869", "CP869"), ("Windows-1253", "WINDOWS-1253")]),
+            ("Hebrew", [("ISO 8859-8", "ISO-8859-8"), ("OEM 862", "CP862"), ("Windows-1255", "WINDOWS-1255")]),
+            ("Japanese", [("Shift-JIS", "SHIFT_JIS")]),
+            ("Korean", [("Windows 949 (CP949)", "CP949"), ("EUC-KR", "EUC-KR")]),
+            ("North European", [("OEM 861 : Icelandic", "CP861"), ("OEM 865 : Nordic", "CP865")]),
+            ("Thai", [("TIS-620", "TIS-620")]),
+            ("Turkish", [("ISO 8859-3", "ISO-8859-3"), ("ISO 8859-9", "ISO-8859-9"), ("OEM 857", "CP857"), ("Windows-1254", "WINDOWS-1254")]),
+            ("Western European", [("ISO 8859-1", "ISO-8859-1"), ("ISO 8859-15", "ISO-8859-15"), ("OEM 850", "CP850"), ("OEM 858", "CP858"), ("OEM 860 : Portuguese", "CP860"), ("OEM 863 : French", "CP863"), ("OEM-US : CP437", "CP437"), ("Windows-1252", "WINDOWS-1252")]),
+            ("Vietnamese", [("Windows-1258", "WINDOWS-1258")])
+        ]
+        for group in charSetsData {
+            let groupMenu = NSMenu(title: tr(group.name))
+            for item in group.items {
+                let mItem = NSMenuItem(title: item.title, action: #selector(menuEncodeSpecificCharset(_:)), keyEquivalent: "")
+                mItem.representedObject = item.charset
+                groupMenu.addItem(mItem)
+            }
+            let gItem = NSMenuItem(title: tr(group.name), action: nil, keyEquivalent: "")
+            gItem.submenu = groupMenu
+            charSetsMenu.addItem(gItem)
+        }
 
         let charSetsItem = NSMenuItem(title: tr("Character sets"), action: nil, keyEquivalent: "")
         charSetsItem.submenu = charSetsMenu
@@ -756,26 +796,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         encMenu.addItem(withTitle: tr("Convert to ANSI"), action: #selector(menuConvertAnsi), keyEquivalent: "")
         encMenu.addItem(withTitle: tr("Convert to UTF-8"), action: #selector(menuConvertUtf8), keyEquivalent: "")
         encMenu.addItem(withTitle: tr("Convert to UTF-8-BOM"), action: #selector(menuConvertUtf8Bom), keyEquivalent: "")
-        encMenu.addItem(withTitle: tr("Convert to Korean (Windows 949 / CP949)"), action: #selector(menuConvertCP949), keyEquivalent: "")
-        encMenu.addItem(withTitle: tr("Convert to Korean (EUC-KR)"), action: #selector(menuConvertEucKr), keyEquivalent: "")
+        encMenu.addItem(withTitle: tr("Convert to UTF-16 BE BOM"), action: #selector(menuConvertUtf16BE), keyEquivalent: "")
+        encMenu.addItem(withTitle: tr("Convert to UTF-16 LE BOM"), action: #selector(menuConvertUtf16LE), keyEquivalent: "")
 
         encMenuItem.submenu = encMenu
         mainMenu.addItem(encMenuItem)
 
-        // 7. Language Menu (Notepad++ Windows parity, filtered by workspace.disabledLanguages)
+        // 7. Language Menu (Notepad++ Windows parity, filtered by workspace.disabledLanguages & compact mode)
         let langMenuItem = NSMenuItem()
         let langMenu = NSMenu(title: tr("Language"))
         langMenu.addItem(withTitle: tr("None (Normal Text)"), action: #selector(menuSetLangPlainText), keyEquivalent: "")
         langMenu.addItem(NSMenuItem.separator())
 
-        let popularLangs = ["C", "C++", "C#", "Swift", "Python", "JavaScript", "TypeScript", "HTML", "CSS", "JSON", "XML", "SQL", "Shell", "Markdown", "Java", "Rust", "Go", "PHP", "Ruby", "YAML"]
         let disabledSet = Set(workspace.disabledLanguages.map { $0.lowercased() })
-        for lang in popularLangs {
-            if disabledSet.contains(lang.lowercased()) { continue }
-            let item = NSMenuItem(title: lang, action: #selector(menuSelectLanguage(_:)), keyEquivalent: "")
-            item.representedObject = lang
-            langMenu.addItem(item)
+        let availableCanonical = NppWorkspace.allCanonicalLanguages.filter { !disabledSet.contains($0.lowercased()) }
+
+        if !workspace.compactLanguageMenu {
+            for lang in availableCanonical {
+                let item = NSMenuItem(title: lang, action: #selector(menuSelectLanguage(_:)), keyEquivalent: "")
+                item.representedObject = lang
+                langMenu.addItem(item)
+            }
+        } else {
+            var letterGroups: [String: [String]] = [:]
+            for lang in availableCanonical {
+                if lang == "XML" || lang == "YAML" {
+                    letterGroups[lang, default: []].append(lang)
+                } else if let firstChar = lang.first {
+                    let letter = String(firstChar).uppercased()
+                    letterGroups[letter, default: []].append(lang)
+                }
+            }
+            let sortedKeys = letterGroups.keys.sorted { k1, k2 in
+                if (k1 == "XML" || k1 == "YAML") && (k2 != "XML" && k2 != "YAML") { return false }
+                if (k2 == "XML" || k2 == "YAML") && (k1 != "XML" && k1 != "YAML") { return true }
+                return k1 < k2
+            }
+            for key in sortedKeys {
+                guard let langs = letterGroups[key], !langs.isEmpty else { continue }
+                if key == "XML" || key == "YAML" {
+                    let item = NSMenuItem(title: key, action: #selector(menuSelectLanguage(_:)), keyEquivalent: "")
+                    item.representedObject = key
+                    langMenu.addItem(item)
+                } else {
+                    let sub = NSMenu(title: key)
+                    for lang in langs {
+                        let item = NSMenuItem(title: lang, action: #selector(menuSelectLanguage(_:)), keyEquivalent: "")
+                        item.representedObject = lang
+                        sub.addItem(item)
+                    }
+                    let subItem = NSMenuItem(title: key, action: nil, keyEquivalent: "")
+                    subItem.submenu = sub
+                    langMenu.addItem(subItem)
+                }
+            }
         }
+
+        langMenu.addItem(NSMenuItem.separator())
+        let udlSubMenu = NSMenu(title: tr("User Defined Language"))
+        udlSubMenu.addItem(withTitle: tr("Define your language..."), action: #selector(menuUserDefineDlg), keyEquivalent: "")
+        udlSubMenu.addItem(withTitle: tr("Open User Defined Language folder..."), action: #selector(menuOpenUDLDir), keyEquivalent: "")
+        udlSubMenu.addItem(withTitle: tr("Notepad++ User Defined Languages Collection"), action: #selector(menuUDLCollectionSite), keyEquivalent: "")
+        udlSubMenu.addItem(NSMenuItem.separator())
+        udlSubMenu.addItem(withTitle: tr("User-Defined"), action: #selector(menuSetLangUserDefined), keyEquivalent: "")
+        for udl in workspace.userDefinedLanguages {
+            let udlItem = NSMenuItem(title: udl.name, action: #selector(menuSelectLanguage(_:)), keyEquivalent: "")
+            udlItem.representedObject = udl.name
+            udlSubMenu.addItem(udlItem)
+        }
+        let udlItem = NSMenuItem(title: tr("User Defined Language"), action: nil, keyEquivalent: "")
+        udlItem.submenu = udlSubMenu
+        langMenu.addItem(udlItem)
 
         langMenuItem.submenu = langMenu
         mainMenu.addItem(langMenuItem)
@@ -914,7 +1005,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 13. Window Menu (Notepad_plus.rc L1331-1346 parity)
         let windowMenuItem = NSMenuItem()
         let windowMenu = NSMenu(title: tr("Window"))
-        windowMenu.addItem(withTitle: tr("Windows..."), action: #selector(menuShowWindowsDialog), keyEquivalent: "")
+
         let sortTabsMenu = NSMenu(title: tr("Sort By"))
         sortTabsMenu.addItem(withTitle: tr("Name A to Z"), action: #selector(menuSortTabsNameAsc), keyEquivalent: "")
         sortTabsMenu.addItem(withTitle: tr("Name Z to A"), action: #selector(menuSortTabsNameDesc), keyEquivalent: "")
@@ -924,21 +1015,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sortTabsMenu.addItem(withTitle: tr("Type Z to A"), action: #selector(menuSortTabsTypeDesc), keyEquivalent: "")
         sortTabsMenu.addItem(withTitle: tr("Content Length Ascending"), action: #selector(menuSortTabsSizeAsc), keyEquivalent: "")
         sortTabsMenu.addItem(withTitle: tr("Content Length Descending"), action: #selector(menuSortTabsSizeDesc), keyEquivalent: "")
+        sortTabsMenu.addItem(withTitle: tr("Modified Time Ascending"), action: #selector(menuSortTabsModAsc), keyEquivalent: "")
+        sortTabsMenu.addItem(withTitle: tr("Modified Time Descending"), action: #selector(menuSortTabsModDesc), keyEquivalent: "")
         let sortTabsItem = NSMenuItem(title: tr("Sort By"), action: nil, keyEquivalent: "")
         sortTabsItem.submenu = sortTabsMenu
         windowMenu.addItem(sortTabsItem)
 
-        windowMenu.addItem(NSMenuItem.separator())
-        windowMenu.addItem(withTitle: tr("Next Tab"), action: #selector(menuNextTab), keyEquivalent: "}")
-        windowMenu.addItem(withTitle: tr("Previous Tab"), action: #selector(menuPrevTab), keyEquivalent: "{")
-        windowMenu.addItem(withTitle: tr("Move Tab Forward"), action: #selector(menuMoveTabForward), keyEquivalent: "")
-        windowMenu.addItem(withTitle: tr("Move Tab Backward"), action: #selector(menuMoveTabBackward), keyEquivalent: "")
+        windowMenu.addItem(withTitle: tr("Windows..."), action: #selector(menuShowWindowsDialog), keyEquivalent: "")
+
         if !workspace.documents.isEmpty {
             windowMenu.addItem(NSMenuItem.separator())
-            for (idx, doc) in workspace.documents.enumerated() {
+            let maxCount = min(40, workspace.documents.count)
+            for idx in 0..<maxCount {
+                let doc = workspace.documents[idx]
                 let dirtyMark = doc.isDirty ? "*" : ""
-                let docItem = NSMenuItem(title: "\(idx + 1): \(dirtyMark)\(doc.title)", action: #selector(menuSelectTabByIndex(_:)), keyEquivalent: "")
+                let docItem = NSMenuItem(title: "\(idx + 1): \(doc.title)\(dirtyMark)", action: #selector(menuSelectTabByIndex(_:)), keyEquivalent: "")
                 docItem.tag = idx
+                docItem.state = (doc.id == workspace.activeDocumentId) ? .on : .off
                 windowMenu.addItem(docItem)
             }
         }
@@ -1690,6 +1783,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspace.activeDocument?.convertEncoding(to: "UTF-8", addBOM: true)
         workspace.objectWillChange.send()
     }
+    @objc func menuConvertUtf16BE() {
+        workspace.activeDocument?.convertEncoding(to: "UTF-16BE", addBOM: true)
+        workspace.objectWillChange.send()
+    }
+    @objc func menuConvertUtf16LE() {
+        workspace.activeDocument?.convertEncoding(to: "UTF-16LE", addBOM: true)
+        workspace.objectWillChange.send()
+    }
     @objc func menuConvertCP949() {
         workspace.activeDocument?.convertEncoding(to: "CP949")
         workspace.objectWillChange.send()
@@ -1697,6 +1798,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func menuConvertEucKr() {
         workspace.activeDocument?.convertEncoding(to: "EUC-KR")
         workspace.objectWillChange.send()
+    }
+    @objc func menuEncodeSpecificCharset(_ sender: NSMenuItem) {
+        if let charset = sender.representedObject as? String {
+            workspace.activeDocument?.reencodeAs(targetCharset: charset)
+            workspace.objectWillChange.send()
+        }
     }
 
     // Language actions
@@ -1709,6 +1816,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             workspace.activeDocument?.language = lang
             workspace.objectWillChange.send()
         }
+    }
+    @objc func menuUserDefineDlg() {
+        if workspace.showUserDefineDialog {
+            NppUserDefineWindowController.shared.close()
+        } else {
+            NppUserDefineWindowController.shared.show(workspace: workspace)
+        }
+    }
+    @objc func menuOpenUDLDir() {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let udlDir = appSupport.appendingPathComponent("NotepadPlusPlusMac/userDefineLangs")
+        try? FileManager.default.createDirectory(at: udlDir, withIntermediateDirectories: true)
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: udlDir.path)
+    }
+    @objc func menuUDLCollectionSite() {
+        if let url = URL(string: "https://github.com/notepad-plus-plus/userDefinedLanguages") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    @objc func menuSetLangUserDefined() {
+        workspace.activeDocument?.language = "User-Defined"
+        workspace.objectWillChange.send()
     }
 
     // Settings actions
@@ -1728,104 +1857,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Tools actions
-    private func promptHashFromFiles(algorithmName: String, compute: (Data) -> String) {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-        if panel.runModal() == .OK {
-            var lines: [String] = []
-            for url in panel.urls {
-                if let data = try? Data(contentsOf: url) {
-                    lines.append("\(compute(data))  \(url.lastPathComponent)")
-                }
-            }
-            if !lines.isEmpty {
-                let result = lines.joined(separator: "\n")
-                NppTools.showHashDialog(title: "\(algorithmName) Digest from Files", hash: result)
-            }
-        }
+    private func copyHashToClipboard(algorithm: NppHashAlgorithm) {
+        guard let tv = getActiveTextView() else { return }
+        let sel = tv.selectedRange()
+        guard sel.length > 0 else { return }
+        let text = (tv.string as NSString).substring(with: sel)
+        let hash = algorithm.compute(string: text)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(hash, forType: .string)
     }
 
     @objc func menuMD5Generate() {
-        if let doc = workspace.activeDocument {
-            let data = doc.content.data(using: .utf8) ?? Data()
-            let hash = NppTools.md5(data: data)
-            NppTools.showHashDialog(title: "MD5 Digest for \(doc.title)", hash: hash)
-        }
+        let selLen = getActiveTextView()?.selectedRange().length ?? 0
+        let initialText = selLen > 0 ?
+            (getActiveTextView()!.string as NSString).substring(with: getActiveTextView()!.selectedRange()) :
+            (workspace.activeDocument?.content ?? "")
+        NppHashFromTextWindowController.shared.show(algorithm: .md5, workspace: workspace, initialText: initialText)
     }
     @objc func menuMD5FromFiles() {
-        promptHashFromFiles(algorithmName: "MD5", compute: NppTools.md5)
+        NppHashFromFilesWindowController.shared.show(algorithm: .md5, workspace: workspace)
     }
     @objc func menuMD5Selection() {
-        if let tv = getActiveTextView() {
-            let sel = tv.selectedRange()
-            let text = sel.length > 0 ? (tv.string as NSString).substring(with: sel) : tv.string
-            let hash = NppTools.md5(data: text.data(using: .utf8) ?? Data())
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(hash, forType: .string)
-            NppTools.showHashDialog(title: "MD5 Digest Copied to Clipboard", hash: hash)
-        }
+        copyHashToClipboard(algorithm: .md5)
     }
+
     @objc func menuSHA1Generate() {
-        if let doc = workspace.activeDocument {
-            let data = doc.content.data(using: .utf8) ?? Data()
-            let hash = NppTools.sha1(data: data)
-            NppTools.showHashDialog(title: "SHA-1 Digest for \(doc.title)", hash: hash)
-        }
+        let selLen = getActiveTextView()?.selectedRange().length ?? 0
+        let initialText = selLen > 0 ?
+            (getActiveTextView()!.string as NSString).substring(with: getActiveTextView()!.selectedRange()) :
+            (workspace.activeDocument?.content ?? "")
+        NppHashFromTextWindowController.shared.show(algorithm: .sha1, workspace: workspace, initialText: initialText)
     }
     @objc func menuSHA1FromFiles() {
-        promptHashFromFiles(algorithmName: "SHA-1", compute: NppTools.sha1)
+        NppHashFromFilesWindowController.shared.show(algorithm: .sha1, workspace: workspace)
     }
     @objc func menuSHA1Selection() {
-        if let tv = getActiveTextView() {
-            let sel = tv.selectedRange()
-            let text = sel.length > 0 ? (tv.string as NSString).substring(with: sel) : tv.string
-            let hash = NppTools.sha1(data: text.data(using: .utf8) ?? Data())
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(hash, forType: .string)
-            NppTools.showHashDialog(title: "SHA-1 Digest Copied to Clipboard", hash: hash)
-        }
+        copyHashToClipboard(algorithm: .sha1)
     }
+
     @objc func menuSHA256Generate() {
-        if let doc = workspace.activeDocument {
-            let data = doc.content.data(using: .utf8) ?? Data()
-            let hash = NppTools.sha256(data: data)
-            NppTools.showHashDialog(title: "SHA-256 Digest for \(doc.title)", hash: hash)
-        }
+        let selLen = getActiveTextView()?.selectedRange().length ?? 0
+        let initialText = selLen > 0 ?
+            (getActiveTextView()!.string as NSString).substring(with: getActiveTextView()!.selectedRange()) :
+            (workspace.activeDocument?.content ?? "")
+        NppHashFromTextWindowController.shared.show(algorithm: .sha256, workspace: workspace, initialText: initialText)
     }
     @objc func menuSHA256FromFiles() {
-        promptHashFromFiles(algorithmName: "SHA-256", compute: NppTools.sha256)
+        NppHashFromFilesWindowController.shared.show(algorithm: .sha256, workspace: workspace)
     }
     @objc func menuSHA256Selection() {
-        if let tv = getActiveTextView() {
-            let sel = tv.selectedRange()
-            let text = sel.length > 0 ? (tv.string as NSString).substring(with: sel) : tv.string
-            let hash = NppTools.sha256(data: text.data(using: .utf8) ?? Data())
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(hash, forType: .string)
-            NppTools.showHashDialog(title: "SHA-256 Digest Copied to Clipboard", hash: hash)
-        }
+        copyHashToClipboard(algorithm: .sha256)
     }
+
     @objc func menuSHA512Generate() {
-        if let doc = workspace.activeDocument {
-            let data = doc.content.data(using: .utf8) ?? Data()
-            let hash = NppTools.sha512(data: data)
-            NppTools.showHashDialog(title: "SHA-512 Digest for \(doc.title)", hash: hash)
-        }
+        let selLen = getActiveTextView()?.selectedRange().length ?? 0
+        let initialText = selLen > 0 ?
+            (getActiveTextView()!.string as NSString).substring(with: getActiveTextView()!.selectedRange()) :
+            (workspace.activeDocument?.content ?? "")
+        NppHashFromTextWindowController.shared.show(algorithm: .sha512, workspace: workspace, initialText: initialText)
     }
     @objc func menuSHA512FromFiles() {
-        promptHashFromFiles(algorithmName: "SHA-512", compute: NppTools.sha512)
+        NppHashFromFilesWindowController.shared.show(algorithm: .sha512, workspace: workspace)
     }
     @objc func menuSHA512Selection() {
-        if let tv = getActiveTextView() {
-            let sel = tv.selectedRange()
-            let text = sel.length > 0 ? (tv.string as NSString).substring(with: sel) : tv.string
-            let hash = NppTools.sha512(data: text.data(using: .utf8) ?? Data())
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(hash, forType: .string)
-            NppTools.showHashDialog(title: "SHA-512 Digest Copied to Clipboard", hash: hash)
-        }
+        copyHashToClipboard(algorithm: .sha512)
     }
     @objc func menuBase64Encode() {
         if let tv = getActiveTextView() {
@@ -2000,7 +2095,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Window menu actions
     @objc func menuShowWindowsDialog() {
-        workspace.showDocumentList = true
+        NppWindowsDialogWindowController.shared.show(workspace: workspace)
     }
     @objc func menuSortTabsNameAsc() { workspace.sortTabsByName(ascending: true) }
     @objc func menuSortTabsNameDesc() { workspace.sortTabsByName(ascending: false) }
@@ -2010,6 +2105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func menuSortTabsTypeDesc() { workspace.sortTabsByType(ascending: false) }
     @objc func menuSortTabsSizeAsc() { workspace.sortTabsBySize(ascending: true) }
     @objc func menuSortTabsSizeDesc() { workspace.sortTabsBySize(ascending: false) }
+    @objc func menuSortTabsModAsc() { workspace.sortTabsByModifiedTime(ascending: true) }
+    @objc func menuSortTabsModDesc() { workspace.sortTabsByModifiedTime(ascending: false) }
     @objc func menuNextTab() {
         workspace.nextTab()
         updateWindowTitle()
@@ -2020,6 +2117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func menuMoveTabForward() { workspace.moveTabForward() }
     @objc func menuMoveTabBackward() { workspace.moveTabBackward() }
+    @objc func menuMoveTabToStart() { workspace.moveTabToStart() }
+    @objc func menuMoveTabToEnd() { workspace.moveTabToEnd() }
 
     // Help menu actions
     @objc func menuCmdArgs() {
@@ -2286,7 +2385,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if menuItem.action == #selector(menuToggleMonitoring) {
             menuItem.state = (workspace.activeDocument?.isMonitoring == true) ? .on : .off
-            return workspace.activeDocument != nil
+            return workspace.activeDocument?.filePath != nil
+        }
+        if menuItem.action == #selector(menuMoveTabToStart) || menuItem.action == #selector(menuMoveTabBackward) {
+            let activeIdx = workspace.documents.firstIndex(where: { $0.id == workspace.activeDocumentId }) ?? 0
+            return activeIdx > 0 && workspace.documents.count > 1
+        }
+        if menuItem.action == #selector(menuMoveTabToEnd) || menuItem.action == #selector(menuMoveTabForward) {
+            let activeIdx = workspace.documents.firstIndex(where: { $0.id == workspace.activeDocumentId }) ?? 0
+            return activeIdx < workspace.documents.count - 1 && workspace.documents.count > 1
+        }
+        if menuItem.action == #selector(menuMD5Selection) ||
+           menuItem.action == #selector(menuSHA1Selection) ||
+           menuItem.action == #selector(menuSHA256Selection) ||
+           menuItem.action == #selector(menuSHA512Selection) {
+            return (getActiveTextView()?.selectedRange().length ?? 0) > 0
+        }
+        if menuItem.action == #selector(menuUserDefineDlg) {
+            menuItem.state = workspace.showUserDefineDialog ? .on : .off
+            return true
         }
         if menuItem.action == #selector(menuApplyTabColor(_:)) {
             let currentColor = workspace.activeDocument?.tabColorId ?? 0
@@ -2302,6 +2419,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 menuItem.state = .off
                 return false
             }
+        }
+
+        // Convert encoding validation (disabled if doc is read-only, nil, or encoding matches)
+        if menuItem.action == #selector(menuConvertAnsi) {
+            if isDocReadOnly || workspace.activeDocument == nil { return false }
+            let enc = workspace.activeDocument!.encoding.uppercased()
+            return enc != "WINDOWS-1252" && enc != "ANSI"
+        }
+        if menuItem.action == #selector(menuConvertUtf8) {
+            if isDocReadOnly || workspace.activeDocument == nil { return false }
+            let doc = workspace.activeDocument!
+            return !(doc.encoding.uppercased() == "UTF-8" && !doc.hasBOM)
+        }
+        if menuItem.action == #selector(menuConvertUtf8Bom) {
+            if isDocReadOnly || workspace.activeDocument == nil { return false }
+            let doc = workspace.activeDocument!
+            return !((doc.encoding.uppercased() == "UTF-8" && doc.hasBOM) || doc.encoding.uppercased() == "UTF-8-BOM")
+        }
+        if menuItem.action == #selector(menuConvertUtf16BE) {
+            if isDocReadOnly || workspace.activeDocument == nil { return false }
+            return workspace.activeDocument!.encoding.uppercased() != "UTF-16BE"
+        }
+        if menuItem.action == #selector(menuConvertUtf16LE) {
+            if isDocReadOnly || workspace.activeDocument == nil { return false }
+            return workspace.activeDocument!.encoding.uppercased() != "UTF-16LE"
         }
 
         // Encoding menu active checkmarks
@@ -2348,15 +2490,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 menuItem.state = (enc == "BIG5") ? .on : .off
                 return true
             }
+            if menuItem.action == #selector(menuEncodeSpecificCharset(_:)) {
+                if let charset = menuItem.representedObject as? String {
+                    menuItem.state = (enc == charset.uppercased()) ? .on : .off
+                } else {
+                    menuItem.state = .off
+                }
+                return true
+            }
 
             // Language menu active checkmarks
             if menuItem.action == #selector(menuSetLangPlainText) {
-                menuItem.state = (doc.language == "Plain Text" || doc.language == "Normal Text") ? .on : .off
+                menuItem.state = (doc.language.caseInsensitiveCompare("Plain Text") == .orderedSame || doc.language.caseInsensitiveCompare("Normal Text") == .orderedSame) ? .on : .off
+                return true
+            }
+            if menuItem.action == #selector(menuSetLangUserDefined) {
+                menuItem.state = (doc.language.caseInsensitiveCompare("User-Defined") == .orderedSame) ? .on : .off
                 return true
             }
             if menuItem.action == #selector(menuSelectLanguage(_:)) {
                 let itemLang = (menuItem.representedObject as? String) ?? menuItem.title
-                menuItem.state = (doc.language == itemLang) ? .on : .off
+                menuItem.state = (doc.language.caseInsensitiveCompare(itemLang) == .orderedSame) ? .on : .off
                 return true
             }
         }

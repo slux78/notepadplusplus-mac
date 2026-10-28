@@ -2756,11 +2756,16 @@ final class NppAutomatedTestSuite {
                    doc.tabColorId == 0)
 
         // View > Monitoring (tail -f)
+        let tempMonURL = FileManager.default.temporaryDirectory.appendingPathComponent("mon_test_\(UUID().uuidString).txt")
+        try? "test monitoring content".write(to: tempMonURL, atomically: true, encoding: .utf8)
+        doc.filePath = tempMonURL
+        doc.isDirty = false
         assertTest("M4 View: isMonitoring defaults to false", !doc.isMonitoring)
         ws.toggleMonitoringCurrentDoc()
         assertTest("M4 View: toggleMonitoringCurrentDoc enables tail -f monitoring flag", doc.isMonitoring)
         ws.toggleMonitoringCurrentDoc()
         assertTest("M4 View: toggleMonitoringCurrentDoc disables tail -f monitoring flag", !doc.isMonitoring)
+        try? FileManager.default.removeItem(at: tempMonURL)
 
         // Tools > Hash Generators (MD5, SHA-1, SHA-256, SHA-512)
         assertTest("M4 Tools: SHA-1 of 'abc' matches official FIPS 180-4 vector",
@@ -3371,6 +3376,10 @@ final class NppAutomatedTestSuite {
         // -------------------------------------------------------------
         ws.newDocument()
         if let monDoc = ws.activeDocument {
+            let tempMonURL2 = FileManager.default.temporaryDirectory.appendingPathComponent("mon_test2_\(UUID().uuidString).txt")
+            try? "test monitoring content 2".write(to: tempMonURL2, atomically: true, encoding: .utf8)
+            monDoc.filePath = tempMonURL2
+            monDoc.isDirty = false
             assertTest("Sprint 1.6.A: Monitoring mode state toggleable via toggleMonitoringCurrentDoc", monDoc.isMonitoring == false)
             ws.toggleMonitoringCurrentDoc()
             assertTest("Sprint 1.6.B: Monitoring toggled ON makes doc.isMonitoring=true and doc.isReadOnly=true",
@@ -3378,6 +3387,7 @@ final class NppAutomatedTestSuite {
             ws.toggleMonitoringCurrentDoc()
             assertTest("Sprint 1.6.C: Monitoring toggled OFF restores state", monDoc.isMonitoring == false)
             ws.closeDocument(id: monDoc.id)
+            try? FileManager.default.removeItem(at: tempMonURL2)
         }
 
         let selDoc = NppDocument(title: "selDoc", content: "First Line\nSecond Line\nThird Line", eol: .lf)
@@ -3975,10 +3985,249 @@ final class NppAutomatedTestSuite {
                                   trDirection == "방향" &&
                                   trUp == "위로" &&
                                   trDown == "아래로" &&
-                                  trVolNext == "다음 찾기 (임시)" &&
-                                  trRangeErr == "범위 값 오류"
+                                   trVolNext == "다음 찾기 (임시)" &&
+                                   trRangeErr == "범위 값 오류"
         assertTest("M3 Search 2.I: Korean localization matches official korean.xml lines 542–552",
                    localizationMatches)
+
+        // ========================================================
+        // 🎯 MILESTONE 4: FULL MENU PARITY AUDIT SUITE
+        // (View, Encoding, Language, Tools, Window & Korean Localization)
+        // ========================================================
+        print("\n========================================================")
+        print("🎯 MILESTONE 4: FULL MENU PARITY AUDIT SUITE")
+        print("========================================================")
+
+        // 1. View Modes & Window Level Coordination
+        assertTest("M4 View 1.A: Fullscreen, Distraction Free, and Post-It initial states are false",
+                   !ws.isFullScreen && !ws.isDistractionFreeMode && !ws.isPostItMode)
+        ws.togglePostItMode(window: nil)
+        assertTest("M4 View 1.B: togglePostItMode enables Post-It, hides tool/tab bars",
+                   ws.isPostItMode && ws.hideToolbar && ws.hideTabBar)
+        ws.togglePostItMode(window: nil)
+        assertTest("M4 View 1.C: togglePostItMode restores normal view",
+                   !ws.isPostItMode && !ws.hideToolbar && !ws.hideTabBar)
+        ws.toggleDistractionFreeMode(window: nil)
+        assertTest("M4 View 1.D: toggleDistractionFreeMode enables distraction-free mode",
+                   ws.isDistractionFreeMode && ws.hideToolbar && ws.hideTabBar && ws.hideStatusBar)
+        ws.toggleDistractionFreeMode(window: nil)
+        assertTest("M4 View 1.E: toggleDistractionFreeMode restores chrome visibility",
+                   !ws.isDistractionFreeMode && !ws.hideToolbar && !ws.hideTabBar && !ws.hideStatusBar)
+
+        // 2. 4-Way Symbol Flag Synchronization
+        ws.showInvisibleCharacters = false
+        ws.showSpaceAndTab = false
+        ws.showEndOfLine = false
+        ws.showNonPrintingCharacters = false
+        ws.toggleShowSpaceAndTab()
+        assertTest("M4 View 2.A: toggleShowSpaceAndTab enables space/tab symbol flag", ws.showSpaceAndTab)
+        ws.toggleShowEndOfLine()
+        assertTest("M4 View 2.B: toggleShowEndOfLine enables EOL symbol flag", ws.showEndOfLine)
+        ws.toggleShowNonPrintingCharacters()
+        assertTest("M4 View 2.C: toggleShowNonPrintingCharacters enables NPC symbol flag", ws.showNonPrintingCharacters)
+        ws.toggleShowAllCharacters()
+        assertTest("M4 View 2.D: toggleShowAllCharacters synchronizes all 3 symbol flags",
+                   ws.showInvisibleCharacters && ws.showSpaceAndTab && ws.showEndOfLine && ws.showNonPrintingCharacters)
+        ws.toggleShowSpaceAndTab()
+        assertTest("M4 View 2.E: Toggling off one flag de-syncs showAllCharacters",
+                   !ws.showSpaceAndTab && !ws.showInvisibleCharacters)
+        let initialControlState = ws.showControlCharsAndUnicodeEol
+        ws.toggleShowControlCharsAndUnicodeEol()
+        assertTest("M4 View 2.F: toggleShowControlCharsAndUnicodeEol toggles Unicode/Control badge state",
+                   ws.showControlCharsAndUnicodeEol != initialControlState)
+        let initialIndentGuide = ws.showIndentGuides
+        ws.showIndentGuides.toggle()
+        assertTest("M4 View 2.G: showIndentGuides toggles vertical indentation guides",
+                   ws.showIndentGuides != initialIndentGuide)
+        let initialWrapSymbol = ws.showWrapSymbol
+        ws.showWrapSymbol.toggle()
+        assertTest("M4 View 2.H: showWrapSymbol toggles wrap return symbol rendering",
+                   ws.showWrapSymbol != initialWrapSymbol)
+
+        // 3. Tab Navigation & Ordering
+        ws.closeAll()
+        ws.newDocument() // doc 0
+        ws.newDocument() // doc 1
+        ws.newDocument() // doc 2
+        let doc2Id = ws.documents[2].id
+        ws.selectTab(at: 2)
+        assertTest("M4 Tab 3.A: Selected 3rd tab", ws.activeDocumentId == doc2Id)
+        ws.moveTabToStart()
+        assertTest("M4 Tab 3.B: moveTabToStart moves active document to index 0", ws.documents[0].id == doc2Id)
+        ws.moveTabToEnd()
+        assertTest("M4 Tab 3.C: moveTabToEnd moves active document to last index", ws.documents.last?.id == doc2Id)
+        ws.moveTabBackward()
+        assertTest("M4 Tab 3.D: moveTabBackward shifts active document left", ws.documents[2].id == doc2Id)
+        ws.moveTabForward()
+        assertTest("M4 Tab 3.E: moveTabForward shifts active document right", ws.documents[3].id == doc2Id)
+
+        // Tab Navigation 9th Tab Overflow
+        ws.closeAll()
+        for _ in 0..<12 { ws.newDocument() }
+        let lastCreatedId = ws.documents.last?.id
+        ws.selectTab(at: 8) // 9th Tab (index 8)
+        assertTest("M4 Tab 3.F: 9th tab selector navigates to last tab when count > 9",
+                   ws.activeDocumentId == lastCreatedId)
+
+        // 4. Monitoring (tail -f) Guards & Active File Observation
+        ws.closeAll()
+        ws.newDocument() // Untitled document
+        ws.lastMonitoringAlert = nil
+        ws.toggleMonitoringCurrentDoc()
+        assertTest("M4 View 4.A: toggleMonitoringCurrentDoc on untitled document rejected",
+                   ws.activeDocument?.isMonitoring == false && ws.lastMonitoringAlert == "The file should exist to be monitored.")
+        let tempMonFile = FileManager.default.temporaryDirectory.appendingPathComponent("mon_guard_\(UUID().uuidString).txt")
+        try? "initial text\n".write(to: tempMonFile, atomically: true, encoding: .utf8)
+        ws.activeDocument?.filePath = tempMonFile
+        ws.activeDocument?.isDirty = true
+        ws.lastMonitoringAlert = nil
+        ws.toggleMonitoringCurrentDoc()
+        assertTest("M4 View 4.B: toggleMonitoringCurrentDoc on dirty document rejected",
+                   ws.activeDocument?.isMonitoring == false && ws.lastMonitoringAlert == "The document is dirty. Please save the modification before monitoring it.")
+        ws.activeDocument?.isDirty = false
+        ws.toggleMonitoringCurrentDoc()
+        assertTest("M4 View 4.C: toggleMonitoringCurrentDoc on clean saved file succeeds and sets isReadOnly",
+                   ws.activeDocument?.isMonitoring == true && ws.activeDocument?.isReadOnly == true)
+        ws.toggleMonitoringCurrentDoc()
+        assertTest("M4 View 4.D: toggleMonitoringCurrentDoc toggled OFF restores writable state",
+                   ws.activeDocument?.isMonitoring == false && ws.activeDocument?.isReadOnly == false)
+        try? FileManager.default.removeItem(at: tempMonFile)
+
+        // 5. Encoding Submenus & UTF-16 BE/LE Conversions
+        ws.closeAll()
+        ws.newDocument()
+        let encDoc = ws.activeDocument!
+        encDoc.content = "Notepad++ Unicode Test"
+        encDoc.convertEncoding(to: "UTF-16BE", addBOM: true)
+        assertTest("M4 Enc 5.A: Convert to UTF-16 BE BOM sets encoding and BOM flag",
+                   encDoc.encoding == "UTF-16BE" && encDoc.hasBOM == true)
+        encDoc.convertEncoding(to: "UTF-16LE", addBOM: true)
+        assertTest("M4 Enc 5.B: Convert to UTF-16 LE BOM sets encoding and BOM flag",
+                   encDoc.encoding == "UTF-16LE" && encDoc.hasBOM == true)
+        encDoc.reencodeAs(targetCharset: "WINDOWS-1252")
+        assertTest("M4 Enc 5.C: reencodeAs reinterprets charset to Windows-1252",
+                   encDoc.encoding == "WINDOWS-1252")
+
+        // 6. Language Compact Mode & Dynamic Filtering
+        assertTest("M4 Lang 6.A: allCanonicalLanguages contains over 80 standard languages",
+                   NppWorkspace.allCanonicalLanguages.count >= 80)
+        assertTest("M4 Lang 6.B: allCanonicalLanguages contains XML and YAML",
+                   NppWorkspace.allCanonicalLanguages.contains("XML") && NppWorkspace.allCanonicalLanguages.contains("YAML"))
+        ws.disabledLanguages = ["Ada", "ActionScript", "COBOL"]
+        let disSet = Set(ws.disabledLanguages.map { $0.lowercased() })
+        let filteredCanonical = NppWorkspace.allCanonicalLanguages.filter { !disSet.contains($0.lowercased()) }
+        assertTest("M4 Lang 6.C: disabledLanguages dynamically filters out specified languages",
+                   !filteredCanonical.contains("Ada") && !filteredCanonical.contains("ActionScript") && !filteredCanonical.contains("COBOL"))
+        ws.disabledLanguages = []
+        let testUdl = NppUserDefineLanguage(name: "TestUDL", extensions: "tudl")
+        ws.userDefinedLanguages.append(testUdl)
+        assertTest("M4 Lang 6.D: User Defined Language added to workspace",
+                   ws.userDefinedLanguages.contains(where: { $0.name == "TestUDL" && $0.extensions == "tudl" }))
+        assertTest("M4 Lang 6.E: NppUserDefineWindowController shared instance available",
+                   NppUserDefineWindowController.shared.panel == nil)
+
+        // 7. Tools Modeless Hash Generation & Line-by-Line Mode
+        let sampleHashText = "The quick brown fox jumps over the lazy dog"
+        assertTest("M4 Tools 7.A: NppHashAlgorithm.md5 computes standard RFC 1321 hash",
+                   NppHashAlgorithm.md5.compute(string: sampleHashText) == "9e107d9d372bb6826bd81d3542a419d6")
+        assertTest("M4 Tools 7.B: NppHashAlgorithm.sha1 computes standard FIPS 180-1 hash",
+                   NppHashAlgorithm.sha1.compute(string: sampleHashText) == "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12")
+        assertTest("M4 Tools 7.C: NppHashAlgorithm.sha256 computes standard FIPS 180-4 hash",
+                   NppHashAlgorithm.sha256.compute(string: sampleHashText) == "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592")
+        assertTest("M4 Tools 7.D: NppHashAlgorithm.sha512 computes standard FIPS 180-4 hash prefix",
+                   NppHashAlgorithm.sha512.compute(string: sampleHashText).hasPrefix("07e547d9586f6a73"))
+        let multiLineHashInput = "hello\nworld"
+        let lineHashes = NppHashAlgorithm.md5.computeLineByLine(text: multiLineHashInput)
+        let hashLines = lineHashes.components(separatedBy: "\n")
+        assertTest("M4 Tools 7.E: computeLineByLine computes independent hash per line",
+                   hashLines.count == 2 &&
+                   hashLines[0] == NppHashAlgorithm.md5.compute(string: "hello") &&
+                   hashLines[1] == NppHashAlgorithm.md5.compute(string: "world"))
+        assertTest("M4 Tools 7.F: Modeless hash text and files controllers instantiated",
+                   NppHashFromTextWindowController.shared.panel == nil && NppHashFromFilesWindowController.shared.panel == nil)
+
+        // 8. Window Menu Natural Sort & Windows... Dialog
+        ws.closeAll()
+        let winDoc10 = NppDocument(title: "item10.txt", content: "x")
+        let winDoc2 = NppDocument(title: "item2.txt", content: "xxx")
+        let winDoc1 = NppDocument(title: "item1.txt", content: "xx")
+        winDoc10.language = "Swift"
+        winDoc2.language = "C++"
+        winDoc1.language = "HTML"
+        ws.documents = [winDoc10, winDoc2, winDoc1]
+        ws.sortTabsByName(ascending: true)
+        assertTest("M4 Win 8.A: sortTabsByName uses localizedStandardCompare natural order (item1 < item2 < item10)",
+                   ws.documents[0].title == "item1.txt" &&
+                   ws.documents[1].title == "item2.txt" &&
+                   ws.documents[2].title == "item10.txt")
+        ws.sortTabsByType(ascending: true)
+        assertTest("M4 Win 8.B: sortTabsByType sorts documents alphabetically by language (C++ < HTML < Swift)",
+                   ws.documents[0].language == "C++" &&
+                   ws.documents[1].language == "HTML" &&
+                   ws.documents[2].language == "Swift")
+        ws.sortTabsBySize(ascending: true)
+        assertTest("M4 Win 8.C: sortTabsBySize sorts documents by content character length (1 < 2 < 3)",
+                   ws.documents[0].content.count == 1 &&
+                   ws.documents[1].content.count == 2 &&
+                   ws.documents[2].content.count == 3)
+        ws.sortTabsBySize(ascending: false)
+        assertTest("M4 Win 8.D: sortTabsBySize descending orders largest first (3 > 2 > 1)",
+                   ws.documents[0].content.count == 3 &&
+                   ws.documents[1].content.count == 2 &&
+                   ws.documents[2].content.count == 1)
+        assertTest("M4 Win 8.E: NppWindowsDialogWindowController shared instance available",
+                   NppWindowsDialogWindowController.shared.panel == nil)
+
+        // 9. Korean Localization Table Coverage (Milestone 4 42 Keys)
+        let trMoveStart = NppLocalization.tr("Move to Start", lang: "Korean")
+        let trMoveEnd = NppLocalization.tr("Move to End", lang: "Korean")
+        let trArabic = NppLocalization.tr("Arabic", lang: "Korean")
+        let trCyrillic = NppLocalization.tr("Cyrillic", lang: "Korean")
+        let trGreek = NppLocalization.tr("Greek", lang: "Korean")
+        let trHebrew = NppLocalization.tr("Hebrew", lang: "Korean")
+        let trJapanese = NppLocalization.tr("Japanese", lang: "Korean")
+        let trKorean = NppLocalization.tr("Korean", lang: "Korean")
+        let trThai = NppLocalization.tr("Thai", lang: "Korean")
+        let trWestern = NppLocalization.tr("Western European", lang: "Korean")
+        let trUtf16BE = NppLocalization.tr("UTF-16 BE BOM", lang: "Korean")
+        let trConvUtf16BE = NppLocalization.tr("Convert to UTF-16 BE BOM", lang: "Korean")
+        let trDefineLang = NppLocalization.tr("Define your language...", lang: "Korean")
+        let trOpenUDL = NppLocalization.tr("Open User Defined Language folder...", lang: "Korean")
+        let trHashSeparate = NppLocalization.tr("Treat each line as a separate string", lang: "Korean")
+        let trTextToHash = NppLocalization.tr("Text to Hash:", lang: "Korean")
+        let trHashResult = NppLocalization.tr("Hash Result:", lang: "Korean")
+        let trGenFromFiles = NppLocalization.tr("Generate from files...", lang: "Korean")
+        let trSortModAsc = NppLocalization.tr("Modified Time Ascending", lang: "Korean")
+        let trSortModDesc = NppLocalization.tr("Modified Time Descending", lang: "Korean")
+        let trWindowsDlg = NppLocalization.tr("Windows...", lang: "Korean")
+        let trCloseWin = NppLocalization.tr("Close window(s)", lang: "Korean")
+        let trSortTabs = NppLocalization.tr("Sort tabs", lang: "Korean")
+
+        let allKoreanMatched = (trMoveStart == "시작으로 이동") &&
+                               (trMoveEnd == "끝으로 이동") &&
+                               (trArabic == "아랍어") &&
+                               (trCyrillic == "키릴 자모") &&
+                               (trGreek == "그리스어") &&
+                               (trHebrew == "히브리어") &&
+                               (trJapanese == "일본어") &&
+                               (trKorean == "한국어") &&
+                               (trThai == "태국어") &&
+                               (trWestern == "서유럽어") &&
+                               (trUtf16BE == "UTF-16 BE BOM") &&
+                               (trConvUtf16BE == "UTF-16 BE BOM으로 변환") &&
+                               (trDefineLang == "언어 정의...") &&
+                               (trOpenUDL == "사용자 정의 언어 폴더 열기...") &&
+                               (trHashSeparate == "각 줄을 분리된 문자열로 처리") &&
+                               (trTextToHash == "해시할 텍스트:") &&
+                               (trHashResult == "해시 결과:") &&
+                               (trGenFromFiles == "파일에서 생성...") &&
+                               (trSortModAsc == "수정된 시간 오름차순") &&
+                               (trSortModDesc == "수정된 시간 내림차순") &&
+                               (trWindowsDlg == "창 목록...") &&
+                               (trCloseWin == "창 닫기") &&
+                               (trSortTabs == "탭 정렬")
+        assertTest("M4 Loc 9.A: Korean localization covers Milestone 4 Tab, Charset, UDL, Hash, and Window keys",
+                   allKoreanMatched)
 
         ws.closeAll()
     }

@@ -17,6 +17,20 @@ public struct ClipboardItem: Identifiable, Equatable {
     }
 }
 
+public struct NppUserDefineLanguage: Codable, Equatable, Identifiable {
+    public var id: UUID
+    public var name: String
+    public var extensions: String
+    public var ignoreCase: Bool
+
+    public init(id: UUID = UUID(), name: String, extensions: String = "", ignoreCase: Bool = true) {
+        self.id = id
+        self.name = name
+        self.extensions = extensions
+        self.ignoreCase = ignoreCase
+    }
+}
+
 public final class NppWorkspace: ObservableObject {
     @Published public var documents: [NppDocument] = [] {
         didSet {
@@ -72,6 +86,7 @@ public final class NppWorkspace: ObservableObject {
                 showSpaceAndTab = showInvisibleCharacters
                 showEndOfLine = showInvisibleCharacters
                 showNonPrintingCharacters = showInvisibleCharacters
+                showControlCharsAndUnicodeEol = showInvisibleCharacters
                 isSyncingShowSymbolFlags = false
             }
             activeTextView?.needsDisplay = true
@@ -82,7 +97,7 @@ public final class NppWorkspace: ObservableObject {
         didSet {
             if !isSyncingShowSymbolFlags {
                 isSyncingShowSymbolFlags = true
-                showInvisibleCharacters = (showSpaceAndTab && showEndOfLine && showNonPrintingCharacters)
+                showInvisibleCharacters = (showSpaceAndTab && showEndOfLine && showNonPrintingCharacters && showControlCharsAndUnicodeEol)
                 isSyncingShowSymbolFlags = false
             }
             activeTextView?.needsDisplay = true
@@ -92,7 +107,7 @@ public final class NppWorkspace: ObservableObject {
         didSet {
             if !isSyncingShowSymbolFlags {
                 isSyncingShowSymbolFlags = true
-                showInvisibleCharacters = (showSpaceAndTab && showEndOfLine && showNonPrintingCharacters)
+                showInvisibleCharacters = (showSpaceAndTab && showEndOfLine && showNonPrintingCharacters && showControlCharsAndUnicodeEol)
                 isSyncingShowSymbolFlags = false
             }
             activeTextView?.needsDisplay = true
@@ -102,14 +117,21 @@ public final class NppWorkspace: ObservableObject {
         didSet {
             if !isSyncingShowSymbolFlags {
                 isSyncingShowSymbolFlags = true
-                showInvisibleCharacters = (showSpaceAndTab && showEndOfLine && showNonPrintingCharacters)
+                showInvisibleCharacters = (showSpaceAndTab && showEndOfLine && showNonPrintingCharacters && showControlCharsAndUnicodeEol)
                 isSyncingShowSymbolFlags = false
             }
             activeTextView?.needsDisplay = true
         }
     }
     @Published public var showControlCharsAndUnicodeEol: Bool = false {
-        didSet { activeTextView?.needsDisplay = true }
+        didSet {
+            if !isSyncingShowSymbolFlags {
+                isSyncingShowSymbolFlags = true
+                showInvisibleCharacters = (showSpaceAndTab && showEndOfLine && showNonPrintingCharacters && showControlCharsAndUnicodeEol)
+                isSyncingShowSymbolFlags = false
+            }
+            activeTextView?.needsDisplay = true
+        }
     }
     @Published public var showWrapSymbol: Bool = false {
         didSet { activeTextView?.needsDisplay = true }
@@ -128,6 +150,15 @@ public final class NppWorkspace: ObservableObject {
     private var savedPreModeToolbar: Bool = false
     private var savedPreModeTabBar: Bool = false
     private var savedPreModeStatusBar: Bool = false
+    private var savedPrePostItAlwaysOnTop: Bool = false
+    private var savedPreDistractionFreeAlwaysOnTop: Bool = false
+
+    public var isLangMenuCompact: Bool {
+        get { compactLanguageMenu }
+        set { compactLanguageMenu = newValue }
+    }
+    @Published public var showUserDefineDialog: Bool = false
+    @Published public var userDefinedLanguages: [NppUserDefineLanguage] = []
     @Published public var currentSearchResultIndex: Int = -1
     // Sprint 2: Incremental Search & Highlighting State (searching.md:380-410)
     @Published public var incrementalSearchMatches: [NSRange] = []
@@ -636,6 +667,22 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // 11: Language
+    public static let allCanonicalLanguages: [String] = [
+        "ActionScript", "Ada", "ASN.1", "ASP", "Assembly", "AutoIt", "AviSynth",
+        "BaanC", "Batch", "Blitzbasic", "C", "C#", "C++", "Caml", "CMake", "COBOL",
+        "CSound", "CoffeeScript", "CSS", "D", "Diff", "Erlang", "ErrorList",
+        "Escape Sequence (ANSI)", "ESCRIPT", "Forth", "Fortran (free form)", "Fortran (fixed form)",
+        "Freebasic", "GDScript", "Go", "Gui4Cli", "Haskell", "Hollywood", "HTML",
+        "INI file", "Inno Setup", "Intel HEX", "Java", "JavaScript", "JSON", "JSON5",
+        "JSP", "KIXtart", "LISP", "LaTeX", "Lua", "Makefile", "Markdown", "Matlab",
+        "Microsoft Transact-SQL", "MMIXAL", "MS-DOS Style", "Nim", "Nncrontab", "NSIS",
+        "Objective-C", "OScript", "Pascal", "Perl", "PHP", "PostScript", "PowerShell",
+        "Properties", "Purebasic", "Python", "R", "Raku", "REBOL", "Registry",
+        "Resource file", "Ruby", "Rust", "SAS", "Shell", "Scheme", "Smalltalk",
+        "Spice", "SQL", "Structured Text", "Swift", "S-Record", "TCL",
+        "Tektronix extended HEX", "TeX", "TOML", "txt2tags", "TypeScript",
+        "Verilog", "VHDL", "Visual Basic", "Visual Prolog", "XML", "YAML"
+    ]
     @Published public var compactLanguageMenu: Bool = false
     @Published public var treatBackslashAsEscapeForSql: Bool = false
     @Published public var availableLanguages: [String] = [
@@ -992,6 +1039,7 @@ public final class NppWorkspace: ObservableObject {
             fallbackIndex = -1
         }
 
+        stopMonitoring(document: documents[index])
         documents.remove(at: index)
 
         if documents.isEmpty {
@@ -2739,8 +2787,32 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func selectTab(at index: Int) {
-        guard index >= 0 && index < documents.count else { return }
-        activeDocumentId = documents[index].id
+        guard !documents.isEmpty else { return }
+        if index == 8 && documents.count > 9 {
+            activeDocumentId = documents.last?.id
+        } else if index >= 0 && index < documents.count {
+            activeDocumentId = documents[index].id
+        } else if index >= documents.count {
+            activeDocumentId = documents.last?.id
+        }
+    }
+
+    public func moveTabToStart() {
+        guard let currentId = activeDocumentId,
+              let index = documents.firstIndex(where: { $0.id == currentId }),
+              index > 0 else { return }
+        let doc = documents.remove(at: index)
+        documents.insert(doc, at: 0)
+        activeDocumentId = currentId
+    }
+
+    public func moveTabToEnd() {
+        guard let currentId = activeDocumentId,
+              let index = documents.firstIndex(where: { $0.id == currentId }),
+              index + 1 < documents.count else { return }
+        let doc = documents.remove(at: index)
+        documents.append(doc)
+        activeDocumentId = currentId
     }
 
     public func moveTabForward() {
@@ -2759,8 +2831,14 @@ public final class NppWorkspace: ObservableObject {
 
     public func sortTabsByName(ascending: Bool) {
         documents.sort {
-            ascending ? $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-                      : $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedDescending
+            let res = $0.title.localizedStandardCompare($1.title)
+            if res != .orderedSame {
+                return ascending ? res == .orderedAscending : res == .orderedDescending
+            }
+            let p1 = $0.filePath?.path ?? $0.title
+            let p2 = $1.filePath?.path ?? $1.title
+            return ascending ? p1.localizedStandardCompare(p2) == .orderedAscending
+                             : p1.localizedStandardCompare(p2) == .orderedDescending
         }
     }
 
@@ -2768,8 +2846,12 @@ public final class NppWorkspace: ObservableObject {
         documents.sort {
             let p1 = $0.filePath?.path ?? $0.title
             let p2 = $1.filePath?.path ?? $1.title
-            return ascending ? p1.localizedCaseInsensitiveCompare(p2) == .orderedAscending
-                             : p1.localizedCaseInsensitiveCompare(p2) == .orderedDescending
+            let res = p1.localizedStandardCompare(p2)
+            if res != .orderedSame {
+                return ascending ? res == .orderedAscending : res == .orderedDescending
+            }
+            return ascending ? $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                             : $0.title.localizedStandardCompare($1.title) == .orderedDescending
         }
     }
 
@@ -2791,22 +2873,45 @@ public final class NppWorkspace: ObservableObject {
 
     public func sortTabsByType(ascending: Bool) {
         documents.sort { a, b in
+            let langA = a.language
+            let langB = b.language
+            if langA != langB {
+                return ascending
+                    ? langA.localizedStandardCompare(langB) == .orderedAscending
+                    : langA.localizedStandardCompare(langB) == .orderedDescending
+            }
             let extA = a.filePath?.pathExtension.lowercased() ?? (a.title as NSString).pathExtension.lowercased()
             let extB = b.filePath?.pathExtension.lowercased() ?? (b.title as NSString).pathExtension.lowercased()
             if extA != extB {
                 return ascending
-                    ? extA.localizedCaseInsensitiveCompare(extB) == .orderedAscending
-                    : extA.localizedCaseInsensitiveCompare(extB) == .orderedDescending
+                    ? extA.localizedStandardCompare(extB) == .orderedAscending
+                    : extA.localizedStandardCompare(extB) == .orderedDescending
             }
             return ascending
-                ? a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
-                : a.title.localizedCaseInsensitiveCompare(b.title) == .orderedDescending
+                ? a.title.localizedStandardCompare(b.title) == .orderedAscending
+                : a.title.localizedStandardCompare(b.title) == .orderedDescending
         }
     }
 
     public func sortTabsBySize(ascending: Bool) {
         documents.sort {
-            ascending ? $0.content.count < $1.content.count : $0.content.count > $1.content.count
+            if $0.content.count != $1.content.count {
+                return ascending ? $0.content.count < $1.content.count : $0.content.count > $1.content.count
+            }
+            return ascending ? $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                             : $0.title.localizedStandardCompare($1.title) == .orderedDescending
+        }
+    }
+
+    public func sortTabsByModifiedTime(ascending: Bool) {
+        documents.sort {
+            let d1 = $0.lastKnownModificationDate ?? Date.distantPast
+            let d2 = $1.lastKnownModificationDate ?? Date.distantPast
+            if d1 != d2 {
+                return ascending ? d1 < d2 : d1 > d2
+            }
+            return ascending ? $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                             : $0.title.localizedStandardCompare($1.title) == .orderedDescending
         }
     }
 
@@ -3908,11 +4013,13 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func togglePostItMode(window: NSWindow? = nil) {
+        let win = window ?? NSApp.keyWindow ?? NSApp.mainWindow
         if !isPostItMode {
             if !isDistractionFreeMode {
                 savedPreModeToolbar = hideToolbar
                 savedPreModeTabBar = hideTabBar
                 savedPreModeStatusBar = hideStatusBar
+                savedPrePostItAlwaysOnTop = isAlwaysOnTop
             }
             isPostItMode = true
             isDistractionFreeMode = false
@@ -3920,49 +4027,148 @@ public final class NppWorkspace: ObservableObject {
             hideTabBar = true
             hideStatusBar = true
             isAlwaysOnTop = true
-            window?.level = .floating
+            win?.level = .floating
         } else {
             isPostItMode = false
             hideToolbar = savedPreModeToolbar
             hideTabBar = savedPreModeTabBar
             hideStatusBar = savedPreModeStatusBar
-            isAlwaysOnTop = false
-            window?.level = .normal
+            isAlwaysOnTop = savedPrePostItAlwaysOnTop
+            win?.level = savedPrePostItAlwaysOnTop ? .floating : .normal
         }
     }
 
-    public func toggleDistractionFreeMode() {
+    public func toggleDistractionFreeMode(window: NSWindow? = nil) {
+        let win = window ?? NSApp.keyWindow ?? NSApp.mainWindow
         if !isDistractionFreeMode {
             if !isPostItMode {
                 savedPreModeToolbar = hideToolbar
                 savedPreModeTabBar = hideTabBar
                 savedPreModeStatusBar = hideStatusBar
+                savedPreDistractionFreeAlwaysOnTop = isAlwaysOnTop
             }
             isDistractionFreeMode = true
             isPostItMode = false
             hideToolbar = true
             hideTabBar = true
             hideStatusBar = true
+            isAlwaysOnTop = true
+            win?.level = .floating
             paddingLeft = max(paddingLeft, 120)
+            if let w = win, !isFullScreen {
+                w.toggleFullScreen(nil)
+            }
         } else {
             isDistractionFreeMode = false
             hideToolbar = savedPreModeToolbar
             hideTabBar = savedPreModeTabBar
             hideStatusBar = savedPreModeStatusBar
+            isAlwaysOnTop = savedPreDistractionFreeAlwaysOnTop
+            win?.level = savedPreDistractionFreeAlwaysOnTop ? .floating : .normal
             if paddingLeft == 120 {
                 paddingLeft = 0
+            }
+            if let w = win, isFullScreen {
+                w.toggleFullScreen(nil)
             }
         }
     }
 
-    public func toggleMonitoringCurrentDoc() {
+    private var monitoringSources: [UUID: DispatchSourceFileSystemObject] = [:]
+    private var monitoringFileDescriptors: [UUID: Int32] = [:]
+
+    public var lastMonitoringAlert: String? = nil
+
+    public func toggleMonitoringCurrentDoc(window: NSWindow? = nil) {
         guard let doc = activeDocument else { return }
-        doc.isMonitoring.toggle()
-        doc.isReadOnly = doc.isMonitoring
-        if doc.isMonitoring, doc.filePath != nil {
-            reloadFromDisk(for: doc)
+        guard doc.filePath != nil else {
+            let msg = tr("The file should exist to be monitored.")
+            lastMonitoringAlert = msg
+            if !CommandLine.arguments.contains("--run-tests") && NSApp.mainWindow != nil {
+                let alert = NSAlert()
+                alert.messageText = tr("Monitoring (tail -f)")
+                alert.informativeText = msg
+                alert.alertStyle = .warning
+                alert.runModal()
+            }
+            return
+        }
+
+        if !doc.isMonitoring {
+            if doc.isDirty {
+                let msg = tr("The document is dirty. Please save the modification before monitoring it.")
+                lastMonitoringAlert = msg
+                if !CommandLine.arguments.contains("--run-tests") && NSApp.mainWindow != nil {
+                    let alert = NSAlert()
+                    alert.messageText = tr("Monitoring (tail -f)")
+                    alert.informativeText = msg
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                }
+                return
+            }
+
+            doc.isMonitoring = true
+            doc.isReadOnly = true
+            startMonitoring(document: doc)
+        } else {
+            stopMonitoring(document: doc)
+            doc.isMonitoring = false
+            doc.isReadOnly = false
         }
         objectWillChange.send()
+    }
+
+    public func startMonitoring(document doc: NppDocument) {
+        guard let fileURL = doc.filePath else { return }
+        stopMonitoring(document: doc)
+
+        let fd = open(fileURL.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        monitoringFileDescriptors[doc.id] = fd
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .attrib],
+            queue: DispatchQueue.main
+        )
+
+        source.setEventHandler { [weak self, weak doc] in
+            guard let self = self, let doc = doc, let url = doc.filePath else { return }
+            if let data = try? Data(contentsOf: url) {
+                doc.rawFileBytes = data
+                let decoded = String(decoding: data, as: UTF8.self)
+                doc.content = decoded
+                doc.isDirty = false
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                   let modDate = attrs[.modificationDate] as? Date {
+                    doc.lastKnownModificationDate = modDate
+                }
+                if self.activeDocumentId == doc.id {
+                    self.scrollToBottom()
+                }
+            }
+        }
+
+        source.setCancelHandler {
+            close(fd)
+        }
+
+        monitoringSources[doc.id] = source
+        source.resume()
+    }
+
+    public func stopMonitoring(document doc: NppDocument) {
+        if let source = monitoringSources.removeValue(forKey: doc.id) {
+            source.cancel()
+        }
+        _ = monitoringFileDescriptors.removeValue(forKey: doc.id)
+    }
+
+    public func scrollToBottom() {
+        guard let tv = activeTextView else { return }
+        let len = (tv.string as NSString).length
+        tv.scrollRangeToVisible(NSRange(location: len, length: 0))
     }
 
     // MARK: - Function List Parser & Sorter (function-list.md:30-55)

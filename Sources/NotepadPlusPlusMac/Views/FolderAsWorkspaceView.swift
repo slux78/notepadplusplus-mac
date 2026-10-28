@@ -182,19 +182,19 @@ private struct FolderItemView: View {
                 }
             }
             .contextMenu {
-                Button(workspace.tr("Finder에서 보기")) {
+                Button(workspace.tr("Reveal in Finder")) {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
-                Button(workspace.tr("전체 경로 복사")) {
+                Button(workspace.tr("Copy Full Path")) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url.path, forType: .string)
                 }
-                Button(workspace.tr("파일명 복사")) {
+                Button(workspace.tr("Copy Filename")) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url.lastPathComponent, forType: .string)
                 }
                 Divider()
-                Button(workspace.tr("파일에서 찾기...")) {
+                Button(workspace.tr("Find in Files...")) {
                     workspace.openFindInFiles(directory: isDirectory ? url.path : url.deletingLastPathComponent().path)
                 }
             }

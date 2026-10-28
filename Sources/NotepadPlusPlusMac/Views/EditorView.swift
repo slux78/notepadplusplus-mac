@@ -887,16 +887,27 @@ public final class NppTextView: NSTextView {
 
         // 3. Draw Notepad++ Invisible / Whitespace Characters on top so they are never erased
         if let ws = editorCoordinator?.parent.workspace,
-           ws.showInvisibleCharacters || ws.showSpaceAndTab || ws.showEndOfLine || ws.showNonPrintingCharacters {
+           ws.showInvisibleCharacters || ws.showSpaceAndTab || ws.showEndOfLine || ws.showNonPrintingCharacters || ws.showControlCharsAndUnicodeEol || ws.showIndentGuides || (ws.isWordWrapEnabled && ws.showWrapSymbol) {
             drawInvisibleCharacters(in: dirtyRect)
         }
     }
+
+    private static let controlMnemonicTable: [UInt16: String] = [
+        0: "NUL", 1: "SOH", 2: "STX", 3: "ETX", 4: "EOT", 5: "ENQ", 6: "ACK", 7: "BEL",
+        8: "BS", 11: "VT", 12: "FF", 14: "SO", 15: "SI", 16: "DLE", 17: "DC1", 18: "DC2",
+        19: "DC3", 20: "DC4", 21: "NAK", 22: "SYN", 23: "ETB", 24: "CAN", 25: "EM", 26: "SUB",
+        27: "ESC", 28: "FS", 29: "GS", 30: "RS", 31: "US", 127: "DEL", 160: "NBSP"
+    ]
 
     private func drawInvisibleCharacters(in dirtyRect: NSRect) {
         guard let layoutManager = self.layoutManager, let textContainer = self.textContainer,
               let ws = editorCoordinator?.parent.workspace else { return }
         let drawWS = ws.showInvisibleCharacters || ws.showSpaceAndTab
         let drawEOL = ws.showInvisibleCharacters || ws.showEndOfLine
+        let drawNPC = ws.showInvisibleCharacters || ws.showNonPrintingCharacters
+        let drawCCUniEOL = ws.showInvisibleCharacters || ws.showControlCharsAndUnicodeEol
+        let drawIndent = ws.showIndentGuides
+        let drawWrap = ws.isWordWrapEnabled && ws.showWrapSymbol
         let str = self.string as NSString
         guard str.length > 0 else { return }
 
@@ -964,8 +975,71 @@ public final class NppTextView: NSTextView {
                     let eolY = y + (lineRect.height - 8.5) / 2.0 - 0.5
                     "CR".draw(at: NSPoint(x: x + 2.0, y: eolY), withAttributes: attrs)
                 }
+            } else if drawNPC, let mnemonic = Self.controlMnemonicTable[ch] {
+                let badgeFont = NSFont.monospacedSystemFont(ofSize: 7.5, weight: .bold)
+                let badgeAttrs: [NSAttributedString.Key: Any] = [.font: badgeFont, .foregroundColor: NSColor.white]
+                let textSize = (mnemonic as NSString).size(withAttributes: badgeAttrs)
+                let badgeRect = NSRect(x: x, y: y + (lineRect.height - textSize.height - 2) / 2.0, width: textSize.width + 4, height: textSize.height + 2)
+                color.setFill()
+                NSBezierPath(roundedRect: badgeRect, xRadius: 2, yRadius: 2).fill()
+                mnemonic.draw(at: NSPoint(x: badgeRect.origin.x + 2, y: badgeRect.origin.y + 1), withAttributes: badgeAttrs)
+            } else if drawCCUniEOL && (ch == 0x2028 || ch == 0x2029 || ch == 0x0085) {
+                let badge = ch == 0x2028 ? "LS" : (ch == 0x2029 ? "PS" : "NEL")
+                let badgeFont = NSFont.systemFont(ofSize: 7.5, weight: .bold)
+                let attrs: [NSAttributedString.Key: Any] = [.font: badgeFont, .foregroundColor: color]
+                "[\(badge)]".draw(at: NSPoint(x: x + 2.0, y: y + (lineRect.height - 7.5) / 2.0), withAttributes: attrs)
             }
             i += 1
+        }
+
+        if drawIndent {
+            let tabW = charWidth * CGFloat(max(1, ws.tabSize))
+            let guideColor = (theme?.isDark ?? true)
+                ? NSColor(calibratedWhite: 0.35, alpha: 0.4)
+                : NSColor(calibratedWhite: 0.65, alpha: 0.4)
+            guideColor.setStroke()
+            layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { rect, usedRect, container, range, stop in
+                let charR = layoutManager.characterRange(forGlyphRange: range, actualGlyphRange: nil)
+                guard charR.location < str.length else { return }
+                var indentChars = 0
+                while charR.location + indentChars < str.length {
+                    let c = str.character(at: charR.location + indentChars)
+                    if c == 32 || c == 9 {
+                        indentChars += (c == 9 ? ws.tabSize : 1)
+                    } else {
+                        break
+                    }
+                }
+                let maxGuides = indentChars / max(1, ws.tabSize)
+                if maxGuides > 0 {
+                    for g in 1...maxGuides {
+                        let gx = containerOrigin.x + rect.origin.x + (CGFloat(g) * tabW)
+                        let path = NSBezierPath()
+                        path.move(to: NSPoint(x: gx, y: containerOrigin.y + rect.origin.y))
+                        path.line(to: NSPoint(x: gx, y: containerOrigin.y + rect.origin.y + rect.height))
+                        path.lineWidth = 1.0
+                        let dashes: [CGFloat] = [1.0, 2.0]
+                        path.setLineDash(dashes, count: 2, phase: 0)
+                        path.stroke()
+                    }
+                }
+            }
+        }
+
+        if drawWrap {
+            let wrapFont = NSFont.systemFont(ofSize: 9.0, weight: .bold)
+            let wrapAttrs: [NSAttributedString.Key: Any] = [.font: wrapFont, .foregroundColor: color.withAlphaComponent(0.6)]
+            layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { rect, usedRect, container, range, stop in
+                let charR = layoutManager.characterRange(forGlyphRange: range, actualGlyphRange: nil)
+                if NSMaxRange(charR) < str.length {
+                    let lastCh = str.character(at: NSMaxRange(charR) - 1)
+                    if lastCh != 10 && lastCh != 13 {
+                        let wrapX = containerOrigin.x + usedRect.maxX + 2.0
+                        let wrapY = containerOrigin.y + rect.origin.y + (rect.height - wrapFont.pointSize) / 2.0
+                        "↵".draw(at: NSPoint(x: wrapX, y: wrapY), withAttributes: wrapAttrs)
+                    }
+                }
+            }
         }
     }
 

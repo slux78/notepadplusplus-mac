@@ -156,8 +156,12 @@ public struct NppToolbarView: View {
             toolbarBtn(icon: "checklist.unchecked", tooltip: workspace.tr("Show Indent Guide"), isActive: workspace.showIndentGuides) {
                 workspace.showIndentGuides.toggle()
             }
-            toolbarBtn(icon: "chevron.left.forwardslash.chevron.right", tooltip: workspace.tr("Language")) {
-                showDefineLanguageAlert()
+            toolbarBtn(icon: "chevron.left.forwardslash.chevron.right", tooltip: workspace.tr("User Defined Language"), isActive: workspace.showUserDefineDialog) {
+                if workspace.showUserDefineDialog {
+                    NppUserDefineWindowController.shared.close()
+                } else {
+                    NppUserDefineWindowController.shared.show(workspace: workspace)
+                }
             }
             toolbarBtn(icon: icon("list.bullet.rectangle"), tooltip: workspace.tr("Document List"), isActive: workspace.showDocumentList) {
                 workspace.showDocumentList.toggle()
@@ -267,14 +271,6 @@ public struct NppToolbarView: View {
             isCompleteColorization: isCompleteColorization,
             action: action
         )
-    }
-
-    private func showDefineLanguageAlert() {
-        let alert = NSAlert()
-        alert.messageText = "User-Defined Language"
-        alert.informativeText = "Current language: \(workspace.activeDocument?.language ?? "Plain Text")\n\nYou can select syntax highlighting for C, C++, Swift, Python, JS, TS, HTML, CSS, JSON, XML, SQL, Shell, Markdown, Java, Rust, Go from the 'Language' menu."
-        alert.alertStyle = .informational
-        alert.runModal()
     }
 }
 

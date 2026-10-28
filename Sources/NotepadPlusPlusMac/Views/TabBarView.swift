@@ -227,6 +227,12 @@ public struct NppTabItemView: View {
     }
 
     private var tabIconName: String {
+        if doc.isMonitoring {
+            return "eye.fill"
+        }
+        if doc.isReadOnly {
+            return "lock.fill"
+        }
         if doc.isDirty {
             return "circle.fill"
         }
@@ -234,6 +240,19 @@ public struct NppTabItemView: View {
             return isActive ? "doc.fill" : "doc.plaintext"
         }
         return isActive ? "pencil.line" : "doc.text"
+    }
+
+    private var tabIconColor: Color {
+        if doc.isMonitoring {
+            return Color(red: 0.12, green: 0.53, blue: 0.90) // Dodger Blue
+        }
+        if doc.isReadOnly {
+            return .secondary
+        }
+        if doc.isDirty {
+            return .red
+        }
+        return isActive ? .accentColor : .secondary
     }
 
     private var verticalPadding: CGFloat {
@@ -256,7 +275,7 @@ public struct NppTabItemView: View {
 
                 Image(systemName: tabIconName)
                     .font(.system(size: workspace.tabReduce ? 9 : 10))
-                    .foregroundColor(doc.isDirty ? .red : (isActive ? .accentColor : .secondary))
+                    .foregroundColor(tabIconColor)
 
                 Text(displayedTitle)
                     .font(.system(size: titleFontSize, weight: isActive ? .semibold : .regular))
@@ -340,6 +359,15 @@ public struct NppTabItemView: View {
                     doc.tabColorId = 0
                     workspace.objectWillChange.send()
                 }
+            }
+
+            Divider()
+
+            Button(workspace.tr("Move to Start")) {
+                workspace.moveTabToStart()
+            }
+            Button(workspace.tr("Move to End")) {
+                workspace.moveTabToEnd()
             }
 
             Divider()

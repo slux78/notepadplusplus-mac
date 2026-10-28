@@ -562,11 +562,41 @@
 
 ---
 
+### [AUDIT-026] Milestone 4 Full Parity Pass: View, Encoding, Language, Tools, Window Parity & Korean Localization
+- **상태:** `APPROVED`
+- **감사 대상:** `Notepad_plus.rc:746-1350`, `korean.xml`, `NppWorkspace.swift`, `NppLocalization.swift`, `FolderAsWorkspaceView.swift`, `TabBarView.swift`, `EditorView.swift`, `ToolbarView.swift`, `NppHashToolsViews.swift`, `NppUserDefineViews.swift`, `NppWindowsDialogView.swift`, `main.swift`, `NppAutomatedTestSuite.swift`
+- **발견 및 교정 내역 (`Notepad_plus.rc`, `WindowsDlg.cpp`, `md5Dlgs.cpp`, `korean.xml` 대조):**
+  1. **View & Encoding Menus Parity:**
+     - `Full Screen`, `Post-It Mode`, `Distraction Free Mode` 간 상호 배타적 전환 및 창 레벨(`.floating` / `.normal`) 보존·복원 완비.
+     - `Show Symbol` 4-way 플래그 동기화: `showSpaceAndTab`, `showEndOfLine`, `showNonPrintingCharacters` 개별 토글 및 `showInvisibleCharacters` (Show All Characters)와의 양방향 동기화.
+     - `EditorView.swift`: ASCII 비인쇄 제어문자 배지(`NUL`~`US`, `DEL`, `NBSP`)를 역상 배지로 렌더링, 유니코드 행 종단 기호(`[LS]`, `[PS]`, `[NEL]`), 수직 들여쓰기 가이드라인(`showIndentGuides`), 자동 줄바꿈 기호(`↵`, `showWrapSymbol`) 시각화 완비.
+     - `Tab` 서브메뉴: `Move to Start` (IDM_VIEW_TAB_MOVETOSTART, 10005), `Move to End` (IDM_VIEW_TAB_MOVETOEND, 10006), 1st~9th 탭 직접 이동 (9번째 탭 선택 시 9개 초과 문서에 대해 마지막 탭으로 overflow 네비게이션) 구현. 탭 컨텍스트 메뉴에 `Move to Start`/`Move to End` 연동.
+     - `Monitoring (tail -f)`: `DispatchSourceFileSystemObject` 기반 비동기 파일 변경 감시 구현, 미저장 파일("The file should exist to be monitored.") 및 dirty 파일("The document is dirty. Please save the modification before monitoring it.") 가드 알림 장착. 모니터링 활성 시 `isReadOnly = true`, 탭바 `eye.fill` (Dodger Blue `#1E90FF`) 및 읽기 전용 `lock.fill` 아이콘 렌더링.
+     - `Encoding` 메뉴: 16개 문자셋 서브메뉴(49개 인코딩) 완비, `Convert to UTF-16 BE BOM`, `Convert to UTF-16 LE BOM` 탑재, 문서가 읽기 전용이거나 이미 대상 인코딩과 일치할 때 변환 메뉴 항목 자동 비활성화(`validateMenuItem`).
+  2. **Language & Tools Menus Parity:**
+     - 표준 ~90개 언어 카탈로그 완비, `compactLanguageMenu` ("A"~"V", "XML", "YAML" 서브메뉴 그룹핑), `disabledLanguages` 동적 필터링(비활성 언어는 서브메뉴에서 완전 제외), 활성 언어 대소문자 무관 체크마크 표시.
+     - `User Defined Language` (UDL) 대화상자: `NppUserDefineWindowController` / `NppUserDefineDialogView` 모달리스 플로팅 창 구현 및 툴바 20번 버튼 / 메뉴 연동.
+     - `Tools` 해시 생성기: Upstream C++ `md5Dlgs.cpp` 1:1 대응 모달리스 플로팅 대화상자 구현:
+       - `NppHashFromTextWindowController`: 실시간 해시 계산, `Treat each line as a separate string` 라인별 독립 모드 지원.
+       - `NppHashFromFilesWindowController`: 다중 파일 선택 및 `<hash>  <filename>` 서식 결과 표시.
+       - `Generate from Selection into Clipboard`: 모달 알림창 없이 클립보드에 무음 복사(0 modal alerts), 선택 영역 없을 시 메뉴 항목 비활성화.
+  3. **Window Menu & Korean Localization Parity:**
+     - `Sort By`: 10개 정렬 항목 완비 (`Name A to Z`, `Name Z to A`, `Path A to Z`, `Path Z to A`, `Type A to Z`, `Type Z to A`, `Content Length Ascending`, `Content Length Descending`, `Modified Time Ascending`, `Modified Time Descending`) - `localizedStandardCompare` 기반 자연 숫자 정렬(natural sort) 및 2차 경로 타이브레이커 적용.
+     - `Windows...` 대화상자 (`NppWindowsDialogWindowController` / `NppWindowsDialogView`): Upstream C++ `IDD_WINDOWS` 5개 컬럼(Name, Path, Type, Size, Modified time), 인터랙티브 컬럼 정렬, 다중 선택, `Activate` (단일 선택 시에만 활성화), `Save`, `Close window(s)`, `Sort tabs` (현재 테이블 정렬 순서대로 탭 순서 동기화), 컨텍스트 메뉴 완비.
+     - Window 메뉴 하단 열린 문서 목록: 활성 탭 체크마크 및 수정된 문서 후행 `*` dirty 표시.
+     - 한국어 번역 누락 42개 키 전수 `NppLocalization.swift` 등록 (중복 키 0개, 누락 0개).
+  4. **검증 및 테스트:**
+     - `NppAutomatedTestSuite.swift`: Section 31 Milestone 4 전체 패리티 감사 스위트 추가.
+     - 전체 자동화 테스트 스위트: **656 / 656 PASSED (100% PASS, 0 FAILURES)**.
+     - `./bundle.sh` 빌드 성공 (`build/Notepad++.app` 최신 바이너리 패키징 완료).
+
+---
+
 ## 🎯 최종 감사 결론 (Final Verdict)
 
 - **감사 판정:** **모든 항목 적합 및 정합 승인 (APPROVED - 100% COMPLIANT)**
-- **자동화 테스트 검증:** 613 / 613 TC 100% PASS (M1~M5, Sprint 1~2, Milestone 3 Search Menu Full Parity 통합 검증 완료, 0 Failures)
-- **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `korean.xml` 전 항목 대조 및 1:1 구현 완료)
+- **자동화 테스트 검증:** 656 / 656 TC 100% PASS (M1~M5, Sprint 1~2, Milestone 3 Search Menu, Milestone 4 View/Encoding/Language/Tools/Window/Localization Full Parity 통합 검증 완료, 0 Failures)
+- **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `WindowsDlg.cpp`, `md5Dlgs.cpp`, `korean.xml` 전 항목 대조 및 1:1 구현 완료)
 - **macOS 네이티브 사용자 경험:** TextKit 2 기반 고성능 렌더링 및 AppKit 윈도우 수명주기 준수
 - **빌드 산출물:** `build/Notepad++.app` (최신 릴리스 바이너리 패키징 완료)
 
