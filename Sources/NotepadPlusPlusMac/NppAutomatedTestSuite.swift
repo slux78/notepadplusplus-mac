@@ -1395,6 +1395,11 @@ final class NppAutomatedTestSuite {
             // ---------------------------------------------------------
             runMilestone3SearchParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
+            // ---------------------------------------------------------
+            // 37. MILESTONE 4: ADVERSARIAL CHALLENGER STRESS SUITE (Pass 4)
+            // ---------------------------------------------------------
+            runAdversarialM4ChallengeTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -4229,6 +4234,364 @@ final class NppAutomatedTestSuite {
         assertTest("M4 Loc 9.A: Korean localization covers Milestone 4 Tab, Charset, UDL, Hash, and Window keys",
                    allKoreanMatched)
 
+        ws.closeAll()
+    }
+
+    // =========================================================================
+    // 37. ADVERSARIAL CHALLENGE SUITE: PASS 4 (M4)
+    // (View Modes, 4-Way Symbol Flags, Tab Actions, Natural Sorting, Monitoring)
+    // =========================================================================
+    static func runAdversarialM4ChallengeTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("⚔️ ADVERSARIAL CHALLENGE SUITE: MILESTONE 4 (PASS 4)")
+        print("========================================================")
+
+        // -------------------------------------------------------------
+        // CHALLENGE 1: View Modes Mutually Exclusive State Transitions & Restoration
+        // -------------------------------------------------------------
+        let dummyWin = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                                styleMask: [.titled, .resizable],
+                                backing: .buffered,
+                                defer: false)
+        dummyWin.level = .normal
+        ws.isPostItMode = false
+        ws.isDistractionFreeMode = false
+        ws.hideToolbar = false
+        ws.hideTabBar = false
+        ws.hideStatusBar = false
+        ws.isAlwaysOnTop = false
+
+        // 1.1: Post-It mode enables floating level and hides chrome
+        ws.togglePostItMode(window: dummyWin)
+        assertTest("Adv M4.1.A: togglePostItMode sets isPostItMode and clears isDistractionFreeMode",
+                   ws.isPostItMode && !ws.isDistractionFreeMode)
+        assertTest("Adv M4.1.B: Post-It hides toolbar, tabbar, and statusbar",
+                   ws.hideToolbar && ws.hideTabBar && ws.hideStatusBar)
+        assertTest("Adv M4.1.C: Post-It raises window level to .floating",
+                   dummyWin.level == .floating && ws.isAlwaysOnTop)
+
+        // 1.2: Post-It mode toggle off restores .normal level and unhides chrome
+        ws.togglePostItMode(window: dummyWin)
+        assertTest("Adv M4.1.D: togglePostItMode off restores isPostItMode to false",
+                   !ws.isPostItMode)
+        assertTest("Adv M4.1.E: Post-It off restores chrome visibility",
+                   !ws.hideToolbar && !ws.hideTabBar && !ws.hideStatusBar)
+        assertTest("Adv M4.1.F: Post-It off restores window level to .normal",
+                   dummyWin.level == .normal && !ws.isAlwaysOnTop)
+
+        // 1.3: Chrome customization preservation through Post-It mode
+        ws.hideToolbar = true
+        ws.hideTabBar = false
+        ws.hideStatusBar = true
+        ws.togglePostItMode(window: dummyWin)
+        ws.togglePostItMode(window: dummyWin)
+        assertTest("Adv M4.1.G: Post-It faithfully preserves custom pre-mode chrome states",
+                   ws.hideToolbar == true && ws.hideTabBar == false && ws.hideStatusBar == true)
+        ws.hideToolbar = false
+        ws.hideStatusBar = false
+
+        // 1.4: Distraction-Free mode enables floating level, hides chrome, sets padding
+        ws.toggleDistractionFreeMode(window: dummyWin)
+        assertTest("Adv M4.1.H: toggleDistractionFreeMode sets isDistractionFreeMode and clears isPostItMode",
+                   ws.isDistractionFreeMode && !ws.isPostItMode)
+        assertTest("Adv M4.1.I: Distraction-Free hides all chrome and sets paddingLeft >= 120",
+                   ws.hideToolbar && ws.hideTabBar && ws.hideStatusBar && ws.paddingLeft >= 120)
+        assertTest("Adv M4.1.J: Distraction-Free sets window level to .floating",
+                   dummyWin.level == .floating && ws.isAlwaysOnTop)
+
+        // 1.5: Distraction-Free toggle off restores chrome, padding, and window level
+        ws.toggleDistractionFreeMode(window: dummyWin)
+        assertTest("Adv M4.1.K: Distraction-Free off restores normal state and resets paddingLeft to 0",
+                   !ws.isDistractionFreeMode && ws.paddingLeft == 0 && dummyWin.level == .normal)
+
+        // 1.6: Mutually exclusive direct transition: Post-It -> DistractionFree
+        ws.togglePostItMode(window: dummyWin)
+        assertTest("Adv M4.1.L: In Post-It mode before direct switch", ws.isPostItMode && !ws.isDistractionFreeMode)
+        ws.toggleDistractionFreeMode(window: dummyWin)
+        assertTest("Adv M4.1.M: Direct switch to Distraction-Free deactivates Post-It",
+                   ws.isDistractionFreeMode && !ws.isPostItMode)
+        ws.toggleDistractionFreeMode(window: dummyWin)
+        assertTest("Adv M4.1.N: Exiting Distraction-Free restores normal chrome",
+                   !ws.isDistractionFreeMode && !ws.isPostItMode && !ws.hideToolbar && !ws.hideTabBar && !ws.hideStatusBar)
+
+        // 1.7: Mutually exclusive direct transition: DistractionFree -> Post-It
+        ws.toggleDistractionFreeMode(window: dummyWin)
+        assertTest("Adv M4.1.O: In Distraction-Free mode before direct switch", ws.isDistractionFreeMode && !ws.isPostItMode)
+        ws.togglePostItMode(window: dummyWin)
+        assertTest("Adv M4.1.P: Direct switch to Post-It deactivates Distraction-Free",
+                   ws.isPostItMode && !ws.isDistractionFreeMode)
+        ws.togglePostItMode(window: dummyWin)
+        assertTest("Adv M4.1.Q: Exiting Post-It restores normal chrome",
+                   !ws.isPostItMode && !ws.isDistractionFreeMode && !ws.hideToolbar && !ws.hideTabBar && !ws.hideStatusBar)
+
+        // -------------------------------------------------------------
+        // CHALLENGE 2: 4-Way Symbol Flag Synchronization
+        // -------------------------------------------------------------
+        // 2.1: Master flag drives all 4 individual flags
+        ws.showInvisibleCharacters = true
+        assertTest("Adv M4.2.A: showInvisibleCharacters=true drives all 4 individual symbol flags ON",
+                   ws.showSpaceAndTab && ws.showEndOfLine && ws.showNonPrintingCharacters && ws.showControlCharsAndUnicodeEol)
+
+        ws.showInvisibleCharacters = false
+        assertTest("Adv M4.2.B: showInvisibleCharacters=false drives all 4 individual symbol flags OFF",
+                   !ws.showSpaceAndTab && !ws.showEndOfLine && !ws.showNonPrintingCharacters && !ws.showControlCharsAndUnicodeEol)
+
+        // 2.2: Any single individual flag OFF de-syncs master flag
+        ws.showInvisibleCharacters = true
+        ws.showSpaceAndTab = false
+        assertTest("Adv M4.2.C: showSpaceAndTab=false de-syncs showInvisibleCharacters to false",
+                   !ws.showInvisibleCharacters)
+        ws.showSpaceAndTab = true
+        assertTest("Adv M4.2.D: Restoring showSpaceAndTab re-syncs showInvisibleCharacters to true",
+                   ws.showInvisibleCharacters)
+
+        ws.showEndOfLine = false
+        assertTest("Adv M4.2.E: showEndOfLine=false de-syncs showInvisibleCharacters to false",
+                   !ws.showInvisibleCharacters)
+        ws.showEndOfLine = true
+        assertTest("Adv M4.2.F: Restoring showEndOfLine re-syncs showInvisibleCharacters to true",
+                   ws.showInvisibleCharacters)
+
+        ws.showNonPrintingCharacters = false
+        assertTest("Adv M4.2.G: showNonPrintingCharacters=false de-syncs showInvisibleCharacters to false",
+                   !ws.showInvisibleCharacters)
+        ws.showNonPrintingCharacters = true
+        assertTest("Adv M4.2.H: Restoring showNonPrintingCharacters re-syncs showInvisibleCharacters to true",
+                   ws.showInvisibleCharacters)
+
+        ws.showControlCharsAndUnicodeEol = false
+        assertTest("Adv M4.2.I: showControlCharsAndUnicodeEol=false de-syncs showInvisibleCharacters to false",
+                   !ws.showInvisibleCharacters)
+        ws.showControlCharsAndUnicodeEol = true
+        assertTest("Adv M4.2.J: Restoring showControlCharsAndUnicodeEol re-syncs showInvisibleCharacters to true",
+                   ws.showInvisibleCharacters)
+
+        // 2.3: Exhaustive 16-state truth table generator
+        var truthTablePassed = true
+        for mask in 0..<16 {
+            let fSpace = (mask & 1) != 0
+            let fEol   = (mask & 2) != 0
+            let fNpc   = (mask & 4) != 0
+            let fCtrl  = (mask & 8) != 0
+
+            ws.showSpaceAndTab = fSpace
+            ws.showEndOfLine = fEol
+            ws.showNonPrintingCharacters = fNpc
+            ws.showControlCharsAndUnicodeEol = fCtrl
+
+            let expectedMaster = fSpace && fEol && fNpc && fCtrl
+            if ws.showInvisibleCharacters != expectedMaster {
+                print("❌ Mismatch at mask \(mask): flags=(\(fSpace),\(fEol),\(fNpc),\(fCtrl)), expected=\(expectedMaster), got=\(ws.showInvisibleCharacters)")
+                truthTablePassed = false
+            }
+        }
+        assertTest("Adv M4.2.K: Exhaustive 16-combination truth table: showInvisibleCharacters matches all-on vs any-off exactly",
+                   truthTablePassed)
+
+        // Reset symbols
+        ws.showInvisibleCharacters = false
+
+        // -------------------------------------------------------------
+        // CHALLENGE 3: Tab Submenu Actions Stress (1-tab, 2-tab, multi-tab, 9th tab overflow)
+        // -------------------------------------------------------------
+        // 3.1: 1-tab workspace boundary
+        ws.closeAll()
+        assertTest("Adv M4.3.A: 1-tab workspace initial count is 1", ws.documents.count == 1)
+        let singleDocId = ws.documents[0].id
+        ws.moveTabToStart()
+        assertTest("Adv M4.3.B: moveTabToStart on 1-tab workspace preserves document and activeId",
+                   ws.documents.count == 1 && ws.documents[0].id == singleDocId && ws.activeDocumentId == singleDocId)
+        ws.moveTabToEnd()
+        assertTest("Adv M4.3.C: moveTabToEnd on 1-tab workspace preserves document and activeId",
+                   ws.documents.count == 1 && ws.documents[0].id == singleDocId && ws.activeDocumentId == singleDocId)
+
+        // 3.2: 2-tab workspace boundaries
+        ws.newDocument() // doc 1
+        assertTest("Adv M4.3.D: 2-tab workspace initialized", ws.documents.count == 2)
+        let d0Id = ws.documents[0].id
+        let d1Id = ws.documents[1].id
+        ws.activeDocumentId = d0Id
+        ws.moveTabToStart() // doc0 is already at start
+        assertTest("Adv M4.3.E: moveTabToStart on tab 0 in 2-tab workspace is safe no-op",
+                   ws.documents[0].id == d0Id && ws.documents[1].id == d1Id)
+        ws.moveTabToEnd() // move doc0 to end -> [d1, d0]
+        assertTest("Adv M4.3.F: moveTabToEnd moves tab 0 to end and preserves activeDocumentId",
+                   ws.documents[0].id == d1Id && ws.documents[1].id == d0Id && ws.activeDocumentId == d0Id)
+        ws.moveTabToEnd() // already at end
+        assertTest("Adv M4.3.G: moveTabToEnd on last tab in 2-tab workspace is safe no-op",
+                   ws.documents[0].id == d1Id && ws.documents[1].id == d0Id && ws.activeDocumentId == d0Id)
+        ws.moveTabToStart() // move doc0 back to start -> [d0, d1]
+        assertTest("Adv M4.3.H: moveTabToStart restores tab 0 to start and preserves activeDocumentId",
+                   ws.documents[0].id == d0Id && ws.documents[1].id == d1Id && ws.activeDocumentId == d0Id)
+
+        // 3.3: Multi-tab workspace (5 tabs)
+        ws.closeAll()
+        for _ in 0..<4 { ws.newDocument() } // now 5 tabs
+        assertTest("Adv M4.3.I: 5-tab workspace initialized", ws.documents.count == 5)
+        let multiIds = ws.documents.map { $0.id }
+        ws.activeDocumentId = multiIds[2] // active is Middle tab (index 2)
+        ws.moveTabToStart()
+        assertTest("Adv M4.3.J: moveTabToStart on middle tab moves it to index 0",
+                   ws.documents[0].id == multiIds[2] &&
+                   ws.documents[1].id == multiIds[0] &&
+                   ws.documents[2].id == multiIds[1] &&
+                   ws.documents[3].id == multiIds[3] &&
+                   ws.documents[4].id == multiIds[4] &&
+                   ws.activeDocumentId == multiIds[2])
+        ws.moveTabToEnd()
+        assertTest("Adv M4.3.K: moveTabToEnd on index 0 tab moves it to last index 4",
+                   ws.documents[0].id == multiIds[0] &&
+                   ws.documents[1].id == multiIds[1] &&
+                   ws.documents[2].id == multiIds[3] &&
+                   ws.documents[3].id == multiIds[4] &&
+                   ws.documents[4].id == multiIds[2] &&
+                   ws.activeDocumentId == multiIds[2])
+
+        // 3.4: 9th Tab Overflow Behavior (selectTab(at: 8))
+        // Case A: count <= 9
+        ws.closeAll()
+        for _ in 0..<4 { ws.newDocument() } // 5 tabs (indices 0..4)
+        ws.selectTab(at: 8) // index 8 on 5 tabs clamps to last tab (index 4)
+        assertTest("Adv M4.3.L: selectTab(at: 8) on 5 tabs clamps safely to last tab",
+                   ws.activeDocumentId == ws.documents.last?.id)
+
+        ws.closeAll()
+        for _ in 0..<8 { ws.newDocument() } // exactly 9 tabs (indices 0..8)
+        let doc8Id = ws.documents[8].id
+        ws.selectTab(at: 8)
+        assertTest("Adv M4.3.M: selectTab(at: 8) on exactly 9 tabs selects 9th tab (index 8)",
+                   ws.activeDocumentId == doc8Id)
+
+        // Case B: count > 9 (e.g. 10 tabs, 15 tabs, 20 tabs)
+        ws.closeAll()
+        for _ in 0..<14 { ws.newDocument() } // 15 tabs (indices 0..14)
+        let tab7Id = ws.documents[7].id
+        let tabLastId = ws.documents[14].id
+        ws.selectTab(at: 7) // 8th tab (index 7)
+        assertTest("Adv M4.3.N: selectTab(at: 7) selects 8th tab normally in 15-tab workspace",
+                   ws.activeDocumentId == tab7Id)
+        ws.selectTab(at: 8) // 9th tab (index 8) overflow jumps to 15th (last) tab!
+        assertTest("Adv M4.3.O: selectTab(at: 8) overflows and jumps to last tab when count > 9 (15 tabs)",
+                   ws.activeDocumentId == tabLastId)
+
+        // -------------------------------------------------------------
+        // CHALLENGE 4: Natural Alphanumeric Sorting Stress
+        // -------------------------------------------------------------
+        ws.closeAll()
+        let numDoc20 = NppDocument(title: "file20")
+        let numDoc1  = NppDocument(title: "file1")
+        let numDoc10 = NppDocument(title: "file10")
+        let numDoc2  = NppDocument(title: "file2")
+        ws.documents = [numDoc20, numDoc1, numDoc10, numDoc2]
+        ws.sortTabsByName(ascending: true)
+        let naturalAscTitles = ws.documents.map { $0.title }
+        assertTest("Adv M4.4.A: sortTabsByName strictly observes natural sort [file1, file2, file10, file20]",
+                   naturalAscTitles == ["file1", "file2", "file10", "file20"])
+
+        ws.sortTabsByName(ascending: false)
+        let naturalDescTitles = ws.documents.map { $0.title }
+        assertTest("Adv M4.4.B: sortTabsByName descending strictly observes natural sort [file20, file10, file2, file1]",
+                   naturalDescTitles == ["file20", "file10", "file2", "file1"])
+
+        // Extended natural sort with version numbers
+        let verDoc3 = NppDocument(title: "release-v1.3.0")
+        let verDoc10 = NppDocument(title: "release-v1.10.0")
+        let verDoc1 = NppDocument(title: "release-v1.1.0")
+        let verDoc2 = NppDocument(title: "release-v1.2.0")
+        ws.documents = [verDoc3, verDoc10, verDoc1, verDoc2]
+        ws.sortTabsByName(ascending: true)
+        let verTitles = ws.documents.map { $0.title }
+        assertTest("Adv M4.4.C: Extended natural sort orders versions correctly (v1.1.0 < v1.2.0 < v1.3.0 < v1.10.0)",
+                   verTitles == ["release-v1.1.0", "release-v1.2.0", "release-v1.3.0", "release-v1.10.0"])
+
+        // Secondary path tie-breaker when titles are identical
+        let dupTitleA = NppDocument(title: "common.txt")
+        dupTitleA.filePath = URL(fileURLWithPath: "/z/path/common.txt")
+        let dupTitleB = NppDocument(title: "common.txt")
+        dupTitleB.filePath = URL(fileURLWithPath: "/a/path/common.txt")
+        ws.documents = [dupTitleA, dupTitleB]
+        ws.sortTabsByName(ascending: true)
+        assertTest("Adv M4.4.D: Duplicate titles tie-break naturally on file paths (/a/... < /z/...)",
+                   ws.documents[0].filePath?.path == "/a/path/common.txt" &&
+                   ws.documents[1].filePath?.path == "/z/path/common.txt")
+
+        // -------------------------------------------------------------
+        // CHALLENGE 5: Monitoring (tail -f) Stress
+        // -------------------------------------------------------------
+        ws.closeAll()
+        guard let monTestDoc = ws.activeDocument else { return }
+
+        let monMenuItem = NSMenuItem(title: "Monitoring (tail -f)", action: #selector(appDelegate.menuToggleMonitoring), keyEquivalent: "")
+
+        // 5.1: Untitled document rejection
+        monTestDoc.filePath = nil
+        monTestDoc.isMonitoring = false
+        monTestDoc.isReadOnly = false
+        ws.lastMonitoringAlert = nil
+        let untitledMenuValid = appDelegate.validateMenuItem(monMenuItem)
+        assertTest("Adv M4.5.A: Monitoring menu item is disabled on untitled document",
+                   untitledMenuValid == false)
+
+        ws.toggleMonitoringCurrentDoc()
+        assertTest("Adv M4.5.B: Untitled document rejects monitoring",
+                   !monTestDoc.isMonitoring && !monTestDoc.isReadOnly)
+        assertTest("Adv M4.5.C: Untitled document records exact upstream alert message",
+                   ws.lastMonitoringAlert == "The file should exist to be monitored.")
+
+        // 5.2: Dirty document rejection
+        let tempMonFile = FileManager.default.temporaryDirectory.appendingPathComponent("adv_mon_\(UUID().uuidString).log")
+        try? "initial log line\n".write(to: tempMonFile, atomically: true, encoding: .utf8)
+        monTestDoc.filePath = tempMonFile
+        monTestDoc.isDirty = true
+        ws.lastMonitoringAlert = nil
+
+        let dirtyMenuValid = appDelegate.validateMenuItem(monMenuItem)
+        assertTest("Adv M4.5.D: Monitoring menu item is enabled for saved document",
+                   dirtyMenuValid == true && monMenuItem.state == .off)
+
+        ws.toggleMonitoringCurrentDoc()
+        assertTest("Adv M4.5.E: Dirty document rejects monitoring",
+                   !monTestDoc.isMonitoring && !monTestDoc.isReadOnly)
+        assertTest("Adv M4.5.F: Dirty document records exact upstream alert message",
+                   ws.lastMonitoringAlert == "The document is dirty. Please save the modification before monitoring it.")
+
+        // 5.3: Clean saved document activates monitoring and sets read-only
+        monTestDoc.isDirty = false
+        ws.lastMonitoringAlert = nil
+        ws.toggleMonitoringCurrentDoc()
+        assertTest("Adv M4.5.G: Clean saved document enables isMonitoring=true and isReadOnly=true",
+                   monTestDoc.isMonitoring && monTestDoc.isReadOnly && ws.lastMonitoringAlert == nil)
+
+        _ = appDelegate.validateMenuItem(monMenuItem)
+        assertTest("Adv M4.5.H: Monitoring menu item reflects .on state when monitored",
+                   monMenuItem.state == .on)
+
+        // 5.4: Read-only enforcement while monitored
+        let tvShouldBeEditable = !monTestDoc.isReadOnly && !ws.isAllDocumentsReadOnly
+        assertTest("Adv M4.5.I: Monitored document strictly enforces non-editable state",
+                   tvShouldBeEditable == false)
+
+        // 5.5: Toggle OFF monitoring restores writable state
+        ws.toggleMonitoringCurrentDoc()
+        assertTest("Adv M4.5.J: Toggling monitoring OFF restores isMonitoring=false and isReadOnly=false",
+                   !monTestDoc.isMonitoring && !monTestDoc.isReadOnly)
+
+        _ = appDelegate.validateMenuItem(monMenuItem)
+        assertTest("Adv M4.5.K: Monitoring menu item reflects .off state after deactivation",
+                   monMenuItem.state == .off)
+
+        // 5.6: Teardown and closeDocument monitoring cleanup
+        ws.toggleMonitoringCurrentDoc() // re-enable
+        assertTest("Adv M4.5.L: Re-enabled monitoring before close", monTestDoc.isMonitoring)
+        ws.closeDocument(id: monTestDoc.id)
+        assertTest("Adv M4.5.M: Closing monitored document stops monitoring cleanly without leak",
+                   !ws.documents.contains(where: { $0.id == monTestDoc.id }))
+
+        try? FileManager.default.removeItem(at: tempMonFile)
         ws.closeAll()
     }
 

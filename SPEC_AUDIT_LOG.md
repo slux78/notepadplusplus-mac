@@ -595,7 +595,7 @@
 ## 🎯 최종 감사 결론 (Final Verdict)
 
 - **감사 판정:** **모든 항목 적합 및 정합 승인 (APPROVED - 100% COMPLIANT)**
-- **자동화 테스트 검증:** 656 / 656 TC 100% PASS (M1~M5, Sprint 1~2, Milestone 3 Search Menu, Milestone 4 View/Encoding/Language/Tools/Window/Localization Full Parity 통합 검증 완료, 0 Failures)
+- **자동화 테스트 검증:** 716 / 716 TC 100% PASS (M1~M5, Sprint 1~2, Milestone 3 Search Menu, Milestone 4 View/Encoding/Language/Tools/Window/Localization Full Parity, Milestone 4 Pass 4 Adversarial Stress Suite 통합 검증 완료, 0 Failures)
 - **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `WindowsDlg.cpp`, `md5Dlgs.cpp`, `korean.xml` 전 항목 대조 및 1:1 구현 완료)
 - **macOS 네이티브 사용자 경험:** TextKit 2 기반 고성능 렌더링 및 AppKit 윈도우 수명주기 준수
 - **빌드 산출물:** `build/Notepad++.app` (최신 릴리스 바이너리 패키징 완료)
