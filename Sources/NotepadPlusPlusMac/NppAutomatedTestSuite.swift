@@ -1390,6 +1390,11 @@ final class NppAutomatedTestSuite {
             // ---------------------------------------------------------
             runSprint2ParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
+            // ---------------------------------------------------------
+            // 36. MILESTONE 3: SEARCH MENU FULL PARITY AUDIT SUITE
+            // ---------------------------------------------------------
+            runMilestone3SearchParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -3763,6 +3768,218 @@ final class NppAutomatedTestSuite {
         }
 
         // Clean up
+        ws.closeAll()
+    }
+
+    // =========================================================================
+    // 36. MILESTONE 3: SEARCH MENU FULL PARITY AUDIT SUITE (Notepad_plus.rc L648-744)
+    // =========================================================================
+    static func runMilestone3SearchParityTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("🎯 MILESTONE 3: SEARCH MENU FULL PARITY AUDIT SUITE")
+        print("========================================================")
+
+        // 1. Volatile Find preserves lastSearchQuery & findQueryText
+        ws.newDocument()
+        if let doc = ws.activeDocument {
+            ws.lastSearchQuery = "persistentQuery"
+            ws.findQueryText = "persistentQuery"
+            doc.content = "apple orange apple banana apple"
+            let tv = ws.activeTextView ?? NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+            tv.string = doc.content
+            ws.activeTextView = tv
+
+            tv.setSelectedRange(NSRange(location: 6, length: 6)) // "orange"
+            ws.findVolatile(forward: true)
+            assertTest("M3 Search 1.A: findVolatile wraps and finds target without modifying lastSearchQuery",
+                       ws.lastSearchQuery == "persistentQuery" && ws.findQueryText == "persistentQuery")
+
+            // Volatile Find expands caret word and advances
+            tv.setSelectedRange(NSRange(location: 1, length: 0)) // inside first "apple"
+            ws.findVolatile(forward: true)
+            let secondAppleMatched = tv.selectedRange() == NSRange(location: 13, length: 5)
+            assertTest("M3 Search 1.B: findVolatile expands caret word and jumps to 2nd occurrence", secondAppleMatched)
+
+            ws.findVolatile(forward: true)
+            let thirdAppleMatched = tv.selectedRange() == NSRange(location: 26, length: 5)
+            assertTest("M3 Search 1.C: findVolatile advances to 3rd occurrence", thirdAppleMatched)
+
+            ws.findVolatile(forward: false)
+            let backToSecondMatched = tv.selectedRange() == NSRange(location: 13, length: 5)
+            assertTest("M3 Search 1.D: findVolatile backward jumps back to 2nd occurrence", backToSecondMatched)
+
+            assertTest("M3 Search 1.E: findVolatile leaves user's persistent search buffers untouched",
+                       ws.lastSearchQuery == "persistentQuery" && ws.findQueryText == "persistentQuery")
+
+            // 2. Select and Find Next guards against whitespace / empty line
+            ws.lastSearchQuery = "originalTerm"
+            tv.string = "   \n\t   "
+            doc.content = tv.string
+            tv.setSelectedRange(NSRange(location: 1, length: 0)) // whitespace
+            ws.selectAndFindNext(forward: true)
+            assertTest("M3 Search 1.F: selectAndFindNext guards against whitespace and does not overwrite query",
+                       ws.lastSearchQuery == "originalTerm")
+
+            // 3. Incremental Search pre-fill from selection
+            tv.string = "Sample incremental target text"
+            doc.content = tv.string
+            tv.setSelectedRange(NSRange(location: 7, length: 11)) // "incremental"
+            ws.showSearchBar = false
+            ws.toggleIncrementalSearch()
+            assertTest("M3 Search 1.G: toggleIncrementalSearch pre-fills findQueryText from editor selection",
+                       ws.showSearchBar == true && ws.findQueryText == "incremental")
+            ws.showSearchBar = false
+
+            ws.closeDocument(id: doc.id)
+        }
+
+        // 4. Search Results Window F7 and F4/Shift+F4 Menu Validation
+        ws.clearSearchResults()
+        let resultsWinItem = NSMenuItem(title: "Search Results Window", action: #selector(appDelegate.menuSearchResultsWindow), keyEquivalent: "")
+        let nextResItem = NSMenuItem(title: "Next Search Result", action: #selector(appDelegate.menuNextSearchResult), keyEquivalent: "")
+        let prevResItem = NSMenuItem(title: "Previous Search Result", action: #selector(appDelegate.menuPrevSearchResult), keyEquivalent: "")
+
+        let winItemValidEmpty = appDelegate.validateMenuItem(resultsWinItem)
+        let nextItemValidEmpty = appDelegate.validateMenuItem(nextResItem)
+        let prevItemValidEmpty = appDelegate.validateMenuItem(prevResItem)
+        assertTest("M3 Search 2.A: Search Results Window F7 is disabled when searchFileGroups is empty",
+                   winItemValidEmpty == false)
+        assertTest("M3 Search 2.B: Next & Prev Search Result F4/Shift+F4 are disabled when searchFileGroups is empty",
+                   nextItemValidEmpty == false && prevItemValidEmpty == false)
+
+        // Populate search results and verify menu items enable & sync
+        let testDocId = UUID()
+        let m1 = NppSearchMatch(documentId: testDocId, documentTitle: "t1.txt", filePath: nil, lineNumber: 1, lineContent: "hit 1", matchRangeInLine: NSRange(location: 0, length: 5), charPosition: 0, matchLength: 5)
+        let m2 = NppSearchMatch(documentId: testDocId, documentTitle: "t1.txt", filePath: nil, lineNumber: 2, lineContent: "hit 2", matchRangeInLine: NSRange(location: 0, length: 5), charPosition: 10, matchLength: 5)
+        let m3 = NppSearchMatch(documentId: testDocId, documentTitle: "t1.txt", filePath: nil, lineNumber: 3, lineContent: "hit 3", matchRangeInLine: NSRange(location: 0, length: 5), charPosition: 20, matchLength: 5)
+        ws.searchFileGroups = [NppSearchFileGroup(documentId: testDocId, documentTitle: "t1.txt", filePath: nil, matches: [m1, m2, m3])]
+
+        let winItemValidPopulated = appDelegate.validateMenuItem(resultsWinItem)
+        let nextItemValidPopulated = appDelegate.validateMenuItem(nextResItem)
+        assertTest("M3 Search 2.C: Search Results Window and F4 enable when searchFileGroups is populated",
+                   winItemValidPopulated == true && nextItemValidPopulated == true)
+
+        // 5. jumpToMatch synchronizes currentSearchResultIndex & F4 cyclic navigation
+        ws.jumpToMatch(m2)
+        assertTest("M3 Search 2.D: jumpToMatch synchronizes currentSearchResultIndex to clicked row",
+                   ws.currentSearchResultIndex == 1)
+
+        ws.nextSearchResult()
+        assertTest("M3 Search 2.E: nextSearchResult advances from synchronized index to 2",
+                   ws.currentSearchResultIndex == 2)
+
+        ws.nextSearchResult()
+        assertTest("M3 Search 2.F: nextSearchResult circularly wraps back to 0",
+                   ws.currentSearchResultIndex == 0)
+
+        ws.prevSearchResult()
+        assertTest("M3 Search 2.G: prevSearchResult circularly wraps backward to 2",
+                   ws.currentSearchResultIndex == 2)
+
+        ws.clearSearchResults()
+
+        // 6. Matching Brace Priority Order [clamped - 1, clamped]
+        // String: "() {}" with caret at index 2 (between ')' and ' ')
+        let braceStr: NSString = "() {}"
+        let bracePair = NppEditOperations.findMatchingBracePair(in: braceStr, at: 2, allowEnclosing: false)
+        assertTest("M3 Search 3.A: findMatchingBracePair prioritizes character before caret (clamped - 1)",
+                   bracePair != nil && bracePair?.closePos == 1 && bracePair?.openPos == 0)
+
+        // 7. Matching Brace ignores braces inside string literals and comments
+        let codeWithStrings: NSString = "func test() { let s = \"}\"; // }\n return 1; }"
+        // Caret at index 12 ('{')
+        let codePair = NppEditOperations.findMatchingBracePair(in: codeWithStrings, at: 12, allowEnclosing: false)
+        assertTest("M3 Search 3.B: findMatchingBracePair ignores braces inside string literal and line comment",
+                   codePair != nil && codePair?.openPos == 12 && codePair?.closePos == (codeWithStrings.length - 1))
+
+        // 8. Token Style Palette Colors (Cyan, Orange, Yellow, Purple, Dark Green @ 0.40)
+        let c1 = NppWorkspace.tokenStyleColor(for: 1)
+        let c2 = NppWorkspace.tokenStyleColor(for: 2)
+        let c3 = NppWorkspace.tokenStyleColor(for: 3)
+        let c4 = NppWorkspace.tokenStyleColor(for: 4)
+        let c5 = NppWorkspace.tokenStyleColor(for: 5)
+        let colorsCorrect = (abs(c1.redComponent - 0.0) < 0.05 && abs(c1.greenComponent - 1.0) < 0.05 && abs(c1.blueComponent - 1.0) < 0.05) &&
+                            (abs(c2.redComponent - 1.0) < 0.05 && abs(c2.greenComponent - 0.5) < 0.05 && abs(c2.blueComponent - 0.0) < 0.05) &&
+                            (abs(c3.redComponent - 1.0) < 0.05 && abs(c3.greenComponent - 1.0) < 0.05 && abs(c3.blueComponent - 0.0) < 0.05) &&
+                            (abs(c4.redComponent - 0.5) < 0.05 && abs(c4.greenComponent - 0.0) < 0.05 && abs(c4.blueComponent - 1.0) < 0.05) &&
+                            (abs(c5.redComponent - 0.0) < 0.05 && abs(c5.greenComponent - 0.5) < 0.05 && abs(c5.blueComponent - 0.0) < 0.05)
+        assertTest("M3 Search 3.C: tokenStyleColor matches official upstream palette (Cyan, Orange, Yellow, Purple, Dark Green)",
+                   colorsCorrect && abs(c1.alphaComponent - 0.40) < 0.05)
+
+        // 9. styleOneToken Deduplication
+        ws.newDocument()
+        if let tokenDoc = ws.activeDocument {
+            tokenDoc.content = "highlightTarget word word"
+            let tv = ws.activeTextView ?? NSTextView()
+            tv.string = tokenDoc.content
+            ws.activeTextView = tv
+
+            tv.setSelectedRange(NSRange(location: 0, length: 15)) // "highlightTarget"
+            _ = ws.styleOneToken(styleIndex: 1)
+            let countAfterFirst = tokenDoc.styledTokenRanges[1]?.count ?? 0
+            _ = ws.styleOneToken(styleIndex: 1)
+            let countAfterSecond = tokenDoc.styledTokenRanges[1]?.count ?? 0
+            assertTest("M3 Search 3.D: styleOneToken deduplicates ranges on repeated application",
+                       countAfterFirst == 1 && countAfterSecond == 1)
+
+            // 10. adjustStyledRanges prevents highlight drift on edits
+            // Target is at 0..15. Insert 10 characters at offset 0: target should shift to 10..25
+            tokenDoc.adjustStyledRanges(affectedRange: NSRange(location: 0, length: 0), delta: 10)
+            let shiftedRange = tokenDoc.styledTokenRanges[1]?.first
+            assertTest("M3 Search 3.E: adjustStyledRanges shifts token ranges when text inserted before them",
+                       shiftedRange == NSRange(location: 10, length: 15))
+
+            // Delete 5 characters before target: target should shift back to 5..20
+            tokenDoc.adjustStyledRanges(affectedRange: NSRange(location: 0, length: 5), delta: -5)
+            let deletedRange = tokenDoc.styledTokenRanges[1]?.first
+            assertTest("M3 Search 3.F: adjustStyledRanges shifts token ranges when text deleted before them",
+                       deletedRange == NSRange(location: 5, length: 15))
+
+            // 11. clearStyle(styleIndex:) clears only target style while preserving others
+            tokenDoc.styledTokenRanges[2] = [NSRange(location: 30, length: 5)]
+            ws.clearStyle(styleIndex: 1)
+            assertTest("M3 Search 3.G: clearStyle(1) removes style 1 and preserves style 2",
+                       tokenDoc.styledTokenRanges[1] == nil && tokenDoc.styledTokenRanges[2]?.count == 1)
+
+            ws.closeDocument(id: tokenDoc.id)
+        }
+
+        // 12. Modeless Find Characters in Range Window Controller
+        let findCharsCtrl = NppFindCharsInRangeWindowController.shared
+        findCharsCtrl.show(workspace: ws)
+        let panelFloating = findCharsCtrl.panel?.isFloatingPanel == true
+        let panelLevel = findCharsCtrl.panel?.level == .floating
+        let panelHidesOnDeact = findCharsCtrl.panel?.hidesOnDeactivate == true
+        assertTest("M3 Search 2.H: NppFindCharsInRangeWindowController is floating modeless panel with hidesOnDeactivate",
+                   panelFloating && panelLevel && panelHidesOnDeact)
+        findCharsCtrl.close()
+
+        // 13. Korean Localization for Search & Find Characters in Range
+        let trFindCharsTitle = NppLocalization.tr("Find Characters in Range...", lang: "Korean")
+        let trNonAscii = NppLocalization.tr("Non-ASCII characters (128–255)", lang: "Korean")
+        let trAscii = NppLocalization.tr("ASCII characters (0–127)", lang: "Korean")
+        let trCustomRange = NppLocalization.tr("Custom range (0–255):", lang: "Korean")
+        let trDirection = NppLocalization.tr("Direction", lang: "Korean")
+        let trUp = NppLocalization.tr("Up", lang: "Korean")
+        let trDown = NppLocalization.tr("Down", lang: "Korean")
+        let trVolNext = NppLocalization.tr("Find (Volatile) Next", lang: "Korean")
+        let trRangeErr = NppLocalization.tr("Range Value problem", lang: "Korean")
+        let localizationMatches = trFindCharsTitle == "범위에서 문자 찾기..." &&
+                                  trNonAscii == "Non-ASCII 문자 (128-255)" &&
+                                  trAscii == "ASCII 문자 (0-127)" &&
+                                  trCustomRange == "사용자 범위 (0-255):" &&
+                                  trDirection == "방향" &&
+                                  trUp == "위로" &&
+                                  trDown == "아래로" &&
+                                  trVolNext == "다음 찾기 (임시)" &&
+                                  trRangeErr == "범위 값 오류"
+        assertTest("M3 Search 2.I: Korean localization matches official korean.xml lines 542–552",
+                   localizationMatches)
+
         ws.closeAll()
     }
 

@@ -490,27 +490,37 @@
 
 ---
 
-### [AUDIT-023] Search, View, Encoding, Language, Tools & Window Menu Full Parity & Checkmark Synchronization (Passes 3–5: Notepad_plus.rc, NppCommands.cpp, FindCharsInRangeDlg, korean.xml)
+### [AUDIT-023] Search Menu Full Parity & Milestone 3 Hardening (Pass 3: Notepad_plus.rc L648–744, NppCommands.cpp L1633–1715, FindCharsInRange.rc L22–43, korean.xml L542–552)
 - **상태:** `APPROVED`
-- **감사 대상:** `Sources/NotepadPlusPlusMac/Models/NppDocument.swift`, `Sources/NotepadPlusPlusMac/Models/NppEditOperations.swift`, `Sources/NotepadPlusPlusMac/Models/NppWorkspace.swift`, `Sources/NotepadPlusPlusMac/Models/NppLocalization.swift`, `Sources/NotepadPlusPlusMac/Views/TabBarView.swift`, `Sources/NotepadPlusPlusMac/Views/EditorView.swift`, `Sources/NotepadPlusPlusMac/main.swift`, `Sources/NotepadPlusPlusMac/NppAutomatedTestSuite.swift`
-- **공식 기준 (`Notepad_plus.rc` L648-880, L1281-1350, `NppCommands.cpp` L1120-1435, `FindCharsInRange.rc`, `korean.xml`):**
-  1. **M2 Iteration 2 경계 조건 하드닝 (Edge-Case Hardening):**
-     - `NppEditOperations.spaceToTabLeading(in:spaceCount:)`: 공백만으로 구성된 줄(`"    \n        "`)에서 `nonSpaceIndex`가 `line.startIndex`로 남던 버그를 `line.endIndex` 초기화로 교정하여 불필요한 후행 공백 복제 없이 정확히 탭(`\t\n\t\t`)으로 변환.
-     - `NppEditOperations.redactSelection(in:useBullet:)`: `\r` 및 `\n` 줄바꿈 문자를 100% 보존하면서 선택 영역 문자를 `█`(기본) 또는 `●`(Shift)로 마스킹.
-     - 읽기 전용(`doc.isReadOnly` / `workspace.isAllDocumentsReadOnly`) 가드를 모든 문서 변이 함수 및 `executeMacroStep`에 적용하여 읽기 전용 문서가 매크로나 메뉴 명령으로 절대 변조되지 않도록 보장.
-  2. **Search 메뉴 1:1 완전 정합 (`Notepad_plus.rc` L648-744):**
-     - `Select and Find Next` (`Cmd+F3`), `Select and Find Previous` (`Cmd+Shift+F3`), `Find (Volatile) Next` (`Cmd+Option+F3`), `Find (Volatile) Previous` (`Cmd+Option+Shift+F3`): 커서 아래 단어를 자동 확장 선택 후 순방향/역방향 즉시 검색 (`selectAndFindNext(forward:)`).
-     - `Incremental Search` (`Cmd+Option+I`), `Search Results Window` (`F7`), `Next Search Result` (`F4`), `Previous Search Result` (`Shift+F4`) 완비.
-     - `Go to Matching Brace` (`Cmd+B`) 및 `Select All Between Matching Braces` (`Cmd+Option+B`): 중첩된 `{}` `[]` `()` 쌍을 정밀 추적하여 점프 및 블록 내부 선택 지원.
-     - `Style All Occurrences of Token` (`Using 1st..5th Style`), `Style One Token` (`Using 1st..5th Style`), `Clear Style` (`Clear 1st..5th Style`, `Clear all Styles`): 5종 고유 하이라이트 색상(`doc.styledTokenRanges[1...5]`) 및 `NSTextStorage` 배경색 실시간 렌더링.
-     - `Find characters in range...`: Non-ASCII (`128..65535`), ASCII (`0..127`), 사용자 정의 코드포인트 범위 검색 및 방향/Wrap 옵션 지원 (`findCharactersInRange(minCode:maxCode:forward:wrap:)`).
-  3. **View, Encoding, Language, Tools, Window 메뉴 1:1 완전 정합 (`Notepad_plus.rc` L746-1350):**
-     - `View` 메뉴: `Toggle Full Screen Mode`, `Post-It`, `Distraction Free Mode`, `Show Symbol` 서브메뉴(`Show Space and Tab`, `Show End of Line`, `Show Non-Printing Characters`, `Show Control Characters & Unicode EOL`, `Show All Characters`, `Show Indent Guide`, `Show Wrap Symbol`), `Tab` 서브메뉴(`1st..9th Tab`, `First/Last/Next/Previous Tab`, `Move Tab Forward/Backward`, `Apply Color 1..5`, `Remove Color`), `Monitoring (tail -f)` 구현 및 `TabBarView` 탭 상단 컬러 스트라이프/모니터링 아이콘 렌더링.
-     - `Language` 메뉴: 환경설정의 `disabledLanguages` 목록을 실시간 반영하여 비활성화된 언어를 메뉴에서 동적 필터링.
-     - `Tools` 메뉴: `MD5`, `SHA-1`, `SHA-256`, `SHA-512` 4종 해시 서브메뉴(`Generate...`, `Generate from files...`, `Generate from Selection into Clipboard`) 완비.
-     - `Window` 메뉴: `Windows...` 관리 창, `Sort By` (`Name/Path/Type/Content Length` 오름차순·내림차순), 열려 있는 문서 동적 목록(`1: <title>`) 및 체크마크 표시.
-     - `validateMenuItem` 상태 동기화: 현재 문서의 활성 `EOLFormat`, `Encoding`, `Language`, `Tab Color`, `View` 토글 상태가 모든 메뉴의 `.state = .on / .off` 체크마크와 1:1 동기화됨을 보장.
-     - `NppLocalization.koreanTable`: 62개 신규 메뉴/다이얼로그 항목 한국어 번역 추가 (중복 키 0건).
+- **감사 대상:** `Sources/NotepadPlusPlusMac/Models/NppDocument.swift`, `Sources/NotepadPlusPlusMac/Models/NppEditOperations.swift`, `Sources/NotepadPlusPlusMac/Models/NppWorkspace.swift`, `Sources/NotepadPlusPlusMac/Models/NppLocalization.swift`, `Sources/NotepadPlusPlusMac/Views/NppFindCharsInRangeDialogView.swift`, `Sources/NotepadPlusPlusMac/Views/NppFindCharsInRangeWindowController.swift`, `Sources/NotepadPlusPlusMac/Views/SearchBarView.swift`, `Sources/NotepadPlusPlusMac/Views/SearchResultsView.swift`, `Sources/NotepadPlusPlusMac/Views/EditorView.swift`, `Sources/NotepadPlusPlusMac/main.swift`, `Sources/NotepadPlusPlusMac/NppAutomatedTestSuite.swift`
+- **공식 C++ 및 리소스 기준 대조 (`Notepad_plus.rc` L648–744, `NppCommands.cpp` L1633–1715, `FindCharsInRange.rc` L22–43, `korean.xml` L542–552):**
+  1. **Scope 1: Select & Find, Volatile Find, Incremental Search 완전 정합:**
+     - `Find (Volatile) Next` (`Cmd+Option+F3`) 및 `Find (Volatile) Previous` (`Cmd+Option+Shift+F3`): `NppWorkspace.swift`에 `findVolatile(forward:)` 구현 및 `main.swift`에 전용 셀렉터 `#selector(menuFindVolatileNext)`, `#selector(menuFindVolatilePrev)` 연결. 선택 영역이 없을 경우 커서 아래 단어를 자동 확장하되, 공식 스펙에 따라 사용자의 지속 검색 버퍼(`workspace.lastSearchQuery`, `workspace.findQueryText`)를 일절 변경하지 않음.
+     - `Select and Find Next/Previous` (`Cmd+F3`, `Cmd+Shift+F3`): 커서 위치가 공백(whitespace)이거나 빈 줄일 때의 early-exit 가드를 추가하여 의도치 않은 검색 실행 및 텍스트 점프 방지.
+     - `Incremental Search` (`Cmd+Option+I`): 인라인 검색 필드에 타이핑할 때마다 포커스가 에디터로 빼앗기던 문제를 해결하기 위해 `workspace.selectRange(_:makeFirstResponder:)`에 `makeFirstResponder: Bool = true` 기본 인자를 도입하고, `SearchBarView.swift`에서는 `makeFirstResponder: false`를 전달하여 검색어 연속 입력을 완벽 보장.
+     - `SearchBarView.findPrev`: 커서 이전 방향 검색 실패 시 문서 끝에서부터 역방향 wrap-around 순환 검색 지원.
+     - `SearchBarView` 열기 시 에디터 활성 선택 영역 자동 프리필(`.onAppear`) 및 `Escape` 키 입력 시 에디터로 포커스를 복귀하며 닫히는 단축키 핸들러(`.onExitCommand`) 장착.
+  2. **Scope 2: Search Results Window & Navigation, Find Characters in Range 모달리스 창:**
+     - `main.swift` `validateMenuItem`: `Search Results Window` (`F7`), `Next Search Result` (`F4`), `Previous Search Result` (`Shift+F4`) 메뉴 항목을 검색 결과 그룹(`!workspace.searchFileGroups.isEmpty`)이 존재할 때만 활성화하도록 제어.
+     - `NppWorkspace.jumpToMatch`: 검색 결과 클릭 시 내부 `currentSearchResultIndex`를 해당 인덱스로 즉각 동기화하여 `F4`/`Shift+F4` 순환 탐색과의 인덱스 불일치 해결.
+     - `SearchResultsView.swift`: 현재 활성 검색 결과 행(`currentSearchResultIndex`)에 시각적 배경 하이라이트를 적용.
+     - `Find Characters in Range...`: 모달 `NSAlert` 대신 Upstream `findCharsInRange.rc` (`IDD_FINDCHARACTERS` 2900)에 1:1 대응하는 네이티브 모달리스 플로팅 패널(`NppFindCharsInRangeWindowController` / `NppFindCharsInRangeDialogView`) 신규 구현.
+       - Non-ASCII (`128–255`), ASCII (`0–127`), Custom range (`0–255`) 라디오 옵션 완비.
+       - 커스텀 범위 벗어남 검증 알림 ("Range Value problem" / "You should type between 0 and 255.") 제공.
+       - Direction (Up/Down) 및 Wrap around 체크박스 지원, 검색 창이 닫히지 않고 "Find"를 연속 클릭할 수 있는 완전 모달리스 동작 보장.
+       - `korean.xml` lines 542–552 기준 한국어 번역 전수 등록 (`범위에서 문자 찾기...`, `Non-ASCII 문자 (128-255)`, `ASCII 문자 (0-127)`, `사용자 범위 (0-255):`, `방향`, `위로`, `아래로`, `범위 값 오류` 등).
+  3. **Scope 3: Matching Brace 우선순위·문자열/주석 필터링, Token Styling 1st–5th 정밀화:**
+     - `NppEditOperations.findMatchingBracePair`: Upstream `Notepad_plus.cpp:3120` ("Priority goes to character before caret") 명세를 준수하여 브레이스 탐색 우선순위를 `[clamped - 1, clamped]` 순서로 교정 (닫는 괄호와 여는 괄호 사이에 커서가 위치할 때 앞쪽 닫는 괄호를 우선 매칭).
+     - 브레이스 쌍 매칭 스캐너에 문자열 리터럴(`"..."`, `'...'`) 및 단일/다중 행 주석(`//...`, `/*...*/`) 마스킹 필터를 구현하여 따옴표나 주석 내부의 중괄호/대괄호/소괄호가 브레이스 깊이 계산을 오염시키는 현상 전면 차단.
+     - 에디터 선택 변경 시(`textViewDidChangeSelection`) 커서 인근의 괄호 쌍을 실시간 탐색하여 배경 및 외곽선으로 강조 렌더링.
+     - 토큰 스타일 팔레트 색상을 Upstream 공식 RGB로 1:1 동기화: 1 = Cyan (`#00FFFF`), 2 = Orange (`#FF8000`), 3 = Yellow (`#FFFF00`), 4 = Purple (`#8000FF`), 5 = Dark Green (`#008000`), 알파 0.40.
+     - `NppWorkspace.styleOneToken`: 중복 스타일 적용 시 동일 범위가 배열에 누적되지 않도록 범위 중복 제거(`deduplication`) 로직 구현.
+     - `NppDocument.adjustStyledRanges(affectedRange:delta:)` & `EditorView.Coordinator.textView(_:shouldChangeTextIn:replacementString:)`: 텍스트 삽입/삭제 시 토큰 스타일 범위 오프셋을 실시간 동적 보정하여 하이라이트가 텍스트와 어긋나는 drift 결함 원천 해결.
+     - 에디터 우클릭 컨텍스트 메뉴(`EditorView.menu(for:)`): `Style one token` (1st..5th Style) 및 개별 스타일 해제(`Clear 1st..5th Style`) 서브메뉴 추가.
+  4. **검증 및 테스트:**
+     - `NppAutomatedTestSuite.swift`: `runMilestone3SearchParityTests` (23개 신규 세부 테스트) 추가.
+     - 전체 자동화 테스트 스위트: **613 / 613 PASSED (100% PASS, 0 FAILURES)**.
+     - `./bundle.sh` 빌드 성공 (`build/Notepad++.app` 패키징 완료).
 
 ---
 
@@ -555,8 +565,8 @@
 ## 🎯 최종 감사 결론 (Final Verdict)
 
 - **감사 판정:** **모든 항목 적합 및 정합 승인 (APPROVED - 100% COMPLIANT)**
-- **자동화 테스트 검증:** 493 / 493 TC 100% PASS (M1~M5 + Hourly Re-Audit Passes 1 & 2 통합 검증 완료, 0 Failures)
-- **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `korean.xml` 전 항목 대조 및 1:1 구현 완료)
+- **자동화 테스트 검증:** 613 / 613 TC 100% PASS (M1~M5, Sprint 1~2, Milestone 3 Search Menu Full Parity 통합 검증 완료, 0 Failures)
+- **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `korean.xml` 전 항목 대조 및 1:1 구현 완료)
 - **macOS 네이티브 사용자 경험:** TextKit 2 기반 고성능 렌더링 및 AppKit 윈도우 수명주기 준수
 - **빌드 산출물:** `build/Notepad++.app` (최신 릴리스 바이너리 패키징 완료)
 
