@@ -83,7 +83,7 @@ public final class NppDocument: ObservableObject, Identifiable {
             }
         }
 
-        doc.language = detectLanguage(for: url)
+        doc.language = detectLanguage(for: url, content: doc.content)
         doc.isDirty = false
         if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
            let modDate = attrs[.modificationDate] as? Date {
@@ -121,7 +121,7 @@ public final class NppDocument: ObservableObject, Identifiable {
             self.title = url.lastPathComponent
             self.rawFileBytes = data
             self.isDirty = false
-            self.language = NppDocument.detectLanguage(for: url)
+            self.language = NppDocument.detectLanguage(for: url, content: content)
             if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
                let modDate = attrs[.modificationDate] as? Date {
                 self.lastKnownModificationDate = modDate
@@ -249,6 +249,7 @@ public final class NppDocument: ObservableObject, Identifiable {
 
     // Notepad++: EOL Conversion (Windows CRLF <-> Unix LF <-> Mac CR)
     public func convertEOL(to targetEol: NppEol) {
+        guard !isReadOnly else { return }
         guard targetEol != self.eolFormat else { return }
         objectWillChange.send()
         let utf8Bytes = Array(content.utf8)
@@ -265,7 +266,29 @@ public final class NppDocument: ObservableObject, Identifiable {
         self.isDirty = true
     }
 
-    public static func detectLanguage(for url: URL) -> String {
+    public static func detectLanguage(for filename: String, content: String? = nil) -> String {
+        return detectLanguage(for: URL(fileURLWithPath: filename), content: content)
+    }
+
+    public static func detectLanguage(for url: URL, content: String? = nil) -> String {
+        let filename = url.lastPathComponent.lowercased()
+
+        // Step 4: Special filenames (Notepad++ programing-languages.md:20-45)
+        switch filename {
+        case "makefile", "gnumakefile":
+            return "Makefile"
+        case "cmakelists.txt":
+            return "CMake"
+        case "dockerfile":
+            return "Dockerfile"
+        case "gemfile", "rakefile", "vagrantfile", "podfile":
+            return "Ruby"
+        case "crontab":
+            return "Shell"
+        default:
+            break
+        }
+
         let ext = url.pathExtension.lowercased()
         switch ext {
         case "c", "h": return "C"
@@ -287,7 +310,37 @@ public final class NppDocument: ObservableObject, Identifiable {
         case "cs": return "C#"
         case "rb": return "Ruby"
         case "php": return "PHP"
-        default: return "Plain Text"
+        default:
+            break
         }
+
+        // Step 5: First line hint (Shebang, XML Prolog, HTML Doctype)
+        if let firstLine = content?.components(separatedBy: .newlines).first?.trimmingCharacters(in: .whitespaces), !firstLine.isEmpty {
+            if let lang = detectLanguageFromFirstLine(firstLine) {
+                return lang
+            }
+        }
+
+        return "Plain Text"
+    }
+
+    public static func detectLanguageFromFirstLine(_ firstLine: String) -> String? {
+        let lower = firstLine.lowercased()
+        if lower.hasPrefix("#!") {
+            if lower.contains("python") { return "Python" }
+            if lower.contains("bash") || lower.contains("/sh") || lower.contains("zsh") { return "Shell" }
+            if lower.contains("node") || lower.contains("javascript") { return "JavaScript" }
+            if lower.contains("ruby") { return "Ruby" }
+            if lower.contains("perl") { return "Perl" }
+            if lower.contains("php") { return "PHP" }
+            return "Shell"
+        }
+        if lower.hasPrefix("<?xml") {
+            return "XML"
+        }
+        if lower.hasPrefix("<!doctype html") || lower.hasPrefix("<html") {
+            return "HTML"
+        }
+        return nil
     }
 }

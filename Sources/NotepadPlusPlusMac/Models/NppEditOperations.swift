@@ -391,6 +391,7 @@ public final class NppEditOperations {
     }
 
     public static func removeConsecutiveDuplicateLines(in doc: NppDocument) {
+        guard !doc.isReadOnly else { return }
         removeDuplicateLines(in: doc, consecutiveOnly: true)
     }
 
@@ -536,10 +537,32 @@ public final class NppEditOperations {
     }
 
     // MARK: - Blank Operations
-    public static func trimSpaces(in doc: NppDocument, mode: TrimMode) {
+    private static func applyLineTransform(
+        in doc: NppDocument,
+        selectedRange: NSRange? = nil,
+        transform: (String) -> String
+    ) {
         guard !doc.isReadOnly else { return }
-        let lines = doc.content.nppLines()
-        let trimmed = lines.map { line -> String in
+        let nsContent = doc.content as NSString
+        let separator = doc.eolFormat.characters
+
+        if let sel = selectedRange, sel.length > 0 && sel.location + sel.length <= nsContent.length {
+            let targetRange = nsContent.lineRange(for: sel)
+            let subText = nsContent.substring(with: targetRange)
+            let hasEndingNewline = subText.hasSuffix("\r\n") || subText.hasSuffix("\n") || subText.hasSuffix("\r")
+            let lines = subText.nppLines()
+            let transformed = lines.map(transform).joined(separator: separator) + (hasEndingNewline ? separator : "")
+            doc.content = nsContent.replacingCharacters(in: targetRange, with: transformed)
+        } else {
+            let lines = doc.content.nppLines()
+            let hasEndingNewline = doc.content.hasSuffix("\r\n") || doc.content.hasSuffix("\n") || doc.content.hasSuffix("\r")
+            doc.content = lines.map(transform).joined(separator: separator) + (hasEndingNewline ? separator : "")
+        }
+        doc.isDirty = true
+    }
+
+    public static func trimSpaces(in doc: NppDocument, mode: TrimMode, selectedRange: NSRange? = nil) {
+        applyLineTransform(in: doc, selectedRange: selectedRange) { line in
             switch mode {
             case .leading:
                 return line.replacingOccurrences(of: #"^\s+"#, with: "", options: .regularExpression)
@@ -549,9 +572,6 @@ public final class NppEditOperations {
                 return line.trimmingCharacters(in: .whitespaces)
             }
         }
-        let separator = doc.eolFormat.characters
-        doc.content = trimmed.joined(separator: separator)
-        doc.isDirty = true
     }
 
     public static func eolToSpace(in doc: NppDocument) {
@@ -560,18 +580,30 @@ public final class NppEditOperations {
         doc.isDirty = true
     }
 
-    public static func tabToSpace(in doc: NppDocument, spaceCount: Int = 4) {
-        guard !doc.isReadOnly else { return }
+    public static func tabToSpace(in doc: NppDocument, spaceCount: Int = 4, selectedRange: NSRange? = nil) {
         let spaces = String(repeating: " ", count: spaceCount)
-        doc.content = doc.content.replacingOccurrences(of: "\t", with: spaces)
-        doc.isDirty = true
+        if let sel = selectedRange, sel.length > 0 {
+            applyLineTransform(in: doc, selectedRange: selectedRange) { line in
+                line.replacingOccurrences(of: "\t", with: spaces)
+            }
+        } else {
+            guard !doc.isReadOnly else { return }
+            doc.content = doc.content.replacingOccurrences(of: "\t", with: spaces)
+            doc.isDirty = true
+        }
     }
 
-    public static func spaceToTab(in doc: NppDocument, spaceCount: Int = 4) {
-        guard !doc.isReadOnly else { return }
+    public static func spaceToTab(in doc: NppDocument, spaceCount: Int = 4, selectedRange: NSRange? = nil) {
         let spaces = String(repeating: " ", count: spaceCount)
-        doc.content = doc.content.replacingOccurrences(of: spaces, with: "\t")
-        doc.isDirty = true
+        if let sel = selectedRange, sel.length > 0 {
+            applyLineTransform(in: doc, selectedRange: selectedRange) { line in
+                line.replacingOccurrences(of: spaces, with: "\t")
+            }
+        } else {
+            guard !doc.isReadOnly else { return }
+            doc.content = doc.content.replacingOccurrences(of: spaces, with: "\t")
+            doc.isDirty = true
+        }
     }
 
     public static func trimBothAndEolToSpace(in doc: NppDocument) {
@@ -581,21 +613,18 @@ public final class NppEditOperations {
         doc.isDirty = true
     }
 
-    public static func spaceToTabAll(in doc: NppDocument, spaceCount: Int = 4) {
-        spaceToTab(in: doc, spaceCount: spaceCount)
+    public static func spaceToTabAll(in doc: NppDocument, spaceCount: Int = 4, selectedRange: NSRange? = nil) {
+        spaceToTab(in: doc, spaceCount: spaceCount, selectedRange: selectedRange)
     }
 
-    public static func spaceToTabLeading(in doc: NppDocument, spaceCount: Int = 4) {
-        guard !doc.isReadOnly, spaceCount > 0 else { return }
-        let lines = doc.content.nppLines()
-        let transformed = lines.map { line -> String in
+    public static func spaceToTabLeading(in doc: NppDocument, spaceCount: Int = 4, selectedRange: NSRange? = nil) {
+        guard spaceCount > 0 else { return }
+        applyLineTransform(in: doc, selectedRange: selectedRange) { line in
             var count = 0
-            var nonSpaceIndex = line.endIndex
-            for idx in line.indices {
-                if line[idx] == " " {
+            for ch in line {
+                if ch == " " {
                     count += 1
                 } else {
-                    nonSpaceIndex = idx
                     break
                 }
             }
@@ -603,11 +632,8 @@ public final class NppEditOperations {
             let tabs = count / spaceCount
             let rem = count % spaceCount
             let prefix = String(repeating: "\t", count: tabs) + String(repeating: " ", count: rem)
-            return prefix + String(line[nonSpaceIndex...])
+            return prefix + line.dropFirst(count)
         }
-        let separator = doc.eolFormat.characters
-        doc.content = transformed.joined(separator: separator)
-        doc.isDirty = true
     }
 
     // MARK: - Indent Operations
@@ -647,10 +673,12 @@ public final class NppEditOperations {
         textView.undoManager?.endUndoGrouping()
 
         if sel.length == 0 {
-            textView.setSelectedRange(NSRange(location: sel.location + indentLen, length: 0))
+            let newPos = min(sel.location + indentLen, (textView.string as NSString).length)
+            textView.setSelectedRange(NSRange(location: newPos, length: 0))
         } else {
-            let newStart = sel.location + indentLen
-            let newLength = sel.length + (lineStarts.count > 1 ? (lineStarts.count - 1) * indentLen : 0)
+            let newStart = (sel.location == startLineStart) ? startLineStart : (sel.location + indentLen)
+            let newEnd = NSMaxRange(sel) + (lineStarts.count * indentLen)
+            let newLength = max(0, newEnd - newStart)
             let totalLen = (textView.string as NSString).length
             textView.setSelectedRange(NSRange(location: min(newStart, totalLen), length: min(newLength, totalLen - min(newStart, totalLen))))
         }
@@ -711,7 +739,8 @@ public final class NppEditOperations {
         textView.undoManager?.endUndoGrouping()
 
         let newStart = max(startLineStart, sel.location - removedFirstLine)
-        let newLength = max(0, sel.length - (removedTotal - removedFirstLine))
+        let newEnd = max(newStart, NSMaxRange(sel) - removedTotal)
+        let newLength = newEnd - newStart
         let totalLen = (textView.string as NSString).length
         textView.setSelectedRange(NSRange(location: min(newStart, totalLen), length: min(newLength, totalLen - min(newStart, totalLen))))
     }
@@ -1068,6 +1097,19 @@ public final class NppEditOperations {
         }
     }
 
+    /// Redacts text with `mask` (default `█`), preserving CRLF (`\r\n`), LF (`\n`), and CR (`\r`) line breaks.
+    public static func redact(text: String, mask: Character = "█") -> String {
+        var redacted = ""
+        for ch in text {
+            if ch.isNewline || ch == "\r" || ch == "\n" || ch == "\r\n" {
+                redacted.append(ch)
+            } else {
+                redacted.append(mask)
+            }
+        }
+        return redacted
+    }
+
     /// `IDM_EDIT_REDACT_SELECTION`: Replaces selected text with `█` (or `●` when Shift is held), preserving `\r` and `\n`.
     public static func redactSelection(in textView: NSTextView, useBullet: Bool = false) {
         guard textView.isEditable else { return }
@@ -1077,15 +1119,7 @@ public final class NppEditOperations {
         guard NSMaxRange(sel) <= str.length else { return }
         let text = str.substring(with: sel)
         let mask: Character = useBullet ? "●" : "█"
-        var redacted = ""
-        redacted.reserveCapacity(text.count)
-        for scalar in text.unicodeScalars {
-            if scalar == "\r" || scalar == "\n" {
-                redacted.unicodeScalars.append(scalar)
-            } else {
-                redacted.append(mask)
-            }
-        }
+        let redacted = redact(text: text, mask: mask)
         if textView.shouldChangeText(in: sel, replacementString: redacted) {
             textView.replaceCharacters(in: sel, with: redacted)
             textView.didChangeText()
@@ -1195,7 +1229,7 @@ public final class NppEditOperations {
     }
 
     // MARK: - Helpers
-    private static func getWordRange(at pos: Int, in string: NSString) -> NSRange {
+    public static func getWordRange(at pos: Int, in string: NSString) -> NSRange {
         guard string.length > 0 else { return NSRange(location: 0, length: 0) }
         let clamped = min(max(pos, 0), string.length - 1)
         var start = clamped

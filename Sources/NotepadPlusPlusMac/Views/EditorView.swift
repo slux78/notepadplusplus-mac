@@ -372,6 +372,13 @@ public final class NppTextView: NSTextView {
                c == 41 /* ) */ || c == 93 /* ] */ || c == 125 /* } */ || c == 59 /* ; */ || c == 44 /* , */
     }
 
+    private func isCharPrevAlphanumeric(at pos: Int, text: NSString) -> Bool {
+        guard pos > 0 && pos <= text.length else { return false }
+        let c = text.character(at: pos - 1)
+        guard let scalar = UnicodeScalar(c) else { return false }
+        return CharacterSet.alphanumerics.contains(scalar)
+    }
+
     public func searchMatchedCloseChar(startChar: Character, endChar: Character, caretPos: Int) -> Int? {
         guard !insertedMatchedChars.isEmpty else { return nil }
         let text = self.string as NSString
@@ -602,7 +609,7 @@ public final class NppTextView: NSTextView {
                     }
                 }
                 if ch == "\"" && ws.autoInsertDoubleQuote {
-                    if isCharNextBlankOrCloseSymbol(at: range.location, text: text) {
+                    if !isCharPrevAlphanumeric(at: range.location, text: text) && isCharNextBlankOrCloseSymbol(at: range.location, text: text) {
                         self.insertText("\"\"", replacementRange: range)
                         self.setSelectedRange(NSRange(location: range.location + 1, length: 0))
                         insertedMatchedChars.append(MatchedCharInserted(openChar: "\"", closeChar: "\"", openPos: range.location))
@@ -610,7 +617,7 @@ public final class NppTextView: NSTextView {
                     }
                 }
                 if ch == "'" && ws.autoInsertSingleQuote {
-                    if isCharNextBlankOrCloseSymbol(at: range.location, text: text) {
+                    if !isCharPrevAlphanumeric(at: range.location, text: text) && isCharNextBlankOrCloseSymbol(at: range.location, text: text) {
                         self.insertText("''", replacementRange: range)
                         self.setSelectedRange(NSRange(location: range.location + 1, length: 0))
                         insertedMatchedChars.append(MatchedCharInserted(openChar: "'", closeChar: "'", openPos: range.location))
@@ -909,6 +916,44 @@ public final class NppTextView: NSTextView {
         }
     }
 
+    // MARK: - NSUserInterfaceValidations
+    public override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        let isDocReadOnly = !self.isEditable || (editorCoordinator?.parent.document.isReadOnly ?? false)
+        let mutatingSelectors: Set<Selector> = [
+            #selector(NSText.cut(_:)),
+            #selector(NSText.delete(_:)),
+            #selector(NSText.paste(_:)),
+            #selector(contextToggleComment),
+            #selector(contextBlockComment),
+            #selector(contextBlockUncomment),
+            #selector(contextUppercase),
+            #selector(contextLowercase),
+            #selector(contextProperCase),
+            #selector(contextSentenceCase),
+            #selector(contextInvertCase),
+            #selector(contextDuplicateLine),
+            #selector(contextJoinLines),
+            #selector(contextSplitLines),
+            #selector(contextRemoveEmptyLines),
+            #selector(contextRemoveDuplicateLines),
+            #selector(contextSortAscending),
+            #selector(contextSortDescending),
+            #selector(contextReverseLines),
+            #selector(contextTrimTrailing),
+            #selector(contextTrimLeading),
+            #selector(contextTrimBoth),
+            #selector(contextEolToSpace),
+            #selector(contextTabToSpace),
+            #selector(contextSpaceToTab),
+            #selector(contextInsertDateShort),
+            #selector(contextInsertDateLong)
+        ]
+        if let action = item.action, mutatingSelectors.contains(action) {
+            return !isDocReadOnly
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
     // MARK: - Notepad++ Right Click Context Menu (Scintilla Edit Zone)
     public override func menu(for event: NSEvent) -> NSMenu? {
         let tr = { (key: String) -> String in
@@ -1168,31 +1213,52 @@ public final class NppTextView: NSTextView {
 
     // Context Menu Handlers
     @objc func contextToggleComment() {
-        if let lang = resolvedDocument?.language {
-            NppEditOperations.toggleComment(in: self, language: lang)
-        }
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.toggleComment(in: self, language: doc.language)
     }
     @objc func contextBlockComment() {
-        if let lang = resolvedDocument?.language {
-            NppEditOperations.streamComment(in: self, language: lang)
-        }
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.streamComment(in: self, language: doc.language)
     }
     @objc func contextBlockUncomment() {
-        if let lang = resolvedDocument?.language {
-            NppEditOperations.streamUncomment(in: self, language: lang)
-        }
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.streamUncomment(in: self, language: doc.language)
     }
-    @objc func contextUppercase() { NppEditOperations.convertCase(in: self, to: .uppercase) }
-    @objc func contextLowercase() { NppEditOperations.convertCase(in: self, to: .lowercase) }
-    @objc func contextProperCase() { NppEditOperations.convertCase(in: self, to: .properCase) }
-    @objc func contextSentenceCase() { NppEditOperations.convertCase(in: self, to: .sentenceCase) }
-    @objc func contextInvertCase() { NppEditOperations.convertCase(in: self, to: .invertCase) }
+    @objc func contextUppercase() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.convertCase(in: self, to: .uppercase)
+    }
+    @objc func contextLowercase() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.convertCase(in: self, to: .lowercase)
+    }
+    @objc func contextProperCase() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.convertCase(in: self, to: .properCase)
+    }
+    @objc func contextSentenceCase() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.convertCase(in: self, to: .sentenceCase)
+    }
+    @objc func contextInvertCase() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.convertCase(in: self, to: .invertCase)
+    }
 
-    @objc func contextDuplicateLine() { NppEditOperations.duplicateLine(in: self) }
-    @objc func contextJoinLines() { NppEditOperations.joinLines(in: self) }
-    @objc func contextSplitLines() { NppEditOperations.splitLines(in: self) }
+    @objc func contextDuplicateLine() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.duplicateLine(in: self)
+    }
+    @objc func contextJoinLines() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.joinLines(in: self)
+    }
+    @objc func contextSplitLines() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.splitLines(in: self)
+    }
     private func performContextDocumentOp(_ op: (NppDocument) -> Void) {
-        guard self.isEditable, let doc = resolvedDocument else { return }
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         if doc.content != self.string {
             doc.content = self.string
         }
@@ -1210,53 +1276,70 @@ public final class NppTextView: NSTextView {
     }
 
     @objc func contextRemoveEmptyLines() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.removeEmptyLinesContainingBlanks)
         performContextDocumentOp { NppEditOperations.removeEmptyLines(in: $0, removeBlankChars: true) }
     }
     @objc func contextRemoveDuplicateLines() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.removeDuplicateLines)
         performContextDocumentOp { NppEditOperations.removeDuplicateLines(in: $0) }
     }
     @objc func contextSortAscending() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.sortLines)
         performContextDocumentOp { NppEditOperations.sortLines(in: $0, ascending: true) }
     }
     @objc func contextSortDescending() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.sortLinesDescending)
         performContextDocumentOp { NppEditOperations.sortLines(in: $0, ascending: false) }
     }
     @objc func contextReverseLines() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.reverseLineOrder)
         performContextDocumentOp { NppEditOperations.reverseLineOrder(in: $0) }
     }
 
     @objc func contextTrimTrailing() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.trimTrailingSpace)
         performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .trailing) }
     }
     @objc func contextTrimLeading() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.trimLeadingSpace)
         performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .leading) }
     }
     @objc func contextTrimBoth() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.trimBothSpace)
         performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .both) }
     }
     @objc func contextEolToSpace() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.eolToSpace)
         performContextDocumentOp { NppEditOperations.eolToSpace(in: $0) }
     }
     @objc func contextTabToSpace() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.tabToSpace)
         performContextDocumentOp { NppEditOperations.tabToSpace(in: $0, spaceCount: resolvedWorkspace?.tabSize ?? 4) }
     }
     @objc func contextSpaceToTab() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
         resolvedWorkspace?.recordMacroStep(.spaceToTab)
         performContextDocumentOp { NppEditOperations.spaceToTab(in: $0, spaceCount: resolvedWorkspace?.tabSize ?? 4) }
     }
 
-    @objc func contextInsertDateShort() { NppEditOperations.insertDateTime(in: self, isLong: false) }
-    @objc func contextInsertDateLong() { NppEditOperations.insertDateTime(in: self, isLong: true) }
+    @objc func contextInsertDateShort() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.insertDateTime(in: self, isLong: false)
+    }
+    @objc func contextInsertDateLong() {
+        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        NppEditOperations.insertDateTime(in: self, isLong: true)
+    }
 
     @objc func contextSearchGoogle() {
         let sel = self.selectedRange()

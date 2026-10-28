@@ -188,6 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }, filename: "screenshot_light.png")
         } else if CommandLine.arguments.contains("--screenshot-main") {
             NppAutomatedTestSuite.captureScreenshot(appDelegate: self, openPrefs: false, filename: "screenshot_main.png")
+        } else {
+            NppCommandLineParser.parse(CommandLine.arguments, workspace: workspace)
         }
     }
 
@@ -1482,15 +1484,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func menuTrimTrailing() {
         workspace.recordMacroStep(.trimTrailingSpace)
-        if let doc = workspace.activeDocument { NppEditOperations.trimSpaces(in: doc, mode: .trailing) }
+        let sel = getActiveTextView()?.selectedRange()
+        if let doc = workspace.activeDocument { NppEditOperations.trimSpaces(in: doc, mode: .trailing, selectedRange: sel) }
     }
     @objc func menuTrimLeading() {
         workspace.recordMacroStep(.trimLeadingSpace)
-        if let doc = workspace.activeDocument { NppEditOperations.trimSpaces(in: doc, mode: .leading) }
+        let sel = getActiveTextView()?.selectedRange()
+        if let doc = workspace.activeDocument { NppEditOperations.trimSpaces(in: doc, mode: .leading, selectedRange: sel) }
     }
     @objc func menuTrimBoth() {
         workspace.recordMacroStep(.trimBothSpace)
-        if let doc = workspace.activeDocument { NppEditOperations.trimSpaces(in: doc, mode: .both) }
+        let sel = getActiveTextView()?.selectedRange()
+        if let doc = workspace.activeDocument { NppEditOperations.trimSpaces(in: doc, mode: .both, selectedRange: sel) }
     }
     @objc func menuEolToSpace() {
         workspace.recordMacroStep(.eolToSpace)
@@ -1501,18 +1506,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func menuTabToSpace() {
         workspace.recordMacroStep(.tabToSpace)
-        if let doc = workspace.activeDocument { NppEditOperations.tabToSpace(in: doc) }
+        let sel = getActiveTextView()?.selectedRange()
+        if let doc = workspace.activeDocument { NppEditOperations.tabToSpace(in: doc, selectedRange: sel) }
     }
     @objc func menuSpaceToTab() {
         workspace.recordMacroStep(.spaceToTab)
-        if let doc = workspace.activeDocument { NppEditOperations.spaceToTab(in: doc) }
+        let sel = getActiveTextView()?.selectedRange()
+        if let doc = workspace.activeDocument { NppEditOperations.spaceToTab(in: doc, selectedRange: sel) }
     }
     @objc func menuSpaceToTabAll() {
         workspace.recordMacroStep(.spaceToTab)
-        if let doc = workspace.activeDocument { NppEditOperations.spaceToTabAll(in: doc, spaceCount: workspace.tabSize) }
+        let sel = getActiveTextView()?.selectedRange()
+        if let doc = workspace.activeDocument { NppEditOperations.spaceToTabAll(in: doc, spaceCount: workspace.tabSize, selectedRange: sel) }
     }
     @objc func menuSpaceToTabLeading() {
-        if let doc = workspace.activeDocument { NppEditOperations.spaceToTabLeading(in: doc, spaceCount: workspace.tabSize) }
+        let sel = getActiveTextView()?.selectedRange()
+        if let doc = workspace.activeDocument { NppEditOperations.spaceToTabLeading(in: doc, spaceCount: workspace.tabSize, selectedRange: sel) }
     }
 
     @objc func menuInsertDateShort() {
@@ -1606,9 +1615,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func menuRedactSelection() {
-        guard let tv = getActiveTextView() else { return }
+        guard let tv = getActiveTextView(), tv.isEditable else { return }
+        if let doc = workspace.activeDocument, doc.isReadOnly { return }
+        if workspace.isAllDocumentsReadOnly { return }
+        let sel = tv.selectedRange()
+        guard sel.length > 0 else { return }
+        let text = (tv.string as NSString).substring(with: sel)
         let useBullet = NSEvent.modifierFlags.contains(.shift)
-        NppEditOperations.redactSelection(in: tv, useBullet: useBullet)
+        let mask: Character = useBullet ? "●" : "█"
+        let redacted = NppEditOperations.redact(text: text, mask: mask)
+        if tv.shouldChangeText(in: sel, replacementString: redacted) {
+            tv.replaceCharacters(in: sel, with: redacted)
+            tv.didChangeText()
+            tv.setSelectedRange(NSRange(location: sel.location, length: (redacted as NSString).length))
+        }
     }
 
     @objc func menuSearchOnInternet() {
@@ -2098,6 +2118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if menuItem.action == #selector(menuReload) || menuItem.action == #selector(menuMoveToTrash) {
             return workspace.activeDocument?.filePath != nil
         }
+        let isDocReadOnly = (workspace.activeDocument == nil) || (workspace.activeDocument?.isReadOnly == true) || workspace.isAllDocumentsReadOnly
+        let isEditable = !isDocReadOnly && (getActiveTextView()?.isEditable ?? true)
+
         // Macro menu validation matching Notepad_plus.cpp L2778-2783
         if menuItem.action == #selector(menuMacroStart) {
             return !workspace.isMacroRecording
@@ -2106,12 +2129,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return workspace.isMacroRecording
         }
         if menuItem.action == #selector(menuMacroPlayback) {
+            if !isEditable { return false }
             return workspace.canPlaybackMacro
         }
         if menuItem.action == #selector(menuMacroSave) {
             return workspace.canSaveRecordedMacro
         }
         if menuItem.action == #selector(menuMacroRunMulti) {
+            if !isEditable { return false }
             return workspace.canRunMultiMacro
         }
         // Pass 2: Edit Menu Validation
@@ -2138,7 +2163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menuItem.state = workspace.showClipboardHistory ? .on : .off
             return true
         }
-        if menuItem.action == #selector(menuRedactSelection) || menuItem.action == #selector(menuSearchOnInternet) {
+        if menuItem.action == #selector(menuRedactSelection) {
+            if !isEditable { return false }
+            return (getActiveTextView()?.selectedRange().length ?? 0) > 0
+        }
+        if menuItem.action == #selector(menuSearchOnInternet) {
             return (getActiveTextView()?.selectedRange().length ?? 0) > 0
         }
         if menuItem.action == #selector(menuOpenSelectedFile) || menuItem.action == #selector(menuOpenSelectedFolderInFinder) {
@@ -2148,15 +2177,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // EOL Conversion active checkmarks
         if menuItem.action == #selector(menuEolWindows) {
             menuItem.state = (workspace.activeDocument?.eolFormat == .crlf) ? .on : .off
-            return workspace.activeDocument != nil && workspace.activeDocument?.eolFormat != .crlf
+            return !isDocReadOnly
         }
         if menuItem.action == #selector(menuEolUnix) {
             menuItem.state = (workspace.activeDocument?.eolFormat == .lf) ? .on : .off
-            return workspace.activeDocument != nil && workspace.activeDocument?.eolFormat != .lf
+            return !isDocReadOnly
         }
         if menuItem.action == #selector(menuEolMac) {
             menuItem.state = (workspace.activeDocument?.eolFormat == .cr) ? .on : .off
-            return workspace.activeDocument != nil && workspace.activeDocument?.eolFormat != .cr
+            return !isDocReadOnly
+        }
+
+        // Mutating Edit Operations: Strictly disabled when document is read-only or non-editable
+        let mutatingEditActions: Set<Selector> = [
+            #selector(NSText.cut(_:)),
+            #selector(NSText.delete(_:)),
+            #selector(NSText.paste(_:)),
+            #selector(menuIncreaseLineIndent),
+            #selector(menuDecreaseLineIndent),
+            #selector(menuUppercase),
+            #selector(menuLowercase),
+            #selector(menuProperCase),
+            #selector(menuProperCaseBlend),
+            #selector(menuSentenceCase),
+            #selector(menuSentenceCaseBlend),
+            #selector(menuInvertCase),
+            #selector(menuRandomCase),
+            #selector(menuDupLine),
+            #selector(menuRemoveDuplicateLines),
+            #selector(menuRemoveConsecutiveDuplicateLines),
+            #selector(menuSplitLines),
+            #selector(menuJoinLines),
+            #selector(menuMoveLineUp),
+            #selector(menuMoveLineDown),
+            #selector(menuInsertEmptyLineAbove),
+            #selector(menuInsertEmptyLineBelow),
+            #selector(menuRemoveEmptyLines),
+            #selector(menuRemoveEmptyLinesContainingBlanks),
+            #selector(menuReverseLines),
+            #selector(menuRandomizeLineOrder),
+            #selector(menuSortAscending),
+            #selector(menuSortDescending),
+            #selector(menuSortCaseInsensitiveAscending),
+            #selector(menuSortCaseInsensitiveDescending),
+            #selector(menuSortIntegersAscending),
+            #selector(menuSortIntegersDescending),
+            #selector(menuSortDecimalsDotAscending),
+            #selector(menuSortDecimalsDotDescending),
+            #selector(menuSortDecimalsCommaAscending),
+            #selector(menuSortDecimalsCommaDescending),
+            #selector(menuSortByLengthAscending),
+            #selector(menuSortByLengthDescending),
+            #selector(menuToggleComment),
+            #selector(menuSingleLineComment),
+            #selector(menuSingleLineUncomment),
+            #selector(menuBlockComment),
+            #selector(menuBlockUncomment),
+            #selector(menuTrimTrailing),
+            #selector(menuTrimLeading),
+            #selector(menuTrimBoth),
+            #selector(menuEolToSpace),
+            #selector(menuTrimBothAndEolToSpace),
+            #selector(menuTabToSpace),
+            #selector(menuSpaceToTab),
+            #selector(menuSpaceToTabAll),
+            #selector(menuSpaceToTabLeading),
+            #selector(menuInsertDateShort),
+            #selector(menuInsertDateLong),
+            #selector(menuInsertDateCustomized),
+            #selector(menuCutBookmarkedLines),
+            #selector(menuPasteBookmarkedLines),
+            #selector(menuRemoveBookmarkedLines),
+            #selector(menuRemoveNonBookmarkedLines)
+        ]
+
+        if let act = menuItem.action, mutatingEditActions.contains(act) {
+            return isEditable
         }
 
         // Search menu checkmarks
@@ -2303,6 +2399,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         return true
+    }
+}
+
+// MARK: - Command Line Argument Parser (command-prompt.md)
+public struct NppCommandLineParser {
+    public struct ParsedArgs {
+        public var line: Int?
+        public var column: Int?
+        public var language: String?
+        public var isReadOnly: Bool = false
+        public var localization: String?
+        public var runTests: Bool = false
+        public var files: [String] = []
+    }
+
+    public static func parseArgs(_ args: [String]) -> ParsedArgs {
+        var parsed = ParsedArgs()
+        var i = 0
+        // If args has executable at 0, handle both full CommandLine.arguments and isolated arguments
+        if args.count > 0 && !args[0].hasPrefix("-") && (args[0].hasSuffix("NotepadPlusPlusMac") || args[0].hasSuffix("Notepad++") || args[0].contains("/")) {
+            i = 1
+        }
+
+        while i < args.count {
+            let arg = args[i]
+            if arg == "--run-tests" {
+                parsed.runTests = true
+            } else if arg.hasPrefix("-n") {
+                let rest = String(arg.dropFirst(2))
+                if !rest.isEmpty {
+                    parsed.line = Int(rest)
+                } else if i + 1 < args.count {
+                    i += 1
+                    parsed.line = Int(args[i])
+                }
+            } else if arg.hasPrefix("-c") {
+                let rest = String(arg.dropFirst(2))
+                if !rest.isEmpty {
+                    parsed.column = Int(rest)
+                } else if i + 1 < args.count {
+                    i += 1
+                    parsed.column = Int(args[i])
+                }
+            } else if arg.hasPrefix("-l") {
+                let rest = String(arg.dropFirst(2))
+                if !rest.isEmpty {
+                    parsed.language = rest
+                } else if i + 1 < args.count {
+                    i += 1
+                    parsed.language = args[i]
+                }
+            } else if arg == "-ro" {
+                parsed.isReadOnly = true
+            } else if arg.hasPrefix("-L") {
+                let langCode = String(arg.dropFirst(2)).lowercased()
+                parsed.localization = langCode
+            } else if !arg.hasPrefix("-") {
+                parsed.files.append(arg)
+            }
+            i += 1
+        }
+        return parsed
+    }
+
+    public static func parse(_ args: [String], workspace: NppWorkspace) {
+        let parsed = parseArgs(args)
+
+        if let loc = parsed.localization {
+            if loc == "ko" || loc == "kr" {
+                workspace.localizationLanguage = "한국어"
+            } else if loc == "en" {
+                workspace.localizationLanguage = "English"
+            }
+        }
+
+        for path in parsed.files {
+            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            workspace.openFile(url: url)
+        }
+
+        if let doc = workspace.activeDocument {
+            if parsed.isReadOnly {
+                doc.isReadOnly = true
+            }
+            if let lang = parsed.language {
+                doc.language = lang
+            }
+            if let line = parsed.line {
+                workspace.jumpToLine(line)
+                if let col = parsed.column {
+                    doc.cursorCol = max(1, col)
+                }
+            }
+        }
     }
 }
 

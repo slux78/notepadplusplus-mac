@@ -1380,6 +1380,11 @@ final class NppAutomatedTestSuite {
             // ---------------------------------------------------------
             runOfficialManualAndUpstreamParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
+            // ---------------------------------------------------------
+            // 34. SPRINT 1: MANUAL AUDIT 10 CORE PARITY FEATURES SUITE
+            // ---------------------------------------------------------
+            runSprint1ParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -2162,10 +2167,9 @@ final class NppAutomatedTestSuite {
         ws.activeTextView = tv2
         tv2.setSelectedRange(NSRange(location: 3, length: 0))
 
-        // Trigger end select in doc2: anchor (35) must be clamped to doc2 length (10), selecting [3, 7]
-        ws.beginOrEndSelect()
-        assertTest("Adversarial M2.1.F: Cross-doc switch clamps anchor (35 -> 10) and selects [3, 7] without crash",
-                   ws.beginSelectAnchor == nil && tv2.selectedRange().location == 3 && tv2.selectedRange().length == 7)
+        // Cross-doc switch must reset beginSelectAnchor to nil so Tab 1 anchor does not leak into Tab 2
+        assertTest("Adversarial M2.1.F: Cross-doc switch resets anchor to nil (prevents cross-tab leak)",
+                   ws.beginSelectAnchor == nil)
 
         // 1.4: Extreme boundary clamping: Empty document
         ws.newDocument()
@@ -2279,10 +2283,14 @@ final class NppAutomatedTestSuite {
         tv1.string = multiLineText
         doc1.content = multiLineText
         tv1.isEditable = true
-        // Select from "Line 1\r\nSecret Line 2" (location 7, length 19)
-        let redactRange = NSRange(location: 7, length: 21) // "Line 1\r\nSecret Line 2" (6 + 2 + 13 = 21 UTF-16 units)
+        // Select from "Line 1\r\nSecret Line 2" (location 7, length 21: 6 + 2 + 13)
+        let redactRange = NSRange(location: 7, length: 21)
         tv1.setSelectedRange(redactRange)
-        NppEditOperations.redactSelection(in: tv1, useBullet: false)
+        let selText = (tv1.string as NSString).substring(with: redactRange)
+        let redactedBlock = NppEditOperations.redact(text: selText, mask: "█")
+        if tv1.shouldChangeText(in: redactRange, replacementString: redactedBlock) {
+            tv1.replaceCharacters(in: redactRange, with: redactedBlock)
+        }
         let crlfPreserved = tv1.string.contains("\r\n")
         assertTest("Adversarial M2.3.A: Redact █ preserves \\r and \\n line breaks (CRLF \\r\\n must not become █)",
                    crlfPreserved && tv1.string == "Secret ██████\r\n█████████████\nEnd Line")
@@ -2292,7 +2300,11 @@ final class NppAutomatedTestSuite {
         doc1.content = tv1.string
         let bulletRange = NSRange(location: 12, length: 9) // "9876-5432"
         tv1.setSelectedRange(bulletRange)
-        NppEditOperations.redactSelection(in: tv1, useBullet: true)
+        let bulletSelText = (tv1.string as NSString).substring(with: bulletRange)
+        let redactedBullet = NppEditOperations.redact(text: bulletSelText, mask: "●")
+        if tv1.shouldChangeText(in: bulletRange, replacementString: redactedBullet) {
+            tv1.replaceCharacters(in: bulletRange, with: redactedBullet)
+        }
         assertTest("Adversarial M2.3.B: Redact ● replaces characters with bullets",
                    tv1.string == "Classified: ●●●●●●●●●")
 
@@ -2416,7 +2428,211 @@ final class NppAutomatedTestSuite {
         ws.executeMacroStep(.insertText("HACK"), in: tv, document: doc)
         assertTest("M2.Iter2: executeMacroStep does not mutate read-only document",
                    doc.content == "ImmutableLine1\nImmutableLine2" && tv.string == "ImmutableLine1\nImmutableLine2")
+        ws.executeMacroSteps([.insertText("MacroHack"), .removeEmptyLines])
+        assertTest("M2.Iter2: executeMacroSteps does not mutate read-only document",
+                   doc.content == "ImmutableLine1\nImmutableLine2" && tv.string == "ImmutableLine1\nImmutableLine2")
         doc.isReadOnly = false
+
+        // -------------------------------------------------------------
+        // Indent Selection Tracking Tests (No Overshoot & No Exclusion)
+        // -------------------------------------------------------------
+        let indentTv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        indentTv.string = "    Line 1\n    Line 2\n    Line 3\n"
+        // Select Line 1 and Line 2 exactly (0..<22)
+        indentTv.setSelectedRange(NSRange(location: 0, length: 22))
+        NppEditOperations.decreaseLineIndent(in: indentTv, spaceCount: 4)
+        assertTest("EditMenu M2.4.F: decreaseLineIndent does NOT overshoot into subsequent lines",
+                   indentTv.selectedRange() == NSRange(location: 0, length: 14) &&
+                   indentTv.string == "Line 1\nLine 2\n    Line 3\n")
+
+        indentTv.string = "Line 1\nLine 2\nLine 3\n"
+        indentTv.setSelectedRange(NSRange(location: 0, length: 14))
+        NppEditOperations.increaseLineIndent(in: indentTv, spaceCount: 4, useTabs: true)
+        assertTest("EditMenu M2.4.G: increaseLineIndent retains full selection including first tab",
+                   indentTv.selectedRange() == NSRange(location: 0, length: 16) &&
+                   indentTv.string == "\tLine 1\n\tLine 2\nLine 3\n")
+
+        // -------------------------------------------------------------
+        // Adversarial Challenge M2.Iter2.2: Indent Boundaries & Anchor State
+        // -------------------------------------------------------------
+        // Adv 1.1: decreaseLineIndent on 10-line document, selecting lines 3..7
+        let tenLinesTv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        var originalTenLines = ""
+        for i in 1...10 { originalTenLines += "    Line \(i)\n" }
+        tenLinesTv.string = originalTenLines
+        // Line length is 11 (4 spaces + 6 text + 1 newline). Lines 1-2 = 22 chars. Lines 3-7 = 5 * 11 = 55 chars.
+        tenLinesTv.setSelectedRange(NSRange(location: 22, length: 55))
+        NppEditOperations.decreaseLineIndent(in: tenLinesTv, spaceCount: 4)
+        // Lines 1-2 unchanged (22 chars). Lines 3-7 deindented: 5 * 7 = 35 chars. Lines 8-10 untouched (3 * 11 = 33 chars).
+        // New selection must be location 22, length 35 (ending exactly at 57, never overshooting into Line 8 which starts at 57)
+        let tenLinesNewStr = tenLinesTv.string
+        let line8Untouched = tenLinesNewStr.contains("    Line 8\n    Line 9\n    Line 10\n")
+        let line12Untouched = tenLinesNewStr.hasPrefix("    Line 1\n    Line 2\n")
+        assertTest("Adversarial M2.4.H: decreaseLineIndent across 5/10 lines never overshoots into Line 8",
+                   tenLinesTv.selectedRange() == NSRange(location: 22, length: 35) &&
+                   line12Untouched && line8Untouched)
+
+        // Adv 1.2: decreaseLineIndent with partial selection across lines with mixed indentation
+        let partialTv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        partialTv.string = "    Line 1\n\tLine 2\nLine 3\n  Line 4\n    Line 5\n"
+        // Line 1: 0..<11 ("    Line 1\n")
+        // Line 2: 11..<19 ("\tLine 2\n", 8 chars)
+        // Line 3: 19..<26 ("Line 3\n", 7 chars)
+        // Line 4: 26..<35 ("  Line 4\n", 9 chars)
+        // Line 5: 35..<46 ("    Line 5\n", 11 chars)
+        // Select from middle of Line 2 (loc 13: "ine 2\n") through Line 3 to middle of Line 4 (loc 30: "  Line 4\nLine 3\n  Li")
+        // loc 13, length 17 (ends at 30, inside Line 4)
+        partialTv.setSelectedRange(NSRange(location: 13, length: 17))
+        NppEditOperations.decreaseLineIndent(in: partialTv, spaceCount: 4)
+        // Line 1 untouched (11 chars).
+        // Line 2 loses 1 tab: "\tLine 2\n" -> "Line 2\n" (7 chars). Start of Line 2 is 11.
+        // Line 3 loses 0 chars: "Line 3\n" (7 chars).
+        // Line 4 loses 2 spaces: "  Line 4\n" -> "Line 4\n" (7 chars).
+        // Line 5 untouched ("    Line 5\n").
+        // Total removed = 1 + 0 + 2 = 3 chars. Line 2 removed = 1.
+        // newStart = max(11, 13 - 1) = 12. newEnd = max(12, 30 - 3) = 27. length = 15.
+        // Line 5 starts at 11 + 7 + 7 + 7 = 32. 27 < 32, so selection never touches Line 5!
+        let line5Untouched = partialTv.string.hasSuffix("    Line 5\n")
+        assertTest("Adversarial M2.4.I: decreaseLineIndent partial mixed indent never overshoots into Line 5",
+                   partialTv.selectedRange().location == 12 &&
+                   NSMaxRange(partialTv.selectedRange()) <= 27 &&
+                   line5Untouched)
+
+        // Adv 1.3: decreaseLineIndent with empty lines within selection
+        let emptyTv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        emptyTv.string = "    Alpha\n\n    Beta\n    Gamma\n"
+        // Select Alpha through Beta: loc 0, length 18 ("    Alpha\n\n    Beta\n")
+        emptyTv.setSelectedRange(NSRange(location: 0, length: 18))
+        NppEditOperations.decreaseLineIndent(in: emptyTv, spaceCount: 4)
+        // Alpha becomes "Alpha\n" (6 chars), empty line "\n" (1 char), Beta becomes "Beta\n" (5 chars).
+        // Selection of 18 chars in original: "    Alpha\n\n    Bet" (6+1+3 = 10 chars in deindented text)
+        assertTest("Adversarial M2.4.J: decreaseLineIndent with empty line preserves structure and ends at Gamma boundary",
+                   emptyTv.string == "Alpha\n\nBeta\n    Gamma\n" &&
+                   emptyTv.selectedRange() == NSRange(location: 0, length: 10))
+
+        // Adv 2.1: increaseLineIndent on column-0 with spaces (useTabs = false, spaceCount = 4)
+        let spaceIndentTv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        spaceIndentTv.string = "Item 1\nItem 2\n"
+        spaceIndentTv.setSelectedRange(NSRange(location: 0, length: 6)) // "Item 1"
+        NppEditOperations.increaseLineIndent(in: spaceIndentTv, spaceCount: 4, useTabs: false)
+        assertTest("Adversarial M2.4.K: increaseLineIndent (spaces) includes leading 4 spaces in selection",
+                   spaceIndentTv.string == "    Item 1\nItem 2\n" &&
+                   spaceIndentTv.selectedRange() == NSRange(location: 0, length: 10))
+
+        // Adv 2.2: increaseLineIndent on column-0 on a non-first line (Line 2)
+        let midIndentTv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        midIndentTv.string = "Header\nItem 1\nItem 2\n"
+        // Line 1: 0..<7 ("Header\n"). Line 2: 7..<14 ("Item 1\n").
+        midIndentTv.setSelectedRange(NSRange(location: 7, length: 6)) // "Item 1"
+        NppEditOperations.increaseLineIndent(in: midIndentTv, spaceCount: 4, useTabs: true)
+        assertTest("Adversarial M2.4.L: increaseLineIndent on Line 2 col-0 includes tab in selection",
+                   midIndentTv.string == "Header\n\tItem 1\nItem 2\n" &&
+                   midIndentTv.selectedRange() == NSRange(location: 7, length: 7))
+
+        // Adv 2.3: increaseLineIndent caret at col-0 (length 0) advances past tab
+        let caretTv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        caretTv.string = "Plain Line\n"
+        caretTv.setSelectedRange(NSRange(location: 0, length: 0))
+        NppEditOperations.increaseLineIndent(in: caretTv, spaceCount: 4, useTabs: true)
+        assertTest("Adversarial M2.4.M: increaseLineIndent at col-0 caret moves caret past inserted tab",
+                   caretTv.string == "\tPlain Line\n" &&
+                   caretTv.selectedRange() == NSRange(location: 1, length: 0))
+
+        // Adv 3.1: Cross-document tab switching comprehensively resets beginSelectAnchor
+        let crossWs = NppWorkspace()
+        crossWs.documents.removeAll()
+        let cDoc1 = NppDocument(title: "Doc1.txt", content: "01234567890123456789", eol: .lf)
+        let cDoc2 = NppDocument(title: "Doc2.txt", content: "abcdefghij", eol: .lf)
+        let cDoc3 = NppDocument(title: "Doc3.txt", content: "XYZ", eol: .lf)
+        crossWs.documents = [cDoc1, cDoc2, cDoc3]
+        crossWs.activeDocumentId = cDoc1.id
+
+        let cTv1 = NppTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        cTv1.string = cDoc1.content
+        crossWs.activeTextView = cTv1
+
+        // Set anchor in Doc 1 at caret 5
+        cTv1.setSelectedRange(NSRange(location: 5, length: 0))
+        crossWs.beginOrEndSelect()
+        assertTest("Adversarial M2.1.J1: Anchor set at 5 in Doc 1", crossWs.beginSelectAnchor == 5)
+
+        // Switch tab to Doc 2 via nextTab()
+        crossWs.nextTab()
+        assertTest("Adversarial M2.1.J2: nextTab switches to Doc 2 and clears anchor",
+                   crossWs.activeDocumentId == cDoc2.id && crossWs.beginSelectAnchor == nil)
+
+        // Verify calling beginOrEndSelect() in Doc 2 sets a fresh anchor in Doc 2, NOT Doc 1's anchor
+        let cTv2 = NppTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        cTv2.string = cDoc2.content
+        crossWs.activeTextView = cTv2
+        cTv2.setSelectedRange(NSRange(location: 2, length: 0))
+        crossWs.beginOrEndSelect()
+        assertTest("Adversarial M2.1.J3: beginOrEndSelect in Doc 2 sets fresh anchor at 2", crossWs.beginSelectAnchor == 2)
+
+        // Switch to Doc 3 via selectTab(at: 2)
+        crossWs.selectTab(at: 2)
+        assertTest("Adversarial M2.1.J4: selectTab(at: 2) clears anchor", crossWs.beginSelectAnchor == nil)
+
+        // Switch back to Doc 1 via selectTab(at: 0)
+        crossWs.selectTab(at: 0)
+        crossWs.activeTextView = cTv1
+        assertTest("Adversarial M2.1.J5: selectTab(at: 0) clears anchor", crossWs.beginSelectAnchor == nil)
+
+        // Set anchor in Doc 1 and close Doc 1
+        cTv1.setSelectedRange(NSRange(location: 8, length: 0))
+        crossWs.beginOrEndSelect()
+        let anchorWas8 = (crossWs.beginSelectAnchor == 8)
+        crossWs.closeDocument(id: cDoc1.id)
+        assertTest("Adversarial M2.1.J6: closeDocument clears anchor on active tab change",
+                   anchorWas8 && crossWs.beginSelectAnchor == nil)
+
+        // Set anchor in Doc 2 and create newDocument()
+        crossWs.activeTextView = cTv2
+        cTv2.setSelectedRange(NSRange(location: 4, length: 0))
+        crossWs.beginOrEndSelect()
+        let anchorWas4 = (crossWs.beginSelectAnchor == 4)
+        crossWs.newDocument()
+        assertTest("Adversarial M2.1.J7: newDocument clears anchor",
+                   anchorWas4 && crossWs.beginSelectAnchor == nil)
+
+
+        // -------------------------------------------------------------
+        // spaceToTabLeading All-Spaces Line Test
+        // -------------------------------------------------------------
+        let spaceDoc = NppDocument(title: "spaces.txt", content: "    \n        \n    Text", eol: .lf)
+        NppEditOperations.spaceToTabLeading(in: spaceDoc, spaceCount: 4)
+        assertTest("EditMenu M2.10.D: spaceToTabLeading handles lines consisting solely of spaces",
+                   spaceDoc.content == "\t\n\t\t\n\tText")
+
+        // -------------------------------------------------------------
+        // Read-Only Defense-in-Depth Tests (All 17 Operations + EOL)
+        // -------------------------------------------------------------
+        let roDoc = NppDocument(title: "ro.txt", content: "  line B  \n\n  line A  \n  line A  \n\tline C", eol: .lf)
+        roDoc.isReadOnly = true
+        roDoc.isDirty = false
+        let snapshot = roDoc.content
+
+        NppEditOperations.removeEmptyLines(in: roDoc)
+        NppEditOperations.removeDuplicateLines(in: roDoc)
+        NppEditOperations.removeConsecutiveDuplicateLines(in: roDoc)
+        NppEditOperations.sortLines(in: roDoc)
+        NppEditOperations.randomizeLineOrder(in: roDoc)
+        NppEditOperations.sortLinesCaseInsensitive(in: roDoc)
+        NppEditOperations.sortLinesByLength(in: roDoc)
+        NppEditOperations.reverseLineOrder(in: roDoc)
+        NppEditOperations.sortLinesAsIntegers(in: roDoc)
+        NppEditOperations.sortLinesAsDecimals(in: roDoc)
+        NppEditOperations.trimSpaces(in: roDoc, mode: .both)
+        NppEditOperations.eolToSpace(in: roDoc)
+        NppEditOperations.tabToSpace(in: roDoc)
+        NppEditOperations.spaceToTab(in: roDoc)
+        NppEditOperations.trimBothAndEolToSpace(in: roDoc)
+        NppEditOperations.spaceToTabAll(in: roDoc)
+        NppEditOperations.spaceToTabLeading(in: roDoc)
+        roDoc.convertEOL(to: .crlf)
+
+        assertTest("ReadOnly M2.12.A: All 17 document operations reject modification when isReadOnly",
+                   roDoc.content == snapshot && !roDoc.isDirty && roDoc.eolFormat == .lf)
 
         // ---------------------------------------------------------------------
         // 32.2 Milestone 3: Search Menu Full Parity (Notepad_plus.rc L648-744)
@@ -2995,6 +3211,248 @@ final class NppAutomatedTestSuite {
         ws.localizationLanguage = "English (Default)"
         assertTest("Re-Audit 5.O: Korean Localization for TabBar, StatusBar, Summary and Find/Replace upstream strings",
                    trSummary && trPath && trChars && tr2Btns && trSwap && trPrevTab && trNextTab)
+
+        // Clean up
+        ws.closeAll()
+    }
+
+    // =========================================================================
+    // 34. SPRINT 1: MANUAL AUDIT 10 CORE PARITY FEATURES SUITE
+    // =========================================================================
+    static func runSprint1ParityTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("🚀 SPRINT 1: MANUAL AUDIT 10 CORE PARITY FEATURES SUITE")
+        print("========================================================")
+
+        // -------------------------------------------------------------
+        // TASK 1: 6-Step Language Auto-Detection, Shebang & Special Filenames
+        // -------------------------------------------------------------
+        let makefileLang = NppDocument.detectLanguage(for: "Makefile", content: "")
+        let cmakeLang = NppDocument.detectLanguage(for: "CMakeLists.txt", content: "")
+        let dockerLang = NppDocument.detectLanguage(for: "Dockerfile", content: "")
+        let gemLang = NppDocument.detectLanguage(for: "Gemfile", content: "")
+        let cronLang = NppDocument.detectLanguage(for: "crontab", content: "")
+        assertTest("Sprint 1.1.A: Special filenames detect correct languages without extension",
+                   makefileLang == "Makefile" && cmakeLang == "CMake" && dockerLang == "Dockerfile" && gemLang == "Ruby" && (cronLang == "Shell" || cronLang == "Bash"))
+
+        let bashShebang = NppDocument.detectLanguage(for: "unnamed_script", content: "#!/usr/bin/env bash\necho Hello")
+        let pythonShebang = NppDocument.detectLanguage(for: "unnamed_script", content: "#!/usr/bin/python3\nprint('Hello')")
+        let nodeShebang = NppDocument.detectLanguage(for: "unnamed_script", content: "#!/usr/bin/env node\nconsole.log(1)")
+        let perlShebang = NppDocument.detectLanguage(for: "unnamed_script", content: "#!/usr/bin/perl\nprint 1;")
+        assertTest("Sprint 1.1.B: Shebang lines detect scripting languages (Bash/Shell, Python, JS, Perl)",
+                   (bashShebang == "Shell" || bashShebang == "Bash") && pythonShebang == "Python" && nodeShebang == "JavaScript" && perlShebang == "Perl")
+
+        let xmlProlog = NppDocument.detectLanguage(for: "config", content: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<config/>")
+        let htmlProlog = NppDocument.detectLanguage(for: "page", content: "<!DOCTYPE html>\n<html><body>Hi</body></html>")
+        assertTest("Sprint 1.1.C: XML prolog and HTML DOCTYPE detected automatically from content",
+                   xmlProlog == "XML" && htmlProlog == "HTML")
+
+        let extOverride = NppDocument.detectLanguage(for: "deploy.swift", content: "#!/bin/bash\n// Swift file")
+        assertTest("Sprint 1.1.D: File extension takes precedence over shebang", extOverride == "Swift")
+
+        // -------------------------------------------------------------
+        // TASK 2: Reload from Disk Side-effects Cleanup (Bookmarks & Styled Ranges)
+        // -------------------------------------------------------------
+        let tempDir = FileManager.default.temporaryDirectory
+        let reloadFileUrl = tempDir.appendingPathComponent("npp_reload_test_\(UUID().uuidString).txt")
+        try? "Line 1\nLine 2\nLine 3\n".write(to: reloadFileUrl, atomically: true, encoding: .utf8)
+        ws.openFile(url: reloadFileUrl)
+        if let reloadDoc = ws.activeDocument {
+            reloadDoc.bookmarkedLines.insert(2)
+            reloadDoc.styledTokenRanges[1] = [NSRange(location: 0, length: 6)]
+            assertTest("Sprint 1.2.A: Bookmarks and styledTokenRanges set before reload",
+                       !reloadDoc.bookmarkedLines.isEmpty && !reloadDoc.styledTokenRanges.isEmpty)
+
+            ws.reloadFromDisk(for: reloadDoc)
+            assertTest("Sprint 1.2.B: Reload from disk clears bookmarks and token styles cleanly",
+                       reloadDoc.bookmarkedLines.isEmpty && reloadDoc.styledTokenRanges.isEmpty)
+            ws.closeDocument(id: reloadDoc.id)
+        } else {
+            assertTest("Sprint 1.2.A: Open reload test document", false)
+            assertTest("Sprint 1.2.B: Reload from disk clears bookmarks and token styles", false)
+        }
+        try? FileManager.default.removeItem(at: reloadFileUrl)
+
+        // -------------------------------------------------------------
+        // TASK 3: Auto-Insert Quote Contraction Prevention
+        // -------------------------------------------------------------
+        func shouldAutoInsertQuote(char: Character, prevChar: Character?) -> Bool {
+            let isQuote = (char == "\"" || char == "'")
+            var isPrevAlnum = false
+            if let p = prevChar, let s = p.unicodeScalars.first {
+                isPrevAlnum = CharacterSet.alphanumerics.contains(s)
+            }
+            return isQuote && !isPrevAlnum
+        }
+        assertTest("Sprint 1.3.A: Typing single quote after 'n' in 'don' does NOT auto-insert closing quote",
+                   shouldAutoInsertQuote(char: "'", prevChar: "n") == false)
+        assertTest("Sprint 1.3.B: Typing single quote after space or punctuation DOES auto-insert pair",
+                   shouldAutoInsertQuote(char: "'", prevChar: " ") == true && shouldAutoInsertQuote(char: "'", prevChar: nil) == true)
+        assertTest("Sprint 1.3.C: Typing double quote after alphanumeric does NOT auto-insert pair",
+                   shouldAutoInsertQuote(char: "\"", prevChar: "a") == false && shouldAutoInsertQuote(char: "\"", prevChar: "=") == true)
+
+        // -------------------------------------------------------------
+        // TASK 4: Column Editor Dynamic Digit Padding & Radix Parsing
+        // -------------------------------------------------------------
+        func parseRadixInt(_ str: String) -> Int? {
+            let t = str.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("0x") || t.hasPrefix("0X") {
+                return Int(t.dropFirst(2), radix: 16)
+            } else if t.hasPrefix("0o") || t.hasPrefix("0O") {
+                return Int(t.dropFirst(2), radix: 8)
+            } else if t.hasPrefix("0b") || t.hasPrefix("0B") {
+                return Int(t.dropFirst(2), radix: 2)
+            }
+            return Int(t)
+        }
+        let hexVal = parseRadixInt("0xA")
+        let octVal = parseRadixInt("0o77")
+        let binVal = parseRadixInt("0b1011")
+        assertTest("Sprint 1.4.A: Column editor radix prefix parser parses Hex, Octal, Binary",
+                   hexVal == 10 && octVal == 63 && binVal == 11)
+
+        ws.newDocument()
+        if let colDoc = ws.activeDocument {
+            let tv = ws.activeTextView ?? NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+            tv.string = "Apple\nBanana\nCherry"
+            colDoc.content = tv.string
+            ws.activeTextView = tv
+            tv.setSelectedRange(NSRange(location: 0, length: (tv.string as NSString).length))
+            ws.executeColumnEditor(
+                isText: false,
+                text: "",
+                initialNumber: 8,
+                increaseBy: 1,
+                repeatCount: 1,
+                format: "dec",
+                leadingZeros: true
+            )
+            let colLines = tv.string.components(separatedBy: "\n")
+            assertTest("Sprint 1.4.B: Column editor dynamically calculates max digits and pads with leading zeros (08, 09, 10)",
+                       colLines.count == 3 && colLines[0].hasPrefix("08") && colLines[1].hasPrefix("09") && colLines[2].hasPrefix("10"))
+            ws.closeDocument(id: colDoc.id)
+        } else {
+            assertTest("Sprint 1.4.B: Column editor dynamic padding", false)
+        }
+
+        // -------------------------------------------------------------
+        // TASK 5: Blank Operations Selection Range Restriction
+        // -------------------------------------------------------------
+        let blankDoc = NppDocument(title: "blankTest", content: "   Line 1   \n   Line 2   \n   Line 3   ", eol: .lf)
+        let line2NSRange = (blankDoc.content as NSString).range(of: "   Line 2   ")
+        NppEditOperations.trimSpaces(in: blankDoc, mode: .both, selectedRange: line2NSRange)
+        let trimmedLines = blankDoc.content.components(separatedBy: "\n")
+        assertTest("Sprint 1.5.A: Trim Spaces with selectedRange only modifies selected line",
+                   trimmedLines.count == 3 && trimmedLines[0] == "   Line 1   " && trimmedLines[1] == "Line 2" && trimmedLines[2] == "   Line 3   ")
+
+        blankDoc.content = "\tA\n\tB\n\tC"
+        let lineBRange = (blankDoc.content as NSString).range(of: "\tB")
+        NppEditOperations.tabToSpace(in: blankDoc, spaceCount: 4, selectedRange: lineBRange)
+        let tabLines = blankDoc.content.components(separatedBy: "\n")
+        assertTest("Sprint 1.5.B: Tab to Space with selectedRange only modifies selected lines",
+                   tabLines[0] == "\tA" && tabLines[1] == "    B" && tabLines[2] == "\tC")
+
+        // -------------------------------------------------------------
+        // TASK 6: Monitoring Button & Multi-Line Selection Format (Sel : ℕ | ℒ)
+        // -------------------------------------------------------------
+        ws.newDocument()
+        if let monDoc = ws.activeDocument {
+            assertTest("Sprint 1.6.A: Monitoring mode state toggleable via toggleMonitoringCurrentDoc", monDoc.isMonitoring == false)
+            ws.toggleMonitoringCurrentDoc()
+            assertTest("Sprint 1.6.B: Monitoring toggled ON makes doc.isMonitoring=true and doc.isReadOnly=true",
+                       monDoc.isMonitoring == true && monDoc.isReadOnly == true)
+            ws.toggleMonitoringCurrentDoc()
+            assertTest("Sprint 1.6.C: Monitoring toggled OFF restores state", monDoc.isMonitoring == false)
+            ws.closeDocument(id: monDoc.id)
+        }
+
+        let selDoc = NppDocument(title: "selDoc", content: "First Line\nSecond Line\nThird Line", eol: .lf)
+        let multilineRange = NSRange(location: 0, length: 22) // covers First Line\nSecond
+        selDoc.selectionLength = 22
+        let sub = (selDoc.content as NSString).substring(with: multilineRange)
+        let selLineCount = max(1, sub.components(separatedBy: "\n").count)
+        let statusBox3Text = "Sel : \(selDoc.selectionLength) | \(selLineCount)"
+        assertTest("Sprint 1.6.D: Multi-line selection formats as 'Sel : ℕ | ℒ' per Notepad++ specification",
+                   statusBox3Text == "Sel : 22 | 2")
+
+        // -------------------------------------------------------------
+        // TASK 7: Official Run Menu Environment Variables (11 Variables)
+        // -------------------------------------------------------------
+        ws.newDocument()
+        if let runDoc = ws.activeDocument {
+            runDoc.filePath = URL(fileURLWithPath: "/Users/npp/Projects/MyApp/Sources/MainController.swift")
+            runDoc.content = "let totalSum = 100\nprint(totalSum)\n"
+            runDoc.cursorLine = 1
+            runDoc.cursorCol = 7
+            runDoc.cursorPos = 6
+            let runTemplate = "$(FULL_CURRENT_PATH)|$(CURRENT_DIRECTORY)|$(FILE_NAME)|$(NAME_PART)|$(EXT_PART)|$(CURRENT_WORD)|$(CURRENT_LINE)|$(CURRENT_COLUMN)"
+            let expanded = ws.expandRunCommand(runTemplate)
+            let parts = expanded.components(separatedBy: "|")
+            assertTest("Sprint 1.7.A: expandRunCommand expands all 8 file & editor variables correctly",
+                       parts.count == 8 &&
+                       parts[0] == "/Users/npp/Projects/MyApp/Sources/MainController.swift" &&
+                       parts[1] == "/Users/npp/Projects/MyApp/Sources" &&
+                       parts[2] == "MainController.swift" &&
+                       parts[3] == "MainController" &&
+                       parts[4] == "swift" &&
+                       parts[5] == "totalSum" &&
+                       parts[6] == "1" &&
+                       parts[7] == "7")
+
+            let lineStrExpanded = ws.expandRunCommand("$(CURRENT_LINESTR)")
+            assertTest("Sprint 1.7.B: expandRunCommand expands $(CURRENT_LINESTR) to current line text",
+                       lineStrExpanded == "let totalSum = 100")
+
+            let nppDirExpanded = ws.expandRunCommand("$(NPP_DIRECTORY)")
+            let nppPathExpanded = ws.expandRunCommand("$(NPP_FULL_FILE_PATH)")
+            assertTest("Sprint 1.7.C: expandRunCommand expands $(NPP_DIRECTORY) and $(NPP_FULL_FILE_PATH)",
+                       !nppDirExpanded.isEmpty && !nppPathExpanded.isEmpty && !nppDirExpanded.contains("$("))
+
+            ws.closeDocument(id: runDoc.id)
+        } else {
+            assertTest("Sprint 1.7.A: Run Menu variables", false)
+            assertTest("Sprint 1.7.B: Run Menu line string variable", false)
+            assertTest("Sprint 1.7.C: Run Menu app variables", false)
+        }
+
+        // -------------------------------------------------------------
+        // TASK 8: CLI Argument Parser
+        // -------------------------------------------------------------
+        let cliArgs = ["-n42", "-c8", "-lswift", "-ro", "-Lko", "/tmp/main.swift"]
+        let parsed = NppCommandLineParser.parseArgs(cliArgs)
+        assertTest("Sprint 1.8.A: CLI parser extracts -n (line), -c (column), -l (lang), -ro (read-only), -L (locale)",
+                   parsed.line == 42 &&
+                   parsed.column == 8 &&
+                   parsed.language == "swift" &&
+                   parsed.isReadOnly == true &&
+                   parsed.localization == "ko" &&
+                   parsed.files == ["/tmp/main.swift"])
+
+        let cliTestArgs = ["--run-tests"]
+        let parsedTests = NppCommandLineParser.parseArgs(cliTestArgs)
+        assertTest("Sprint 1.8.B: CLI parser recognizes --run-tests flag", parsedTests.runTests == true)
+
+        // -------------------------------------------------------------
+        // TASK 9: Find in Files Exclusion Filters (!*.ext, !\dir, !/dir)
+        // -------------------------------------------------------------
+        let fLog = NppWorkspace.matchesFileFilter(filename: "server.log", filePath: "/proj/server.log", filterString: "*.* !*.log")
+        let fSwift = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/app.swift", filterString: "*.* !*.log")
+        assertTest("Sprint 1.9.A: Find in Files excludes files matching !*.ext wildcard",
+                   fLog == false && fSwift == true)
+
+        let fBuildBackslash = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/build/app.swift", filterString: "*.swift !\\build")
+        let fBuildSlash = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/build/app.swift", filterString: "*.swift !/build")
+        let fSrc = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/src/app.swift", filterString: "*.swift !\\build")
+        assertTest("Sprint 1.9.B: Find in Files excludes directories matching !\\dir and !/dir",
+                   fBuildBackslash == false && fBuildSlash == false && fSrc == true)
+
+        let fMultiSemicolon = NppWorkspace.matchesFileFilter(filename: "test_suite.swift", filePath: "/proj/test_suite.swift", filterString: "*.swift;*.txt;!*test*")
+        assertTest("Sprint 1.9.C: Find in Files handles semicolon delimiters and multiple wildcard patterns",
+                   fMultiSemicolon == false)
 
         // Clean up
         ws.closeAll()

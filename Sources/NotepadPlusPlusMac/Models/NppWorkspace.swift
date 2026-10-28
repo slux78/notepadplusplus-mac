@@ -25,6 +25,9 @@ public final class NppWorkspace: ObservableObject {
     }
     @Published public var activeDocumentId: UUID? {
         didSet {
+            if oldValue != activeDocumentId {
+                beginSelectAnchor = nil
+            }
             validateActiveDocument()
         }
     }
@@ -1065,6 +1068,8 @@ public final class NppWorkspace: ObservableObject {
             doc.rawFileBytes = reloaded.rawFileBytes
             doc.lastKnownModificationDate = reloaded.lastKnownModificationDate
             doc.isDirty = false
+            doc.clearBookmarks()
+            doc.styledTokenRanges.removeAll()
             objectWillChange.send()
         } catch {
             print("Failed to reload file: \(error)")
@@ -1113,19 +1118,42 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
-    // MARK: - Notepad++ Run Command Engine
+    // MARK: - Notepad++ Run Command Engine (run-menu.md:40-65)
     public func expandRunCommand(_ rawCmd: String) -> String {
         guard let doc = activeDocument else { return rawCmd }
         let filePath = doc.filePath?.path ?? ""
         let fileDir = doc.filePath?.deletingLastPathComponent().path ?? FileManager.default.currentDirectoryPath
         let fileName = doc.filePath?.lastPathComponent ?? doc.title
         let namePart = (fileName as NSString).deletingPathExtension
+        let extPart = doc.filePath?.pathExtension ?? (fileName as NSString).pathExtension
+
+        let nppFullFilePath = Bundle.main.executablePath ?? CommandLine.arguments.first ?? ""
+        let nppDirectory = (nppFullFilePath as NSString).deletingLastPathComponent
+
+        let currentLine = "\(doc.cursorLine)"
+        let currentCol = "\(doc.cursorCol)"
+
+        let nsContent = doc.content as NSString
+        let safePos = min(doc.cursorPos, nsContent.length)
+        let lineRange = nsContent.lineRange(for: NSRange(location: safePos, length: 0))
+        let currentLineStr = nsContent.substring(with: lineRange).trimmingCharacters(in: .newlines)
+
+        let wordRange = NppEditOperations.getWordRange(at: safePos, in: nsContent)
+        let currentWord = wordRange.length > 0 ? nsContent.substring(with: wordRange) : ""
 
         var cmd = rawCmd
-        cmd = cmd.replacingOccurrences(of: "$(CURRENT_FILE)", with: "\"\(filePath)\"")
-        cmd = cmd.replacingOccurrences(of: "$(CURRENT_DIRECTORY)", with: "\"\(fileDir)\"")
-        cmd = cmd.replacingOccurrences(of: "$(FILE_NAME)", with: "\"\(fileName)\"")
-        cmd = cmd.replacingOccurrences(of: "$(NAME_PART)", with: "\"\(namePart)\"")
+        cmd = cmd.replacingOccurrences(of: "$(FULL_CURRENT_PATH)", with: filePath)
+        cmd = cmd.replacingOccurrences(of: "$(CURRENT_FILE)", with: filePath)
+        cmd = cmd.replacingOccurrences(of: "$(CURRENT_DIRECTORY)", with: fileDir)
+        cmd = cmd.replacingOccurrences(of: "$(FILE_NAME)", with: fileName)
+        cmd = cmd.replacingOccurrences(of: "$(NAME_PART)", with: namePart)
+        cmd = cmd.replacingOccurrences(of: "$(EXT_PART)", with: extPart)
+        cmd = cmd.replacingOccurrences(of: "$(CURRENT_WORD)", with: currentWord)
+        cmd = cmd.replacingOccurrences(of: "$(CURRENT_LINE)", with: currentLine)
+        cmd = cmd.replacingOccurrences(of: "$(CURRENT_COLUMN)", with: currentCol)
+        cmd = cmd.replacingOccurrences(of: "$(CURRENT_LINESTR)", with: currentLineStr)
+        cmd = cmd.replacingOccurrences(of: "$(NPP_DIRECTORY)", with: nppDirectory)
+        cmd = cmd.replacingOccurrences(of: "$(NPP_FULL_FILE_PATH)", with: nppFullFilePath)
         return cmd
     }
 
@@ -1502,6 +1530,49 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // MARK: - Notepad++ Find in Files
+    public static func matchesFileFilter(filename: String, filePath: String, filterString: String) -> Bool {
+        let trimmed = filterString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+
+        let filters = trimmed.components(separatedBy: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ";"))).filter { !$0.isEmpty }
+        if filters.isEmpty { return true }
+
+        let positiveFilters = filters.filter { !$0.hasPrefix("!") }
+        let excludeFilters = filters.filter { $0.hasPrefix("!") }.map { String($0.dropFirst()) }
+
+        for pat in excludeFilters {
+            let isDirExclusion = pat.hasPrefix("\\") || pat.hasPrefix("/") || pat.contains("/") || pat.contains("\\")
+            if isDirExclusion {
+                var cleanDir = pat
+                if cleanDir.hasPrefix("\\") || cleanDir.hasPrefix("/") {
+                    cleanDir = String(cleanDir.dropFirst())
+                }
+                cleanDir = cleanDir.replacingOccurrences(of: "\\", with: "/").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if !cleanDir.isEmpty {
+                    let pathComponents = filePath.split(separator: "/").map(String.init)
+                    let dirComponents = pathComponents.dropLast()
+                    if dirComponents.contains(where: { fnmatch(cleanDir, $0, 0) == 0 || $0 == cleanDir }) ||
+                       filePath.contains("/" + cleanDir + "/") ||
+                       filePath.contains("/" + cleanDir) {
+                        return false
+                    }
+                }
+            } else {
+                if fnmatch(pat, filename, 0) == 0 {
+                    return false
+                }
+            }
+        }
+
+        if positiveFilters.isEmpty || positiveFilters.contains("*.*") || positiveFilters.contains("*") {
+            return true
+        }
+
+        return positiveFilters.contains { pat in
+            fnmatch(pat, filename, 0) == 0
+        }
+    }
+
     public func findAllInFiles(query: String, filter: String, directory: String, subfolders: Bool, matchCase: Bool, wholeWord: Bool, useRegex: Bool) {
         guard !query.isEmpty else { return }
         lastSearchQuery = query
@@ -1517,8 +1588,6 @@ public final class NppWorkspace: ObservableObject {
         }
         guard fileManager.fileExists(atPath: dirUrl.path) else { return }
 
-        let filters = filter.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-
         var targetFiles: [URL] = []
         if let enumerator = fileManager.enumerator(at: dirUrl, includingPropertiesForKeys: [.isRegularFileKey], options: subfolders ? [] : [.skipsSubdirectoryDescendants]) {
             for case let fileUrl as URL in enumerator {
@@ -1526,10 +1595,7 @@ public final class NppWorkspace: ObservableObject {
                 try? (fileUrl as NSURL).getResourceValue(&isReg, forKey: .isRegularFileKey)
                 if let isReg = isReg as? Bool, isReg {
                     let filename = fileUrl.lastPathComponent
-                    let matchesFilter = filters.isEmpty || filters.contains("*.*") || filters.contains("*") || filters.contains { pat in
-                        fnmatch(pat, filename, 0) == 0
-                    }
-                    if matchesFilter {
+                    if Self.matchesFileFilter(filename: filename, filePath: fileUrl.path, filterString: filter) {
                         targetFiles.append(fileUrl)
                     }
                 }
@@ -1579,7 +1645,6 @@ public final class NppWorkspace: ObservableObject {
         }
         guard fileManager.fileExists(atPath: dirUrl.path) else { return (0, 0) }
 
-        let filters = filter.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         var targetFiles: [URL] = []
         if let enumerator = fileManager.enumerator(at: dirUrl, includingPropertiesForKeys: [.isRegularFileKey], options: subfolders ? [] : [.skipsSubdirectoryDescendants]) {
             for case let fileUrl as URL in enumerator {
@@ -1587,10 +1652,7 @@ public final class NppWorkspace: ObservableObject {
                 try? (fileUrl as NSURL).getResourceValue(&isReg, forKey: .isRegularFileKey)
                 if let isReg = isReg as? Bool, isReg {
                     let filename = fileUrl.lastPathComponent
-                    let matchesFilter = filters.isEmpty || filters.contains("*.*") || filters.contains("*") || filters.contains { pat in
-                        fnmatch(pat, filename, 0) == 0
-                    }
-                    if matchesFilter {
+                    if Self.matchesFileFilter(filename: filename, filePath: fileUrl.path, filterString: filter) {
                         targetFiles.append(fileUrl)
                     }
                 }
@@ -1660,36 +1722,44 @@ public final class NppWorkspace: ObservableObject {
         if isText {
             insertStrings = Array(repeating: text, count: lineRanges.count)
         } else {
+            var rawNumbers: [Int] = []
             var currentNum = initialNumber
             var currentRepeat = 0
+            let effectiveRepeat = max(1, repeatCount)
             for _ in 0..<lineRanges.count {
-                let formattedNum: String
-                switch format.lowercased() {
-                case "hex":
-                    formattedNum = String(format: leadingZeros ? "%04X" : (leadingSpaces ? "%4X" : "%X"), currentNum)
-                case "hex_lower":
-                    formattedNum = String(format: leadingZeros ? "%04x" : (leadingSpaces ? "%4x" : "%x"), currentNum)
-                case "oct":
-                    formattedNum = String(format: leadingZeros ? "%04o" : (leadingSpaces ? "%4o" : "%o"), currentNum)
-                case "bin":
-                    let rawBin = String(currentNum, radix: 2)
-                    if leadingZeros && rawBin.count < 4 {
-                        formattedNum = String(repeating: "0", count: 4 - rawBin.count) + rawBin
-                    } else if leadingSpaces && rawBin.count < 4 {
-                        formattedNum = String(repeating: " ", count: 4 - rawBin.count) + rawBin
-                    } else {
-                        formattedNum = rawBin
-                    }
-                default:
-                    formattedNum = leadingZeros ? String(format: "%04d", currentNum) : (leadingSpaces ? String(format: "%4d", currentNum) : "\(currentNum)")
-                }
-                insertStrings.append(formattedNum)
-
+                rawNumbers.append(currentNum)
                 currentRepeat += 1
-                if currentRepeat >= max(1, repeatCount) {
+                if currentRepeat >= effectiveRepeat {
                     currentRepeat = 0
                     currentNum += increaseBy
                 }
+            }
+
+            func rawStr(_ num: Int) -> String {
+                switch format.lowercased() {
+                case "hex": return String(num, radix: 16).uppercased()
+                case "hex_lower": return String(num, radix: 16).lowercased()
+                case "oct": return String(num, radix: 8)
+                case "bin": return String(num, radix: 2)
+                default: return "\(num)"
+                }
+            }
+
+            let isNonDec = format.lowercased() != "dec" && !format.lowercased().hasPrefix("dec")
+            let minDigits = isNonDec ? 4 : 1
+            let maxLen = max(minDigits, rawNumbers.map { rawStr($0).count }.max() ?? 1)
+
+            for num in rawNumbers {
+                let strVal = rawStr(num)
+                let formattedNum: String
+                if leadingZeros && strVal.count < maxLen {
+                    formattedNum = String(repeating: "0", count: maxLen - strVal.count) + strVal
+                } else if leadingSpaces && strVal.count < maxLen {
+                    formattedNum = String(repeating: " ", count: maxLen - strVal.count) + strVal
+                } else {
+                    formattedNum = strVal
+                }
+                insertStrings.append(formattedNum)
             }
         }
 
@@ -2743,19 +2813,10 @@ public final class NppWorkspace: ObservableObject {
     public func executeMacroStep(_ step: NppMacroStep, in textView: NSTextView? = nil, document: NppDocument? = nil) {
         let tv = textView ?? activeTextView ?? (NSApp.keyWindow?.firstResponder as? NSTextView)
         guard let doc = document ?? activeDocument else { return }
+        guard !doc.isReadOnly && !isAllDocumentsReadOnly else { return }
 
         if let tv = tv, doc.content != tv.string {
             syncTextViewToDocument(tv: tv, doc: doc)
-        }
-
-        let isEffectiveReadOnly = doc.isReadOnly || isAllDocumentsReadOnly
-        if isEffectiveReadOnly {
-            switch step {
-            case .moveLeft, .moveRight, .moveUp, .moveDown, .moveToBeginningOfLine, .moveToEndOfLine, .copy, .selectAll, .saveDocument:
-                break
-            default:
-                return
-            }
         }
 
         switch step {
@@ -2970,11 +3031,11 @@ public final class NppWorkspace: ObservableObject {
 
     public func executeMacroSteps(_ steps: [NppMacroStep]) {
         guard !steps.isEmpty else { return }
+        guard let doc = activeDocument, !doc.isReadOnly && !isAllDocumentsReadOnly else { return }
         isPlayingBackMacro = true
         defer { isPlayingBackMacro = false }
 
         let tv = activeTextView ?? (NSApp.keyWindow?.firstResponder as? NSTextView)
-        guard let doc = activeDocument else { return }
 
         if let tv = tv {
             syncTextViewToDocument(tv: tv, doc: doc)

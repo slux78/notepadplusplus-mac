@@ -207,9 +207,16 @@ public struct NppColumnEditorView: View {
 
     private func applyColumnEdit() {
         let isText = (mode == 0)
-        let initNum = Int(initialNumber) ?? 1
-        let inc = Int(increaseBy) ?? 1
-        let rep = Int(repeatCount) ?? 1
+        let radix: Int
+        switch numberFormat {
+        case "Hex": radix = 16
+        case "Oct": radix = 8
+        case "Bin": radix = 2
+        default: radix = 10
+        }
+        let initNum = Int(initialNumber.trimmingCharacters(in: .whitespaces), radix: radix) ?? 1
+        let inc = Int(increaseBy.trimmingCharacters(in: .whitespaces), radix: radix) ?? (increaseBy.isEmpty ? 1 : 0)
+        let rep = Int(repeatCount.trimmingCharacters(in: .whitespaces)) ?? 1
         let fmt = (numberFormat == "Hex" && hexCase == "a-f") ? "hex_lower" : numberFormat
         workspace.executeColumnEditor(
             isText: isText,

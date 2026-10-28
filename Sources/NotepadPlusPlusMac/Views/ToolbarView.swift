@@ -65,6 +65,7 @@ public struct NppToolbarView: View {
             case "list.bullet.rectangle": return "list.bullet.rectangle.fill"
             case "folder.badge.gearshape": return "folder.fill.badge.gearshape"
             case "rectangle.split.2x1": return "rectangle.split.2x1.fill"
+            case "eye": return "eye.fill"
             default: return base
             }
         }
@@ -175,6 +176,9 @@ public struct NppToolbarView: View {
             }
             toolbarBtn(icon: "arrow.left.and.right", tooltip: workspace.tr("Synchronize Horizontal Scrolling"), isActive: workspace.syncScrollH) {
                 workspace.syncScrollH.toggle()
+            }
+            toolbarBtn(icon: icon("eye"), tooltip: workspace.tr("Monitoring (tail -f)"), isActive: workspace.activeDocument?.isMonitoring ?? false) {
+                workspace.toggleMonitoringCurrentDoc()
             }
 
             Divider().frame(height: isLarge ? 24 : 18).padding(.horizontal, isLarge ? 3 : 2)
