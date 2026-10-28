@@ -1,6 +1,29 @@
 import SwiftUI
 import AppKit
 
+final class TabMenuTarget: NSObject {
+    static let shared = TabMenuTarget()
+    weak var workspace: NppWorkspace?
+
+    @objc func selectDoc(_ sender: NSMenuItem) {
+        if let docId = sender.representedObject as? UUID {
+            workspace?.activeDocumentId = docId
+        }
+    }
+
+    @objc func sortTabs() {
+        workspace?.sortTabsByName(ascending: true)
+    }
+
+    @objc func closeAll() {
+        workspace?.closeAll()
+    }
+
+    @objc func openWindowsDialog() {
+        workspace?.showDocumentList = true
+    }
+}
+
 public struct NppTabBarView: View {
     @ObservedObject var workspace: NppWorkspace
 
@@ -8,9 +31,44 @@ public struct NppTabBarView: View {
         self.workspace = workspace
     }
 
+    private func showDocumentListMenu() {
+        let menu = NSMenu()
+        TabMenuTarget.shared.workspace = workspace
+
+        for (index, doc) in workspace.documents.enumerated() {
+            let check = (workspace.activeDocumentId == doc.id) ? "✓ " : "   "
+            let dirty = doc.isDirty ? "*" : ""
+            let pinned = doc.isPinned ? "📌 " : ""
+            let title = "\(check)\(index + 1): \(pinned)\(doc.title)\(dirty)"
+            let item = NSMenuItem(title: title, action: #selector(TabMenuTarget.selectDoc(_:)), keyEquivalent: "")
+            item.target = TabMenuTarget.shared
+            item.representedObject = doc.id
+            menu.addItem(item)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        let sortItem = NSMenuItem(title: workspace.tr("Sort by Name"), action: #selector(TabMenuTarget.sortTabs), keyEquivalent: "")
+        sortItem.target = TabMenuTarget.shared
+        menu.addItem(sortItem)
+
+        let closeAllItem = NSMenuItem(title: workspace.tr("Close All"), action: #selector(TabMenuTarget.closeAll), keyEquivalent: "")
+        closeAllItem.target = TabMenuTarget.shared
+        menu.addItem(closeAllItem)
+
+        let windowsItem = NSMenuItem(title: workspace.tr("Windows..."), action: #selector(TabMenuTarget.openWindowsDialog), keyEquivalent: "")
+        windowsItem.target = TabMenuTarget.shared
+        menu.addItem(windowsItem)
+
+        if let event = NSApp.currentEvent {
+            NSMenu.popUpContextMenu(menu, with: event, for: NSApp.keyWindow?.contentView ?? NSView())
+        }
+    }
+
     public var body: some View {
         ScrollViewReader { proxy in
             HStack(spacing: 0) {
+                // 1. Scrollable tab items on the left
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 2) {
                         ForEach(workspace.documents) { doc in
@@ -28,26 +86,9 @@ public struct NppTabBarView: View {
                             )
                             .id(doc.id)
                         }
-
-                        // Empty space next to tabs: double-click to create new tab!
-                        Color.clear
-                            .frame(minWidth: 80, maxWidth: .infinity)
-                            .frame(height: workspace.tabReduce ? 22 : 28)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) {
-                                if workspace.doubleClickSpaceToNewTab {
-                                    workspace.newDocument()
-                                }
-                            }
                     }
                     .padding(.horizontal, 4)
                     .padding(.vertical, workspace.tabReduce ? 1 : 3)
-                }
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) {
-                    if workspace.doubleClickSpaceToNewTab {
-                        workspace.newDocument()
-                    }
                 }
                 .onChange(of: workspace.activeDocumentId) { newId in
                     if let id = newId {
@@ -57,104 +98,99 @@ public struct NppTabBarView: View {
                     }
                 }
 
-                // Tab overflow navigation arrows ⏴ ⏵ (per user-interface.md:130)
-                HStack(spacing: 1) {
-                    Button(action: {
-                        workspace.prevTab()
-                    }) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: workspace.tabReduce ? 8 : 10, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .frame(width: workspace.tabReduce ? 16 : 18, height: workspace.tabReduce ? 20 : 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(workspace.tr("Previous Tab (⏴)"))
-
-                    Button(action: {
-                        workspace.nextTab()
-                    }) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: workspace.tabReduce ? 8 : 10, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .frame(width: workspace.tabReduce ? 16 : 18, height: workspace.tabReduce ? 20 : 24)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(workspace.tr("Next Tab (⏵)"))
-                }
-                .padding(.horizontal, 2)
-
-                // Right shortcuts cluster: ＋ ▼ ✕ (Notepad_plus.rc:1366-1372, respects hideRightShortcuts)
-                if !workspace.hideRightShortcuts {
-                    HStack(spacing: 2) {
-                        Divider().frame(height: 14)
-
-                        // 1. ＋ New Document (IDM_FILE_NEW)
-                        Button(action: {
+                // 2. Empty space next to tabs (Double-click creates new tab per Notepad++ spec)
+                Color.clear
+                    .contentShape(Rectangle())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onTapGesture(count: 2) {
+                        if workspace.doubleClickSpaceToNewTab {
                             workspace.newDocument()
-                        }) {
-                            Image(systemName: "plus")
-                                .font(.system(size: workspace.tabReduce ? 9 : 11, weight: .bold))
-                                .foregroundColor(.secondary)
-                                .frame(width: workspace.tabReduce ? 18 : 22, height: workspace.tabReduce ? 20 : 24)
-                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .help(workspace.tr("New Document (＋)"))
-
-                        // 2. ▼ Document list popup menu (IDM_DROPLIST_LIST)
-                        Menu {
-                            ForEach(Array(workspace.documents.enumerated()), id: \.element.id) { index, doc in
-                                Button(action: {
-                                    workspace.activeDocumentId = doc.id
-                                }) {
-                                    let check = (workspace.activeDocumentId == doc.id) ? "✓ " : "   "
-                                    let dirty = doc.isDirty ? "*" : ""
-                                    let pinned = doc.isPinned ? "📌 " : ""
-                                    Text("\(check)\(index + 1): \(pinned)\(doc.title)\(dirty)")
-                                }
-                            }
-                            Divider()
-                            Button(workspace.tr("Sort by Name")) {
-                                workspace.sortTabsByName(ascending: true)
-                            }
-                            Button(workspace.tr("Close All")) {
-                                workspace.closeAll()
-                            }
-                            Button(workspace.tr("Windows...")) {
-                                workspace.showDocumentList = true
-                            }
-                        } label: {
-                            Image(systemName: "arrowtriangle.down.fill")
-                                .font(.system(size: workspace.tabReduce ? 7 : 8, weight: .semibold))
-                                .foregroundColor(.secondary)
-                                .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
-                                .contentShape(Rectangle())
-                        }
-                        .menuStyle(BorderlessButtonMenuStyle())
-                        .help(workspace.tr("Open Documents List (▼)"))
-
-                        // 3. ✕ Close active tab (IDM_FILE_CLOSE)
-                        Button(action: {
-                            if let activeId = workspace.activeDocumentId {
-                                workspace.closeDocument(id: activeId)
-                            }
-                        }) {
-                            Image(systemName: "xmark")
-                                .font(.system(size: workspace.tabReduce ? 9 : 10, weight: .bold))
-                                .foregroundColor(workspace.activeDocument == nil ? .secondary.opacity(0.3) : .secondary)
-                                .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .disabled(workspace.activeDocument == nil)
-                        .help(workspace.tr("Close Current Tab (✕)"))
                     }
-                    .padding(.trailing, 4)
+
+                // 3. Right shortcuts cluster firmly anchored to the trailing edge
+                HStack(spacing: 2) {
+                    // Tab overflow navigation arrows ⏴ ⏵ (per user-interface.md:130)
+                    HStack(spacing: 1) {
+                        Button(action: {
+                            workspace.prevTab()
+                        }) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: workspace.tabReduce ? 8 : 10, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .frame(width: workspace.tabReduce ? 16 : 18, height: workspace.tabReduce ? 20 : 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(workspace.tr("Previous Tab (⏴)"))
+
+                        Button(action: {
+                            workspace.nextTab()
+                        }) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: workspace.tabReduce ? 8 : 10, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .frame(width: workspace.tabReduce ? 16 : 18, height: workspace.tabReduce ? 20 : 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(workspace.tr("Next Tab (⏵)"))
+                    }
+                    .padding(.horizontal, 2)
+
+                    // Right shortcuts cluster: ＋ ▼ ✕ (Notepad_plus.rc:1366-1372, respects hideRightShortcuts)
+                    if !workspace.hideRightShortcuts {
+                        HStack(spacing: 2) {
+                            Divider().frame(height: 14)
+
+                            // 1. ＋ New Document (IDM_FILE_NEW)
+                            Button(action: {
+                                workspace.newDocument()
+                            }) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: workspace.tabReduce ? 9 : 11, weight: .bold))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: workspace.tabReduce ? 18 : 22, height: workspace.tabReduce ? 20 : 24)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help(workspace.tr("New Document (＋)"))
+
+                            // 2. ▼ Document list popup menu (IDM_DROPLIST_LIST) - Single authentic dropdown
+                            Button(action: {
+                                showDocumentListMenu()
+                            }) {
+                                Image(systemName: "arrowtriangle.down.fill")
+                                    .font(.system(size: workspace.tabReduce ? 7 : 8, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                                    .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .help(workspace.tr("Open Documents List (▼)"))
+
+                            // 3. ✕ Close active tab (IDM_FILE_CLOSE)
+                            Button(action: {
+                                if let activeId = workspace.activeDocumentId {
+                                    workspace.closeDocument(id: activeId)
+                                }
+                            }) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: workspace.tabReduce ? 9 : 10, weight: .bold))
+                                    .foregroundColor(workspace.activeDocument == nil ? .secondary.opacity(0.3) : .secondary)
+                                    .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(workspace.activeDocument == nil)
+                            .help(workspace.tr("Close Current Tab (✕)"))
+                        }
+                        .padding(.trailing, 4)
+                    }
                 }
             }
         }
+        .frame(height: workspace.tabReduce ? 24 : 30)
         .background(Color(NSColor.windowBackgroundColor))
         .overlay(
             Rectangle()
