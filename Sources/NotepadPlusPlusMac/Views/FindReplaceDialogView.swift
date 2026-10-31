@@ -512,7 +512,7 @@ public struct NppFindReplaceDialogView: View {
         guard !query.isEmpty else { return nil }
         var pattern = (searchMode == 2) ? query : NSRegularExpression.escapedPattern(for: query)
         if matchWholeWord {
-            pattern = "\\b" + pattern + "\\b"
+            pattern = NppWorkspace.wholeWordPattern(pattern, query: query)
         }
         var options: NSRegularExpression.Options = []
         if !matchCase { options.insert(.caseInsensitive) }

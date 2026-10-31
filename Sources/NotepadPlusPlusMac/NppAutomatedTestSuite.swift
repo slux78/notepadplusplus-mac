@@ -1414,6 +1414,7 @@ final class NppAutomatedTestSuite {
             runManualRunMenuTests(assertTest: assertTest)
             runManualLanguageDetectionTests(assertTest: assertTest)
             runLineOpsRegressionTests(assertTest: assertTest)
+            runFindReplaceRegressionTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -5317,6 +5318,30 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runFindReplaceRegressionTests(assertTest: (String, Bool) -> Void) {
+        func count(_ q: String, in text: String, regex: Bool, whole: Bool) -> Int {
+            var pat = regex ? q : NSRegularExpression.escapedPattern(for: q)
+            if whole { pat = NppWorkspace.wholeWordPattern(pat, query: q) }
+            guard let re = try? NSRegularExpression(pattern: pat, options: [.caseInsensitive]) else { return -1 }
+            return re.numberOfMatches(in: text, range: NSRange(location: 0, length: (text as NSString).length))
+        }
+        assertTest("Find: whole word + regex alternation stays grouped",
+                   count("cat|dog", in: "cat dog concat dogma", regex: true, whole: true) == 2)
+        assertTest("Find: whole word with trailing punctuation query",
+                   count("foo()", in: "foo() x foo()y", regex: false, whole: true) == 2)
+        assertTest("Find: whole word plain query rejects substrings",
+                   count("cat", in: "cat concat cat.", regex: false, whole: true) == 2)
+        func repl(_ pat: String, _ tmpl: String, _ text: String) -> String {
+            let re = try! NSRegularExpression(pattern: pat, options: [.anchorsMatchLines])
+            return re.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: (text as NSString).length),
+                                               withTemplate: NppWorkspace.normalizeRegexReplacementTemplate(tmpl))
+        }
+        assertTest("Find: regex replacement \\n inserts newline", repl(",", "\\n", "a,b") == "a\nb")
+        assertTest("Find: regex replacement \\t inserts tab", repl(",", "\\t", "a,b") == "a\tb")
+        assertTest("Find: regex replacement \\1 and $1 group refs", repl("(a)(b)", "\\2$1", "ab") == "ba")
+        assertTest("Find: regex replacement escaped backslash", repl(",", "\\\\", "a,b") == "a\\b")
     }
 
     static func runLineOpsRegressionTests(assertTest: (String, Bool) -> Void) {

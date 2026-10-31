@@ -1769,7 +1769,7 @@ public final class NppWorkspace: ObservableObject {
             pattern = NSRegularExpression.escapedPattern(for: query)
         }
         if wholeWord {
-            pattern = "\\b" + pattern + "\\b"
+            pattern = NppWorkspace.wholeWordPattern(pattern, query: query)
         }
 
         var regexOptions: NSRegularExpression.Options = [.anchorsMatchLines]
@@ -1810,6 +1810,16 @@ public final class NppWorkspace: ObservableObject {
         return results
     }
 
+    /// Wraps a pattern for "Match whole word". The pattern is grouped so alternation (`a|b`) stays
+    /// inside the boundaries, and a boundary is only required next to a word character
+    /// (so queries such as `foo()` or `$x` can still match).
+    public static func wholeWordPattern(_ pattern: String, query: String) -> String {
+        func isWord(_ c: Character?) -> Bool { c.map { $0.isLetter || $0.isNumber || $0 == "_" } ?? false }
+        let lead = isWord(query.first) ? "\\b" : ""
+        let trail = isWord(query.last) ? "\\b" : ""
+        return lead + "(?:" + pattern + ")" + trail
+    }
+
     public static func normalizeRegexReplacementTemplate(_ input: String) -> String {
         var result = ""
         var i = input.startIndex
@@ -1822,6 +1832,10 @@ public final class NppWorkspace: ObservableObject {
                     if nextCh >= "0" && nextCh <= "9" {
                         result.append("$")
                         result.append(nextCh)
+                        i = input.index(after: nextIndex)
+                        continue
+                    } else if nextCh == "n" || nextCh == "r" || nextCh == "t" {
+                        result.append(nextCh == "n" ? "\n" : (nextCh == "r" ? "\r" : "\t"))
                         i = input.index(after: nextIndex)
                         continue
                     } else if nextCh == "\\" {
@@ -2306,7 +2320,7 @@ public final class NppWorkspace: ObservableObject {
 
         var pattern = useRegex ? query : NSRegularExpression.escapedPattern(for: query)
         if wholeWord {
-            pattern = "\\b" + pattern + "\\b"
+            pattern = NppWorkspace.wholeWordPattern(pattern, query: query)
         }
         var regexOptions: NSRegularExpression.Options = [.anchorsMatchLines]
         if !matchCase {

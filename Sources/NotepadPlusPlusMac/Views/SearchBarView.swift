@@ -335,7 +335,7 @@ public struct NppSearchBarView: View {
         } else {
             var options: NSString.CompareOptions = []
             if !matchCase { options.insert(.caseInsensitive) }
-            let pattern = matchWholeWord ? "\\b\(NSRegularExpression.escapedPattern(for: findText))\\b" : findText
+            let pattern = matchWholeWord ? NppWorkspace.wholeWordPattern(NSRegularExpression.escapedPattern(for: findText), query: findText) : findText
             if matchWholeWord { options.insert(.regularExpression) }
             let found = content.range(of: pattern, options: options, range: searchRange)
             if found.location != NSNotFound {
@@ -376,7 +376,7 @@ public struct NppSearchBarView: View {
         } else {
             var options: NSString.CompareOptions = []
             if !matchCase { options.insert(.caseInsensitive) }
-            let pattern = matchWholeWord ? "\\b\(NSRegularExpression.escapedPattern(for: findText))\\b" : findText
+            let pattern = matchWholeWord ? NppWorkspace.wholeWordPattern(NSRegularExpression.escapedPattern(for: findText), query: findText) : findText
             if matchWholeWord { options.insert(.regularExpression) }
             let res = replaceAllOccurrences(in: doc.content, target: pattern, with: replaceText, options: options)
             newStr = res.0
