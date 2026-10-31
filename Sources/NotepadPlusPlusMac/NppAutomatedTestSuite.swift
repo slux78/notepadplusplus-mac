@@ -1416,6 +1416,7 @@ final class NppAutomatedTestSuite {
             runLineOpsRegressionTests(assertTest: assertTest)
             runFindReplaceRegressionTests(assertTest: assertTest)
             runLineNumberRegressionTests(assertTest: assertTest)
+            runEncodingRoundTripTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -5319,6 +5320,68 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runEncodingRoundTripTests(assertTest: (String, Bool) -> Void) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("npp_enc_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let korean = "안녕하세요 메모장\r\n한글 테스트 가나다라마바사\r\n끝\r\n"
+        let cases: [(String, String, Bool, String)] = [
+            ("UTF-8", "UTF-8", false, korean + "日本語 中文 😀"),
+            ("UTF-8 BOM", "UTF-8", true, korean + "日本語 中文 😀"),
+            ("UTF-16LE BOM", "UTF-16LE", true, korean + "日本語 中文 😀"),
+            ("UTF-16BE BOM", "UTF-16BE", true, korean + "日本語 中文 😀"),
+            ("CP949", "CP949", false, korean),
+            ("EUC-KR", "EUC-KR", false, korean),
+            ("Shift-JIS", "CP932", false, "こんにちは世界\r\nカタカナ漢字\r\n"),
+            ("Big5", "BIG5", false, "繁體中文測試\r\n你好世界\r\n"),
+            ("GB18030", "GB18030", false, "简体中文测试\r\n你好世界\r\n"),
+            ("Windows-1252", "WINDOWS-1252", false, "café naïve résumé €\r\nÄÖÜ ß\r\n"),
+        ]
+        for (label, charset, bom, text) in cases {
+            let d = NppDocument(title: "rt", content: text, encoding: charset, hasBOM: bom, eol: .crlf)
+            guard let bytes = d.encodedData() else {
+                assertTest("Encoding RT [\(label)]: encode produces bytes", false); continue
+            }
+            let url = dir.appendingPathComponent("rt_\(label.replacingOccurrences(of: " ", with: "_")).txt")
+            try? bytes.write(to: url)
+            guard let r = try? NppDocument.fromFile(url: url) else {
+                assertTest("Encoding RT [\(label)]: reload", false); continue
+            }
+            if r.content != text { print("  🔍 DEBUG [\(label)] detected=\(r.encoding) bytes=\(bytes.map { String(format: "%02X", $0) }.joined())") }
+            assertTest("Encoding RT [\(label)]: content survives save+reload", r.content == text)
+            assertTest("Encoding RT [\(label)]: BOM flag survives", r.hasBOM == bom)
+            assertTest("Encoding RT [\(label)]: EOL detected as CRLF", r.eolFormat == .crlf)
+            // Convert to UTF-8 then back must keep text
+            r.convertEncoding(to: "UTF-8")
+            assertTest("Encoding RT [\(label)]: convert to UTF-8 keeps text", r.content == text && r.encoding == "UTF-8")
+        }
+        // BOM byte checks
+        let u8 = NppDocument(title: "b", content: "a", encoding: "UTF-8", hasBOM: true).encodedData()
+        assertTest("Encoding: UTF-8 BOM bytes EF BB BF", u8 == Data([0xEF, 0xBB, 0xBF, 0x61]))
+        let u16 = NppDocument(title: "b", content: "a", encoding: "UTF-16LE", hasBOM: true).encodedData()
+        assertTest("Encoding: UTF-16LE BOM bytes FF FE", u16 == Data([0xFF, 0xFE, 0x61, 0x00]))
+        let u16b = NppDocument(title: "b", content: "a", encoding: "UTF-16BE", hasBOM: true).encodedData()
+        assertTest("Encoding: UTF-16BE BOM bytes FE FF", u16b == Data([0xFE, 0xFF, 0x00, 0x61]))
+        let emoji = NppDocument(title: "b", content: "😀", encoding: "UTF-16LE", hasBOM: false).encodedData()
+        assertTest("Encoding: UTF-16LE surrogate pair", emoji == Data([0x3D, 0xD8, 0x00, 0xDE]))
+        // Unrepresentable character must not make save fail or corrupt neighbours
+        let lossy = NppDocument(title: "b", content: "a한b", encoding: "WINDOWS-1252", hasBOM: false).encodedData()
+        assertTest("Encoding: unrepresentable char becomes '?' and neighbours stay", lossy == Data([0x61, 0x3F, 0x62]))
+        // Empty and NUL-containing content
+        let empty = NppDocument(title: "b", content: "", encoding: "UTF-8", hasBOM: false).encodedData()
+        assertTest("Encoding: empty document encodes to empty data", empty == Data())
+        let nul = NppDocument(title: "b", content: "a\0b", encoding: "UTF-8", hasBOM: false).encodedData()
+        assertTest("Encoding: embedded NUL preserved", nul == Data([0x61, 0x00, 0x62]))
+        // Re-interpret (Encode in ...) of a UTF-8 BOM file must not leave U+FEFF in the text
+        let bomURL = dir.appendingPathComponent("bom.txt")
+        try? Data([0xEF, 0xBB, 0xBF, 0x68, 0x69]).write(to: bomURL)
+        if let b = try? NppDocument.fromFile(url: bomURL) {
+            assertTest("Encoding: BOM not part of text on load", b.content == "hi" && b.hasBOM)
+            b.reencodeAs(targetCharset: "UTF-8")
+            assertTest("Encoding: reencode as UTF-8 keeps BOM flag and no U+FEFF", b.content == "hi" && b.hasBOM)
+        }
     }
 
     static func runLineNumberRegressionTests(assertTest: (String, Bool) -> Void) {

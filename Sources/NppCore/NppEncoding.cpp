@@ -2,6 +2,7 @@
 #include "uchardet/uchardet.h"
 #include <iconv.h>
 #include <cstring>
+#include <cerrno>
 #include <cstdlib>
 #include <algorithm>
 #include <vector>
@@ -78,6 +79,39 @@ static NppEolFormat detect_eol(const char* data, size_t length) {
     return NppEolFormat::LF; // default to Unix LF on mac if ambiguous
 }
 
+// EOL detection for UTF-16 data (code units, not bytes)
+static NppEolFormat detect_eol_utf16(const unsigned char* data, size_t length, bool littleEndian) {
+    size_t crlf = 0, lf = 0, cr = 0;
+    size_t units = length / 2;
+    auto unit = [&](size_t i) -> unsigned {
+        return littleEndian ? (data[2 * i] | (data[2 * i + 1] << 8)) : ((data[2 * i] << 8) | data[2 * i + 1]);
+    };
+    for (size_t i = 0; i < units; ++i) {
+        unsigned u = unit(i);
+        if (u == 0x0D) {
+            if (i + 1 < units && unit(i + 1) == 0x0A) { crlf++; i++; } else { cr++; }
+        } else if (u == 0x0A) {
+            lf++;
+        }
+    }
+    if (crlf >= lf && crlf >= cr && crlf > 0) return NppEolFormat::CRLF;
+    if (cr > lf && cr > crlf) return NppEolFormat::CR;
+    return NppEolFormat::LF;
+}
+
+// True if `data` decodes in `charset` without any invalid sequence.
+static bool decodes_strictly(const char* data, size_t length, const std::string& charset) {
+    iconv_t cd = iconv_open("UTF-8", charset.c_str());
+    if (cd == (iconv_t)-1) return true; // cannot verify, keep detector's answer
+    std::vector<char> out(length * 4 + 16);
+    char* in_ptr = const_cast<char*>(data);
+    char* out_ptr = out.data();
+    size_t in_left = length, out_left = out.size();
+    size_t r = iconv(cd, &in_ptr, &in_left, &out_ptr, &out_left);
+    iconv_close(cd);
+    return r != (size_t)-1 && in_left == 0;
+}
+
 extern "C" {
 
 NppBridgeDetectionResult npp_detect_encoding_and_eol(const char* data, size_t length) {
@@ -104,12 +138,14 @@ NppBridgeDetectionResult npp_detect_encoding_and_eol(const char* data, size_t le
         res.hasBOM = 1;
         res.charsetName = "UTF-16LE";
         res.encodingType = static_cast<int>(NppEncodingType::UTF16_LE);
+        res.eolFormat = static_cast<int>(detect_eol_utf16(udata + 2, length - 2, true));
         return res;
     }
     if (length >= 2 && udata[0] == 0xFE && udata[1] == 0xFF) {
         res.hasBOM = 1;
         res.charsetName = "UTF-16BE";
         res.encodingType = static_cast<int>(NppEncodingType::UTF16_BE);
+        res.eolFormat = static_cast<int>(detect_eol_utf16(udata + 2, length - 2, false));
         return res;
     }
 
@@ -158,6 +194,11 @@ NppBridgeDetectionResult npp_detect_encoding_and_eol(const char* data, size_t le
     if (norm == "EUC-KR") {
         norm = "CP949";
     }
+    if (norm == "CP949" || norm == "CP932" || norm == "BIG5" || norm == "GB18030") {
+        if (!decodes_strictly(data, length, norm)) {
+            norm = "WINDOWS-1252";
+        }
+    }
     if (!norm.empty()) {
         static char stored_name[64];
         std::strncpy(stored_name, norm.c_str(), sizeof(stored_name) - 1);
@@ -170,6 +211,10 @@ NppBridgeDetectionResult npp_detect_encoding_and_eol(const char* data, size_t le
     if (is_valid_utf8) {
         res.charsetName = "UTF-8";
         res.encodingType = static_cast<int>(NppEncodingType::UTF8);
+    } else if (!decodes_strictly(data, length, "CP949")) {
+        // Not valid Korean either (e.g. accented Latin text): single-byte ANSI
+        res.charsetName = "WINDOWS-1252";
+        res.encodingType = static_cast<int>(NppEncodingType::WINDOWS_1252);
     } else {
         // Default legacy fallback for Korean/East Asian Windows
         res.charsetName = "CP949";
@@ -275,7 +320,26 @@ char* npp_encode_from_utf8(const char* utf8Str, size_t utf8Len, const char* char
             size_t in_left = utf8Len;
             size_t out_left = out_cap;
 
-            iconv(cd, &in_ptr, &in_left, &out_ptr, &out_left);
+            // Characters the target charset cannot represent become '?' (as Notepad++ does)
+            // instead of silently truncating the rest of the document.
+            while (in_left > 0) {
+                size_t r = iconv(cd, &in_ptr, &in_left, &out_ptr, &out_left);
+                if (r != (size_t)-1) break;
+                if (errno == EILSEQ || errno == EINVAL) {
+                    unsigned char lead = static_cast<unsigned char>(*in_ptr);
+                    size_t skip = (lead >= 0xF0) ? 4 : (lead >= 0xE0) ? 3 : (lead >= 0xC0) ? 2 : 1;
+                    if (skip > in_left) skip = in_left;
+                    in_ptr += skip;
+                    in_left -= skip;
+                    // Encode '?' in the target charset
+                    char q = '?';
+                    char* qp = &q;
+                    size_t ql = 1;
+                    iconv(cd, &qp, &ql, &out_ptr, &out_left);
+                } else {
+                    break;
+                }
+            }
             iconv_close(cd);
 
             size_t converted = out_cap - out_left;

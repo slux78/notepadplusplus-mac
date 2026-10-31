@@ -272,7 +272,9 @@ public final class NppDocument: ObservableObject, Identifiable {
                 var decodedLen: Int32 = 0
                 if norm == "UTF-8" {
                     // Safe UTF-8 decoding with replacement characters for invalid bytes (Notepad++ / Scintilla behavior)
-                    self.content = String(decoding: raw, as: UTF8.self)
+                    let hasUTF8BOM = raw.starts(with: [0xEF, 0xBB, 0xBF])
+                    self.content = String(decoding: hasUTF8BOM ? raw.dropFirst(3) : raw[...], as: UTF8.self)
+                    if hasUTF8BOM { self.hasBOM = true }
                 } else if let decodedPtr = npp_decode_to_utf8(ptr, raw.count, norm, &decodedLen) {
                     let decodedData = Data(bytes: decodedPtr, count: Int(decodedLen))
                     if let str = String(bytes: decodedData, encoding: .utf8) {
