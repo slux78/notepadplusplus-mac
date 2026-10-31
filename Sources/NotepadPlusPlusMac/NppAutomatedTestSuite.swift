@@ -1417,6 +1417,7 @@ final class NppAutomatedTestSuite {
             runFindReplaceRegressionTests(assertTest: assertTest)
             runLineNumberRegressionTests(assertTest: assertTest)
             runEncodingRoundTripTests(assertTest: assertTest)
+            runCommentIndentRegressionTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -5320,6 +5321,63 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runCommentIndentRegressionTests(assertTest: (String, Bool) -> Void) {
+        func tv(_ text: String, sel: NSRange) -> NSTextView {
+            let v = NSTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+            v.isEditable = true
+            v.allowsUndo = true
+            v.string = text
+            v.setSelectedRange(sel)
+            return v
+        }
+        func all(_ t: String) -> NSRange { NSRange(location: 0, length: (t as NSString).length) }
+        var t = "a\n\nb\n"
+        var v = tv(t, sel: all(t))
+        NppEditOperations.toggleComment(in: v, language: "Swift")
+        assertTest("Comment: empty lines untouched, others commented", v.string == "// a\n\n// b\n")
+        NppEditOperations.toggleComment(in: v, language: "Swift")
+        assertTest("Comment: toggle twice restores text", v.string == t)
+        t = "  a\r\n\tb\r\n"
+        v = tv(t, sel: all(t))
+        NppEditOperations.singleLineComment(in: v, language: "Python")
+        assertTest("Comment: CRLF text keeps indentation and EOL", v.string == "  # a\r\n\t# b\r\n")
+        t = "SELECT 1"
+        v = tv(t, sel: NSRange(location: 0, length: 0))
+        NppEditOperations.toggleComment(in: v, language: "SQL")
+        assertTest("Comment: SQL uses --", v.string == "-- SELECT 1")
+        for (lang, tok) in [("CMake", "#"), ("Dockerfile", "#"), ("Batch", "REM"), ("INI", ";"), ("Lisp", ";"), ("VB", "'"), ("TeX", "%")] {
+            let x = tv("x", sel: NSRange(location: 0, length: 0))
+            NppEditOperations.toggleComment(in: x, language: lang)
+            assertTest("Comment: \(lang) uses \(tok)", x.string == "\(tok) x")
+        }
+        let pt = tv("hello", sel: NSRange(location: 0, length: 0))
+        NppEditOperations.toggleComment(in: pt, language: "Plain Text")
+        assertTest("Comment: plain text is left unchanged", pt.string == "hello")
+        let js = tv("hello", sel: NSRange(location: 0, length: 0))
+        NppEditOperations.toggleComment(in: js, language: "JSON")
+        assertTest("Comment: JSON is left unchanged", js.string == "hello")
+        let css = tv("a { }", sel: all("a { }"))
+        NppEditOperations.singleLineComment(in: css, language: "CSS")
+        assertTest("Comment: CSS falls back to /* */", css.string == "/* a { } */")
+        // Indent / unindent
+        t = "a\nb\nc"
+        v = tv(t, sel: NSRange(location: 0, length: 3))
+        NppEditOperations.increaseLineIndent(in: v, spaceCount: 4, useTabs: false)
+        assertTest("Indent: selected lines indented, third untouched", v.string == "    a\n    b\nc")
+        t = "a\nb\nc"
+        v = tv(t, sel: NSRange(location: 0, length: 2)) // ends exactly at start of line 2
+        NppEditOperations.increaseLineIndent(in: v, spaceCount: 4, useTabs: true)
+        assertTest("Indent: selection ending at line start excludes that line", v.string == "\ta\nb\nc")
+        t = "  a\n\tb\n        c\nd"
+        v = tv(t, sel: all(t))
+        NppEditOperations.decreaseLineIndent(in: v, spaceCount: 4)
+        assertTest("Unindent: partial spaces, tab, and full indent", v.string == "a\nb\n    c\nd")
+        t = "a\r\nb\r\n"
+        v = tv(t, sel: all(t))
+        NppEditOperations.increaseLineIndent(in: v, spaceCount: 2, useTabs: false)
+        assertTest("Indent: CRLF text does not indent the phantom last line", v.string == "  a\r\n  b\r\n")
     }
 
     static func runEncodingRoundTripTests(assertTest: (String, Bool) -> Void) {

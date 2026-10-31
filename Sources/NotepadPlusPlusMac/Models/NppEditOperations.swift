@@ -847,6 +847,23 @@ public final class NppEditOperations {
     public static func doBlockComment(in textView: NSTextView, language: String, mode: NppCommentMode) {
         guard textView.isEditable else { return }
         let commentPrefix = getCommentPrefix(for: language)
+        if commentPrefix.isEmpty {
+            // No single-line comment in this language: use stream comments (Notepad++ behavior)
+            guard !getStreamCommentSymbols(for: language).0.isEmpty else { return }
+            if mode == .uncomment {
+                streamUncomment(in: textView, language: language)
+            } else if mode == .comment {
+                streamComment(in: textView, language: language)
+            } else {
+                let cs = getStreamCommentSymbols(for: language).0
+                let sel = textView.selectedRange()
+                let text = (textView.string as NSString)
+                let selected = sel.length > 0 ? text.substring(with: sel) : ""
+                if selected.hasPrefix(cs) { streamUncomment(in: textView, language: language) }
+                else { streamComment(in: textView, language: language) }
+            }
+            return
+        }
         let prefixWithSpace = commentPrefix + " "
         let prefixLen = (commentPrefix as NSString).length
         let prefixSpaceLen = (prefixWithSpace as NSString).length
@@ -1122,22 +1139,41 @@ public final class NppEditOperations {
         }
     }
 
-    private static func getCommentPrefix(for language: String) -> String {
-        switch language {
-        case "Python", "Shell", "Bash", "Ruby", "YAML", "Makefile", "Perl", "R", "TOML":
+    /// Single-line comment token for a language, or "" when the language has none
+    /// (Notepad++ then falls back to stream comments, or does nothing for plain text/JSON).
+    static func getCommentPrefix(for language: String) -> String {
+        switch language.lowercased() {
+        case "python", "shell", "bash", "ruby", "yaml", "makefile", "perl", "r", "toml", "cmake",
+             "dockerfile", "powershell", "properties", "tcl", "coffeescript", "nim", "raku":
             return "#"
-        case "SQL", "Lua":
+        case "sql", "lua", "haskell", "ada", "vhdl":
             return "--"
+        case "ini", "lisp", "scheme", "assembly", "asm", "autoit", "nsis", "inno setup":
+            return ";"
+        case "batch", "windows batch":
+            return "REM"
+        case "tex", "latex", "matlab", "erlang":
+            return "%"
+        case "fortran":
+            return "!"
+        case "vb", "visual basic", "vbscript":
+            return "'"
+        case "html", "xml", "css", "markdown", "json", "plain text", "text", "normal text", "diff":
+            return ""
         default:
             return "//"
         }
     }
 
-    private static func getStreamCommentSymbols(for language: String) -> (String, String) {
-        switch language {
-        case "HTML", "XML", "Markdown":
+    static func getStreamCommentSymbols(for language: String) -> (String, String) {
+        switch language.lowercased() {
+        case "html", "xml", "markdown":
             return ("<!--", "-->")
-        case "Python", "Shell", "Bash", "Ruby", "YAML", "Makefile", "Perl", "R", "TOML":
+        case "plain text", "text", "normal text", "json", "diff":
+            return ("", "")
+        case "python", "shell", "bash", "ruby", "yaml", "makefile", "perl", "r", "toml", "cmake",
+             "dockerfile", "powershell", "properties", "ini", "batch", "windows batch", "fortran",
+             "vb", "visual basic", "vbscript", "tex", "latex", "assembly", "asm", "lisp", "scheme":
             return ("", "")
         default:
             return ("/*", "*/")
