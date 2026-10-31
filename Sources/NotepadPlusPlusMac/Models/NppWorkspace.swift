@@ -2829,6 +2829,10 @@ public final class NppWorkspace: ObservableObject {
                 .replacingOccurrences(of: "\"", with: "&quot;")
                 .replacingOccurrences(of: "<", with: "&lt;")
                 .replacingOccurrences(of: ">", with: "&gt;")
+                // XML attribute-value normalization turns raw tab/CR/LF into spaces, so keep them as references
+                .replacingOccurrences(of: "\t", with: "&#9;")
+                .replacingOccurrences(of: "\n", with: "&#10;")
+                .replacingOccurrences(of: "\r", with: "&#13;")
         }
         var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<NotepadPlus>\n"
         xml += "    <Session activeView=\"\(activeView)\">\n"

@@ -1418,6 +1418,7 @@ final class NppAutomatedTestSuite {
             runLineNumberRegressionTests(assertTest: assertTest)
             runEncodingRoundTripTests(assertTest: assertTest)
             runCommentIndentRegressionTests(assertTest: assertTest)
+            runSessionTabRegressionTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -5321,6 +5322,83 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runSessionTabRegressionTests(assertTest: (String, Bool) -> Void) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("npp_sess_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let names = ["plain.txt", "a & b <c> \"q\" 'x'.txt", "한글 파일.py", "tab\tname.txt"]
+        var urls: [URL] = []
+        for (i, n) in names.enumerated() {
+            let u = dir.appendingPathComponent(n)
+            try? "line1\nline2\nline3 \(i)\nline4\n".write(to: u, atomically: true, encoding: .utf8)
+            urls.append(u)
+        }
+        let ws = NppWorkspace()
+        ws.closeAll(force: true)
+        for u in urls { ws.openFile(url: u) }
+        let opened = urls.compactMap { u in ws.documents.first { $0.filePath?.standardizedFileURL == u.standardizedFileURL } }
+        assertTest("Session: all files with special characters open", opened.count == urls.count)
+        guard opened.count == urls.count else { return }
+        opened[1].cursorPos = 8; opened[1].selectionLength = 3
+        opened[1].bookmarkedLines = [2, 4]
+        opened[2].cursorPos = 3
+        ws.activeDocumentId = opened[2].id
+        let sess = dir.appendingPathComponent("s.nps")
+        assertTest("Session: save succeeds", ws.saveSession(to: sess))
+
+        let ws2 = NppWorkspace()
+        ws2.closeAll(force: true)
+        assertTest("Session: load succeeds", ws2.loadSession(from: sess))
+        let restored = urls.map { u in ws2.documents.first { $0.filePath?.standardizedFileURL == u.standardizedFileURL } }
+        assertTest("Session: special-character paths all restored", restored.allSatisfy { $0 != nil })
+        if let r1 = restored[1] {
+            assertTest("Session: selection restored", r1.cursorPos == 8 && r1.selectionLength == 3)
+            assertTest("Session: bookmarks restored", r1.bookmarkedLines == [2, 4])
+            assertTest("Session: cursor line/col restored", r1.cursorLine == 2 && r1.cursorCol == 3)
+        }
+        assertTest("Session: active tab restored", ws2.activeDocumentId == restored[2]?.id)
+        assertTest("Session: language restored for .py", restored[2]?.language == "Python")
+        let countBefore = ws2.documents.count
+        _ = ws2.loadSession(from: sess)
+        assertTest("Session: loading twice does not duplicate tabs", ws2.documents.count == countBefore)
+
+        // Tab closing
+        let w = NppWorkspace()
+        w.closeAll(force: true)
+        w.newDocument(); w.newDocument(); w.newDocument()
+        let ids = w.documents.map { $0.id }
+        let n = ids.count
+        w.activeDocumentId = ids[n - 2]
+        _ = w.closeDocument(id: ids[n - 2], force: true)
+        assertTest("Tabs: closing middle active tab activates a neighbour", w.activeDocumentId == ids[n - 1])
+        _ = w.closeDocument(id: ids[n - 1], force: true)
+        assertTest("Tabs: closing last active tab activates previous", w.documents.contains { $0.id == w.activeDocumentId })
+        w.closeAll(force: true)
+        assertTest("Tabs: closing everything leaves exactly one empty doc", w.documents.count == 1 && w.documents[0].content.isEmpty && w.activeDocument != nil)
+        w.newDocument()
+        let pinned = w.documents[0]
+        w.togglePin(id: pinned.id)
+        w.closeAll(force: true)
+        assertTest("Tabs: Close All keeps pinned tab", w.documents.contains { $0.id == pinned.id })
+        let d = w.documents.first { !$0.isPinned } ?? { w.newDocument(); return w.documents.last! }()
+        d.content = "x"; d.isDirty = true
+        w.closeAllUnchanged()
+        assertTest("Tabs: Close All Unchanged keeps dirty tabs", w.documents.contains { $0.id == d.id })
+        // Reload from disk
+        let f = dir.appendingPathComponent("reload.txt")
+        try? "v1".write(to: f, atomically: true, encoding: .utf8)
+        w.openFile(url: f)
+        if let rd = w.documents.first(where: { $0.filePath?.standardizedFileURL == f.standardizedFileURL }) {
+            rd.content = "edited"; rd.isDirty = true
+            try? "v2 changed\r\n".write(to: f, atomically: true, encoding: .utf8)
+            w.reloadFromDisk(for: rd)
+            assertTest("Reload: content, dirty flag and EOL refreshed from disk",
+                       rd.content == "v2 changed\r\n" && !rd.isDirty && rd.eolFormat == .crlf)
+        } else {
+            assertTest("Reload: file opened", false)
+        }
     }
 
     static func runCommentIndentRegressionTests(assertTest: (String, Bool) -> Void) {
