@@ -49,25 +49,12 @@ public final class NppDocument: ObservableObject, Identifiable {
         let safeLen = min(affectedRange.length, ns.length - safeLoc)
         let deletedSubstring = (safeLen > 0) ? ns.substring(with: NSRange(location: safeLoc, length: safeLen)) : ""
 
-        var deletedNewlines = 0
-        for b in deletedSubstring.utf8 {
-            if b == 10 { deletedNewlines += 1 }
-        }
-        var insertedNewlines = 0
-        for b in replacementString.utf8 {
-            if b == 10 { insertedNewlines += 1 }
-        }
+        let deletedNewlines = NppLineCounter.breakCount(in: deletedSubstring)
+        let insertedNewlines = NppLineCounter.breakCount(in: replacementString)
         guard deletedNewlines != 0 || insertedNewlines != 0 else { return }
 
         // Calculate the 1-based start line of the edit
-        var editStartLine = 1
-        var idx = 0
-        while idx < safeLoc {
-            if ns.character(at: idx) == 10 {
-                editStartLine += 1
-            }
-            idx += 1
-        }
+        let editStartLine = NppLineCounter.lineNumber(upTo: safeLoc, in: ns)
 
         let lineDelta = insertedNewlines - deletedNewlines
         var newBookmarks = Set<Int>()

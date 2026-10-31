@@ -1415,6 +1415,7 @@ final class NppAutomatedTestSuite {
             runManualLanguageDetectionTests(assertTest: assertTest)
             runLineOpsRegressionTests(assertTest: assertTest)
             runFindReplaceRegressionTests(assertTest: assertTest)
+            runLineNumberRegressionTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -5318,6 +5319,26 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runLineNumberRegressionTests(assertTest: (String, Bool) -> Void) {
+        func line(_ text: String, at pos: Int) -> Int { NppLineCounter.lineNumber(upTo: pos, in: text as NSString) }
+        // "a<EOL>b<EOL>c": 'c' is at index 4 (LF/CR) or 6 (CRLF)
+        assertTest("LineNo: LF file", line("a\nb\nc", at: 4) == 3)
+        assertTest("LineNo: CRLF file", line("a\r\nb\r\nc", at: 6) == 3)
+        assertTest("LineNo: CR-only file", line("a\rb\rc", at: 4) == 3)
+        assertTest("LineNo: mixed EOL file", line("a\rb\nc\r\nd", at: 8) == 4)
+        assertTest("LineNo: caret between CR and LF stays on same line", line("a\r\nb", at: 2) == 1)
+        assertTest("LineNo: line count per EOL type",
+                   ["x\ny\nz", "x\r\ny\r\nz", "x\ry\rz"].allSatisfy { NppLineCounter.lineCount(in: $0) == 3 })
+        assertTest("LineNo: trailing break starts an empty line",
+                   NppLineCounter.lineCount(in: "x\r") == 2 && NppLineCounter.lineCount(in: "") == 1)
+        let info = NppLineCounter.lineInfo(upTo: 4, in: "ab\rcd" as NSString)
+        assertTest("LineNo: line start/column for CR file", info.line == 2 && info.lineStart == 3)
+        let d = NppDocument(title: "t", content: "a\rb\rc\rd", eol: .cr)
+        d.bookmarkedLines = [3]
+        d.adjustBookmarks(affectedRange: NSRange(location: 0, length: 0), replacementString: "z\r", currentText: d.content)
+        assertTest("LineNo: bookmark shifts when a CR line is inserted", d.bookmarkedLines == [4])
     }
 
     static func runFindReplaceRegressionTests(assertTest: (String, Bool) -> Void) {

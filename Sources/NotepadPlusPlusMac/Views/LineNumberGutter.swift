@@ -258,7 +258,7 @@ public final class NppGutterView: NSRulerView {
         }
 
         // Handle trailing empty line after a final '\n' (extraLineFragmentRect)
-        if text.length > 0 && text.character(at: text.length - 1) == 10 {
+        if text.length > 0 && [10, 13].contains(text.character(at: text.length - 1)) {
             let extraRect = layoutManager.extraLineFragmentRect
             if extraRect.height > 0 {
                 let docPt = NSPoint(x: 0, y: containerOrigin.y + extraRect.origin.y)
@@ -327,7 +327,7 @@ public final class NppGutterView: NSRulerView {
         var clickedLine: Int
         var targetLineRange: NSRange
         let extraRect = layoutManager.extraLineFragmentRect
-        if text.character(at: text.length - 1) == 10 && extraRect.height > 0 && docY >= extraRect.minY {
+        if [10, 13].contains(text.character(at: text.length - 1)) && extraRect.height > 0 && docY >= extraRect.minY {
             clickedLine = getLineNumber(for: text.length, in: text)
             targetLineRange = NSRange(location: text.length, length: 0)
         } else {
@@ -350,12 +350,6 @@ public final class NppGutterView: NSRulerView {
     private func getLineNumber(for charIndex: Int, in string: NSString) -> Int {
         guard charIndex > 0 && string.length > 0 else { return 1 }
         let safeIndex = min(charIndex, string.length)
-        var lineNum = 1
-        for i in 0..<safeIndex {
-            if string.character(at: i) == 10 { // LF '\n'
-                lineNum += 1
-            }
-        }
-        return lineNum
+        return NppLineCounter.lineNumber(upTo: safeIndex, in: string)
     }
 }

@@ -365,14 +365,9 @@ public struct NppEditorView: NSViewRepresentable {
             parent.document.selectionLength = sel.length
 
             if sel.location <= str.length {
-                var line = 1
-                var lineStart = 0
-                for i in 0..<min(sel.location, str.length) {
-                    if str.character(at: i) == 10 { // LF '\n'
-                        line += 1
-                        lineStart = i + 1
-                    }
-                }
+                let info = NppLineCounter.lineInfo(upTo: sel.location, in: str)
+                let line = info.line
+                let lineStart = info.lineStart
                 let col = sel.location - lineStart + 1
                 parent.document.cursorLine = line
                 parent.document.cursorCol = col
@@ -1122,7 +1117,7 @@ public final class NppTextView: NSTextView {
             if str.length > 0 && layoutManager.numberOfGlyphs > 0 {
                 let charPos = min(sel.location, max(0, str.length - 1))
                 let glyphIdx = min(layoutManager.glyphIndexForCharacter(at: charPos), layoutManager.numberOfGlyphs - 1)
-                if sel.location == str.length && str.character(at: str.length - 1) == 10 && layoutManager.extraLineFragmentRect.height > 0 {
+                if sel.location == str.length && [10, 13].contains(str.character(at: str.length - 1)) && layoutManager.extraLineFragmentRect.height > 0 {
                     lineRect = layoutManager.extraLineFragmentRect
                 } else {
                     lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)

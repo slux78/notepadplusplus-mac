@@ -1786,12 +1786,7 @@ public final class NppWorkspace: ObservableObject {
             let lineText = content.substring(with: lineRange).trimmingCharacters(in: .newlines)
 
             // Compute exact 1-indexed line number
-            var lineNum = 1
-            for i in 0..<m.range.location {
-                if content.character(at: i) == 10 {
-                    lineNum += 1
-                }
-            }
+            let lineNum = NppLineCounter.lineNumber(upTo: m.range.location, in: content)
 
             let matchRangeInLine = NSRange(location: m.range.location - lineRange.location, length: m.range.length)
 
@@ -2951,9 +2946,9 @@ public final class NppWorkspace: ObservableObject {
                     doc.cursorPos = start
                     doc.selectionLength = end - start
                     let prefix = (doc.content as NSString).substring(to: start) as NSString
-                    let lineStart = prefix.range(of: "\n", options: .backwards)
-                    doc.cursorLine = prefix.components(separatedBy: "\n").count
-                    doc.cursorCol = start - (lineStart.location == NSNotFound ? -1 : lineStart.location)
+                    let info = NppLineCounter.lineInfo(upTo: prefix.length, in: prefix)
+                    doc.cursorLine = info.line
+                    doc.cursorCol = start - info.lineStart + 1
                     doc.bookmarkedLines = Set(file.elements(forName: "Mark").compactMap {
                         Int(attribute($0, "line") ?? "")
                     }.filter { $0 > 0 })
@@ -3882,7 +3877,7 @@ public final class NppWorkspace: ObservableObject {
         } else {
             // Run until the end of file (matching NppBigSwitch.cpp L1675-1705)
             guard let doc = activeDocument else { return }
-            let lineCount = doc.content.components(separatedBy: "\n").count
+            let lineCount = NppLineCounter.lineCount(in: doc.content)
             let maxIterations = max(1000, lineCount * 100)
             var counter = 0
             while counter < maxIterations {
@@ -4813,13 +4808,7 @@ public final class NppWorkspace: ObservableObject {
         doc.selectionLength = range.length
         let content = doc.content as NSString
         let clampedLoc = min(range.location, content.length)
-        var lineCount = 1
-        for i in 0..<clampedLoc {
-            if content.character(at: i) == 10 { // '\n'
-                lineCount += 1
-            }
-        }
-        doc.cursorLine = lineCount
+        doc.cursorLine = NppLineCounter.lineNumber(upTo: clampedLoc, in: content)
         if let tv = activeTextView {
             tv.setSelectedRange(range)
             tv.scrollRangeToVisible(range)

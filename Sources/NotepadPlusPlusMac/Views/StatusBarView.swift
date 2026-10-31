@@ -223,13 +223,7 @@ public struct NppActiveStatusBarContent: View {
     }
 
     private static func countLines(in string: String) -> Int {
-        var count = 1
-        for u in string.utf8 {
-            if u == 10 { // ASCII '\n'
-                count += 1
-            }
-        }
-        return count
+        return NppLineCounter.lineCount(in: string)
     }
 
     private func showGoToLineDialog() {
