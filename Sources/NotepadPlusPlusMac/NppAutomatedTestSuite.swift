@@ -1419,6 +1419,7 @@ final class NppAutomatedTestSuite {
             runEncodingRoundTripTests(assertTest: assertTest)
             runCommentIndentRegressionTests(assertTest: assertTest)
             runSessionTabRegressionTests(assertTest: assertTest)
+            runUnsavedBackupRestoreTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -5322,6 +5323,81 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runUnsavedBackupRestoreTests(assertTest: (String, Bool) -> Void) {
+        let support = FileManager.default.temporaryDirectory.appendingPathComponent("npp_backup_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: support) }
+        let saved = support.appendingPathComponent("saved.txt")
+        try? "original\n".write(to: saved, atomically: true, encoding: .utf8)
+
+        let ws = NppWorkspace()
+        ws.supportDirectoryOverride = support.appendingPathComponent("app")
+        ws.rememberSession = true
+        ws.periodicBackupEnabled = true
+        ws.closeAll(force: true)
+        // 1) untitled doc with text, CRLF + Korean text, non-default encoding flags
+        let untitled = ws.documents[0]
+        untitled.content = "미저장 메모\r\n두번째 줄"
+        untitled.eolFormat = .crlf
+        untitled.encoding = "UTF-8"
+        untitled.hasBOM = true
+        untitled.isDirty = true
+        let untitledTitle = untitled.title
+        // 2) saved file with unsaved edits
+        ws.openFile(url: saved)
+        let editedDoc = ws.documents.first { $0.filePath?.standardizedFileURL == saved.standardizedFileURL }
+        editedDoc?.content = "original\nunsaved edit\n"
+        editedDoc?.isDirty = true
+        // 3) saved, clean file → no backup needed
+        let clean = support.appendingPathComponent("clean.txt")
+        try? "clean".write(to: clean, atomically: true, encoding: .utf8)
+        ws.openFile(url: clean)
+
+        assertTest("Backup: snapshot succeeds", ws.snapshotSession())
+        let backups = (try? FileManager.default.contentsOfDirectory(atPath: ws.backupDirectoryURL.path)) ?? []
+        assertTest("Backup: only the 2 unsaved docs are backed up", backups.count == 2)
+        assertTest("Backup: disk file untouched by backup", (try? String(contentsOf: saved, encoding: .utf8)) == "original\n")
+
+        // Simulate relaunch
+        let ws2 = NppWorkspace()
+        ws2.supportDirectoryOverride = ws.supportDirectoryOverride
+        ws2.rememberSession = true
+        ws2.periodicBackupEnabled = true
+        assertTest("Backup: restore succeeds", ws2.restoreAutoSession())
+        let u2 = ws2.documents.first { $0.filePath == nil && $0.content.contains("미저장") }
+        assertTest("Backup: unsaved new document text restored", u2?.content == "미저장 메모\r\n두번째 줄")
+        assertTest("Backup: restored new document stays modified", u2?.isDirty == true)
+        assertTest("Backup: restored document keeps title, EOL and BOM",
+                   u2?.title == untitledTitle && u2?.eolFormat == .crlf && u2?.hasBOM == true)
+        let e2 = ws2.documents.first { $0.filePath?.standardizedFileURL == saved.standardizedFileURL }
+        assertTest("Backup: unsaved edits of a saved file restored", e2?.content == "original\nunsaved edit\n" && e2?.isDirty == true)
+        let c2 = ws2.documents.first { $0.filePath?.standardizedFileURL == clean.standardizedFileURL }
+        assertTest("Backup: clean file reopens from disk and is not modified", c2?.content == "clean" && c2?.isDirty == false)
+        assertTest("Backup: no stray empty tab left over", !ws2.documents.contains { $0.filePath == nil && $0.content.isEmpty && !$0.isDirty })
+
+        // Saving removes the stale backup at next snapshot
+        if let e = e2 {
+            _ = e.save()
+            _ = ws2.snapshotSession()
+            let after = (try? FileManager.default.contentsOfDirectory(atPath: ws2.backupDirectoryURL.path)) ?? []
+            assertTest("Backup: saving a document removes its backup", after.count == 1)
+        }
+        // Closing without saving drops backup too
+        if let u = u2 {
+            _ = ws2.closeDocument(id: u.id, force: true)
+            _ = ws2.snapshotSession()
+            let after = (try? FileManager.default.contentsOfDirectory(atPath: ws2.backupDirectoryURL.path)) ?? []
+            assertTest("Backup: discarding a document removes its backup", after.isEmpty)
+        }
+        // Disabled by preference
+        let ws3 = NppWorkspace()
+        ws3.supportDirectoryOverride = support.appendingPathComponent("off")
+        ws3.rememberSession = false
+        assertTest("Backup: nothing is written when 'remember session' is off", ws3.snapshotSession() == false
+                   && !FileManager.default.fileExists(atPath: ws3.autoSessionURL.path))
+        assertTest("Backup: quitting without prompt only when backup is enabled", ws.canRestoreUnsavedOnLaunch && !ws3.canRestoreUnsavedOnLaunch)
     }
 
     static func runSessionTabRegressionTests(assertTest: (String, Bool) -> Void) {

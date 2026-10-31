@@ -796,6 +796,8 @@ public final class NppWorkspace: ObservableObject {
     @Published public var periodicBackupEnabled: Bool = true
     @Published public var periodicBackupIntervalSeconds: Int = 7
     @Published public var periodicBackupPath: String = ""
+    /// Test hook: where the automatic session and backups live instead of Application Support.
+    public var supportDirectoryOverride: URL?
     @Published public var keepAbsentFilesInSession: Bool = true
     @Published public var backupOnSaveMode: Int = 0 // 0: None, 1: Simple, 2: Verbose
     @Published public var customBackupDirEnabled: Bool = false
@@ -2823,7 +2825,10 @@ public final class NppWorkspace: ObservableObject {
         openFolderAsWorkspace(url: dirUrl)
     }
 
-    public func saveSession(to url: URL) -> Bool {
+    /// Writes a Notepad++-style session file.
+    /// With `backupDirectory`, unsaved (dirty / untitled) documents are also written there so the
+    /// next launch can restore their content ("session snapshot and periodic backup").
+    public func saveSession(to url: URL, backupDirectory: URL? = nil) -> Bool {
         func escaped(_ value: String) -> String {
             value.replacingOccurrences(of: "&", with: "&amp;")
                 .replacingOccurrences(of: "\"", with: "&quot;")
@@ -2834,44 +2839,103 @@ public final class NppWorkspace: ObservableObject {
                 .replacingOccurrences(of: "\n", with: "&#10;")
                 .replacingOccurrences(of: "\r", with: "&#13;")
         }
+        var referencedBackups = Set<String>()
+        if let dir = backupDirectory {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        func includes(_ doc: NppDocument) -> Bool {
+            if doc.filePath != nil { return true }
+            return backupDirectory != nil && doc.isDirty && !doc.isSessionPlaceholder
+        }
+        func fileElement(_ doc: NppDocument) -> String? {
+            let name: String
+            if let path = doc.filePath?.path { name = path } else { name = doc.title }
+            let start = doc.cursorPos
+            let end = doc.cursorPos + doc.selectionLength
+            var attrs = "firstVisibleLine=\"0\" xOffset=\"0\" scrollWidth=\"100\" startPos=\"\(start)\" endPos=\"\(end)\" selMode=\"0\" lang=\"\(escaped(doc.language))\" encoding=\"\(escaped(doc.encoding))\""
+            if let dir = backupDirectory, doc.isDirty, !doc.isSessionPlaceholder {
+                let safeTitle = doc.title.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
+                let backupName = "\(safeTitle)@\(doc.id.uuidString)"
+                let backupURL = dir.appendingPathComponent(backupName)
+                guard (try? Data(doc.content.utf8).write(to: backupURL, options: .atomic)) != nil else {
+                    return doc.filePath == nil ? nil : "<File \(attrs) filename=\"\(escaped(name))\">"
+                }
+                referencedBackups.insert(backupName)
+                attrs += " backupFilePath=\"\(escaped(backupURL.path))\" backupHasBOM=\"\(doc.hasBOM ? 1 : 0)\" backupEol=\"\(doc.eolFormat.rawValue)\" backupEncoding=\"\(escaped(doc.encoding))\""
+            } else if doc.filePath == nil {
+                return nil
+            }
+            var el = "            <File \(attrs) filename=\"\(escaped(name))\">\n"
+            for bLine in doc.bookmarkedLines.sorted() {
+                el += "                <Mark line=\"\(bLine)\" />\n"
+            }
+            el += "            </File>\n"
+            return el
+        }
         var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<NotepadPlus>\n"
         xml += "    <Session activeView=\"\(activeView)\">\n"
-        let savedPrimary = primaryDocuments.filter { $0.filePath != nil }
+        let savedPrimary = primaryDocuments.filter(includes)
         let activeIdx = savedPrimary.firstIndex(where: { $0.id == activeDocumentId }) ?? 0
         xml += "        <mainView activeIndex=\"\(activeIdx)\">\n"
-        for doc in savedPrimary {
-            guard let path = doc.filePath?.path else { continue }
-            let start = doc.cursorPos
-            let end = doc.cursorPos + doc.selectionLength
-            xml += "            <File firstVisibleLine=\"0\" xOffset=\"0\" scrollWidth=\"100\" startPos=\"\(start)\" endPos=\"\(end)\" selMode=\"0\" lang=\"\(escaped(doc.language))\" encoding=\"\(escaped(doc.encoding))\" filename=\"\(escaped(path))\">\n"
-            for bLine in doc.bookmarkedLines.sorted() {
-                xml += "                <Mark line=\"\(bLine)\" />\n"
-            }
-            xml += "            </File>\n"
-        }
+        for doc in savedPrimary { if let el = fileElement(doc) { xml += el } }
         xml += "        </mainView>\n"
-        let savedSecondary = secondaryDocuments.filter { $0.filePath != nil }
+        let savedSecondary = secondaryDocuments.filter(includes)
         let subIdx = savedSecondary.firstIndex(where: { $0.id == secondaryActiveDocumentId }) ?? 0
         xml += "        <subView activeIndex=\"\(subIdx)\">\n"
-        for doc in savedSecondary {
-            guard let path = doc.filePath?.path else { continue }
-            let start = doc.cursorPos
-            let end = doc.cursorPos + doc.selectionLength
-            xml += "            <File firstVisibleLine=\"0\" xOffset=\"0\" scrollWidth=\"100\" startPos=\"\(start)\" endPos=\"\(end)\" selMode=\"0\" lang=\"\(escaped(doc.language))\" encoding=\"\(escaped(doc.encoding))\" filename=\"\(escaped(path))\">\n"
-            for bLine in doc.bookmarkedLines.sorted() {
-                xml += "                <Mark line=\"\(bLine)\" />\n"
-            }
-            xml += "            </File>\n"
-        }
+        for doc in savedSecondary { if let el = fileElement(doc) { xml += el } }
         xml += "        </subView>\n"
         xml += "    </Session>\n</NotepadPlus>\n"
 
         do {
             try xml.write(to: url, atomically: true, encoding: .utf8)
+            if let dir = backupDirectory,
+               let existing = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
+                for name in existing where !referencedBackups.contains(name) && name.contains("@") {
+                    try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+                }
+            }
             return true
         } catch {
             return false
         }
+    }
+
+    // MARK: - Session snapshot & periodic backup (Preferences > Backup)
+    public var sessionSupportDirectory: URL {
+        if let override = supportDirectoryOverride { return override }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("NotepadPlusPlusMac", isDirectory: true)
+    }
+    public var autoSessionURL: URL { sessionSupportDirectory.appendingPathComponent("session.xml") }
+    public var backupDirectoryURL: URL {
+        let custom = periodicBackupPath.trimmingCharacters(in: .whitespaces)
+        if !custom.isEmpty { return URL(fileURLWithPath: (custom as NSString).expandingTildeInPath, isDirectory: true) }
+        return sessionSupportDirectory.appendingPathComponent("backup", isDirectory: true)
+    }
+
+    /// Whether quitting can skip the save prompts because unsaved work is preserved by the backup.
+    public var canRestoreUnsavedOnLaunch: Bool { rememberSession && periodicBackupEnabled }
+
+    /// Saves the current session (and backups of unsaved documents) for the next launch.
+    @discardableResult
+    public func snapshotSession() -> Bool {
+        guard rememberSession else { return false }
+        try? FileManager.default.createDirectory(at: sessionSupportDirectory, withIntermediateDirectories: true)
+        return saveSession(to: autoSessionURL, backupDirectory: periodicBackupEnabled ? backupDirectoryURL : nil)
+    }
+
+    /// Reopens the previous session, including unsaved documents, if one was snapshotted.
+    @discardableResult
+    public func restoreAutoSession() -> Bool {
+        guard rememberSession, FileManager.default.fileExists(atPath: autoSessionURL.path) else { return false }
+        let blanks = documents.filter { $0.filePath == nil && !$0.isDirty && $0.content.isEmpty }
+        let before = documents.count
+        guard loadSession(from: autoSessionURL) else { return false }
+        if documents.count > before {
+            for blank in blanks { _ = closeDocument(id: blank.id, force: true) }
+        }
+        return true
     }
 
     public func loadSession(from url: URL) -> Bool {
@@ -2888,7 +2952,8 @@ public final class NppWorkspace: ObservableObject {
             let missingFiles = ["mainView", "subView"].flatMap { viewName in
                 session.elements(forName: viewName).first?.elements(forName: "File") ?? []
             }.compactMap { file -> URL? in
-                guard let path = attribute(file, "filename"), !path.isEmpty else { return nil }
+                guard let path = attribute(file, "filename"), path.hasPrefix("/") else { return nil }
+                if let b = attribute(file, "backupFilePath"), FileManager.default.fileExists(atPath: b) { return nil }
                 let fileURL = URL(fileURLWithPath: path).standardizedFileURL
                 return FileManager.default.fileExists(atPath: fileURL.path) ? nil : fileURL
             }
@@ -2914,7 +2979,32 @@ public final class NppWorkspace: ObservableObject {
                 for file in view.elements(forName: "File") {
                     guard let path = attribute(file, "filename"), !path.isEmpty else { continue }
                     let fileURL = URL(fileURLWithPath: path).standardizedFileURL
-                    if FileManager.default.fileExists(atPath: fileURL.path) {
+                    var restored: NppDocument?
+                    if let backupPath = attribute(file, "backupFilePath"),
+                       let backupData = FileManager.default.contents(atPath: backupPath) {
+                        // Unsaved document: bring back the backed-up text and keep it marked as modified.
+                        let isRealPath = path.hasPrefix("/")
+                        let doc: NppDocument
+                        if isRealPath {
+                            if FileManager.default.fileExists(atPath: fileURL.path) { openFile(url: fileURL) }
+                            if let open = documents.first(where: { $0.filePath?.standardizedFileURL == fileURL }) {
+                                doc = open
+                            } else {
+                                doc = NppDocument(title: fileURL.lastPathComponent)
+                                doc.filePath = fileURL
+                                documents.append(doc)
+                            }
+                        } else {
+                            doc = NppDocument(title: path)
+                            documents.append(doc)
+                        }
+                        doc.content = String(decoding: backupData, as: UTF8.self)
+                        if let enc = attribute(file, "backupEncoding"), !enc.isEmpty { doc.encoding = enc }
+                        doc.hasBOM = attribute(file, "backupHasBOM") == "1"
+                        if let raw = Int(attribute(file, "backupEol") ?? ""), let eol = NppEol(rawValue: raw) { doc.eolFormat = eol }
+                        doc.isDirty = true
+                        restored = doc
+                    } else if FileManager.default.fileExists(atPath: fileURL.path) {
                         openFile(url: fileURL)
                     } else if keepMissing {
                         if !documents.contains(where: { $0.filePath?.standardizedFileURL == fileURL }) {
@@ -2927,7 +3017,7 @@ public final class NppWorkspace: ObservableObject {
                     } else {
                         continue
                     }
-                    guard let doc = documents.first(where: { $0.filePath?.standardizedFileURL == fileURL }) else { continue }
+                    guard let doc = restored ?? documents.first(where: { $0.filePath?.standardizedFileURL == fileURL }) else { continue }
                     if isSecondary {
                         if loadedPrimary.contains(doc.id) {
                             if !secondaryDocumentIds.contains(doc.id) { cloneToOtherView(id: doc.id) }

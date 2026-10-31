@@ -231,7 +231,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if CommandLine.arguments.contains("--screenshot-main") {
             NppAutomatedTestSuite.captureScreenshot(appDelegate: self, openPrefs: false, filename: "screenshot_main.png")
         } else {
+            workspace.restoreAutoSession()
             NppCommandLineParser.parse(CommandLine.arguments, workspace: workspace)
+            startPeriodicBackupTimer()
+        }
+    }
+
+    private static var backupTimer: Timer?
+    private func startPeriodicBackupTimer() {
+        var elapsed = 0
+        Self.backupTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let ws = self?.workspace, ws.canRestoreUnsavedOnLaunch else { return }
+            elapsed += 1
+            if elapsed >= max(1, ws.periodicBackupIntervalSeconds) {
+                elapsed = 0
+                ws.snapshotSession()
+            }
         }
     }
 
@@ -240,10 +255,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Notepad++ behavior: with session snapshot enabled, unsaved work is backed up instead of prompting.
+        if workspace.canRestoreUnsavedOnLaunch { return workspace.snapshotSession() || workspace.closeAll(force: false) }
         return workspace.closeAll(force: false)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if workspace.canRestoreUnsavedOnLaunch, workspace.snapshotSession() {
+            return .terminateNow
+        }
         if workspace.closeAll(force: false) {
             return .terminateNow
         } else {
