@@ -16,6 +16,15 @@ echo "Copying binary..."
 cp ".build/release/NotepadPlusPlusMac" "$MACOS_DIR/Notepad++"
 chmod +x "$MACOS_DIR/Notepad++"
 
+echo "Copying SwiftPM resource bundle (auto-completion data)..."
+RES_BUNDLE=".build/release/NotepadPlusPlusMac_NotepadPlusPlusMac.bundle"
+if [ -d "$RES_BUNDLE" ]; then
+    cp -R "$RES_BUNDLE" "$RESOURCES_DIR/"
+else
+    echo "ERROR: $RES_BUNDLE not found; the app would crash when typing." >&2
+    exit 1
+fi
+
 echo "Generating AppIcon.icns..."
 ICONSET_DIR="build/AppIcon.iconset"
 rm -rf "$ICONSET_DIR"

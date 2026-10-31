@@ -1420,6 +1420,7 @@ final class NppAutomatedTestSuite {
             runCommentIndentRegressionTests(assertTest: assertTest)
             runSessionTabRegressionTests(assertTest: assertTest)
             runUnsavedBackupRestoreTests(assertTest: assertTest)
+            runResourceBundleTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -5323,6 +5324,17 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runResourceBundleTests(assertTest: (String, Bool) -> Void) {
+        let dir = NppCompletionEngine.autoCompletionDirectory()
+        assertTest("Resources: auto-completion data is found next to the running binary (works inside the .app too)", dir != nil)
+        let hasFiles = dir.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.path) }?.contains("python.xml") ?? false
+        assertTest("Resources: python.xml is present", hasFiles)
+        // Typing path used to abort the app when resources were missing
+        let words = NppCompletionEngine.shared.candidates(text: "pri", caret: 3, language: "Python", mode: 0,
+                                                   minimumLength: 1, ignoreNumbers: true, manual: true)
+        assertTest("Resources: completion engine returns keywords for Python without crashing", !words.isEmpty)
     }
 
     static func runUnsavedBackupRestoreTests(assertTest: (String, Bool) -> Void) {

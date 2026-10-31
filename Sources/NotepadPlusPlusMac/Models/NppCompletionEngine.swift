@@ -123,6 +123,25 @@ public final class NppCompletionEngine {
         return NSRange(location: start, length: position - start)
     }
 
+    /// Finds the bundled `autoCompletion` folder without touching `Bundle.module`, whose generated
+    /// accessor aborts the whole app when the SwiftPM resource bundle is missing from the .app.
+    static func autoCompletionDirectory() -> URL? {
+        let bundleName = "NotepadPlusPlusMac_NotepadPlusPlusMac.bundle"
+        var roots: [URL] = []
+        if let r = Bundle.main.resourceURL { roots.append(r) }
+        roots.append(Bundle.main.bundleURL)
+        if let exe = Bundle.main.executableURL?.deletingLastPathComponent() { roots.append(exe) }
+        for root in roots {
+            let bundleURL = root.appendingPathComponent(bundleName)
+            for candidate in [bundleURL.appendingPathComponent("autoCompletion"),
+                              bundleURL.appendingPathComponent("Contents/Resources/autoCompletion"),
+                              root.appendingPathComponent("autoCompletion")] {
+                if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            }
+        }
+        return nil
+    }
+
     private func languageAPI(for language: String) -> LanguageAPI {
         let key = language.lowercased()
         if let cached = cache[key] { return cached }
@@ -137,8 +156,7 @@ public final class NppCompletionEngine {
         case "shell", "shell / bash", "bash": fileName = "bash"
         default: fileName = key.replacingOccurrences(of: " ", with: "")
         }
-        guard let url = Bundle.module.resourceURL?
-            .appendingPathComponent("autoCompletion")
+        guard let url = Self.autoCompletionDirectory()?
             .appendingPathComponent(fileName + ".xml"),
             let data = try? Data(contentsOf: url),
             let xml = try? XMLDocument(data: data),
