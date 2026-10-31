@@ -10,7 +10,10 @@
 static std::string normalize_charset_name(const std::string& name) {
     std::string s = name;
     std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-    if (s == "EUC-KR" || s == "CP949" || s == "WINDOWS-949" || s == "MS949") {
+    if (s == "EUC-KR") {
+        return "EUC-KR";
+    }
+    if (s == "CP949" || s == "WINDOWS-949" || s == "MS949") {
         return "CP949";
     }
     if (s == "SHIFT_JIS" || s == "SJIS" || s == "CP932") {
@@ -152,6 +155,9 @@ NppBridgeDetectionResult npp_detect_encoding_and_eol(const char* data, size_t le
     uchardet_delete(ud);
 
     std::string norm = normalize_charset_name(charset);
+    if (norm == "EUC-KR") {
+        norm = "CP949";
+    }
     if (!norm.empty()) {
         static char stored_name[64];
         std::strncpy(stored_name, norm.c_str(), sizeof(stored_name) - 1);

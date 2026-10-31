@@ -14,9 +14,9 @@ public struct NppMainWindowView: View {
                 NppToolbarView(workspace: workspace)
             }
 
-            // 2. Tab Bar
-            if !workspace.hideTabBar {
-                NppTabBarView(workspace: workspace)
+            // 2. Tab Bar (Single View only; in Dual View each pane has its own tab bar)
+            if !workspace.isDualView && !workspace.hideTabBar {
+                NppTabBarView(workspace: workspace, viewIndex: 0)
             }
 
             // 3. Search Bar (if visible)
@@ -44,23 +44,41 @@ public struct NppMainWindowView: View {
                     Divider()
                 }
 
-                if let doc = workspace.activeDocument {
-                    NppEditorView(document: doc, workspace: workspace)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    VStack {
-                        Spacer()
-                        Text(workspace.tr("No Document Open"))
-                            .font(.title2)
-                            .foregroundColor(.secondary)
-                        Button(workspace.tr("Create New")) {
-                            workspace.newDocument()
+                // Main Editor or Dual View Area
+                if workspace.isDualView {
+                    GeometryReader { geo in
+                        if workspace.splitDirection == .vertical {
+                            HStack(spacing: 0) {
+                                primaryEditorPane
+                                    .frame(width: max(100, geo.size.width * workspace.splitRatio - 4))
+
+                                NppSplitterBarView(workspace: workspace, totalSize: geo.size.width, isVertical: true)
+                                    .frame(width: 8)
+
+                                secondaryEditorPane
+                                    .frame(width: max(100, geo.size.width * (1.0 - workspace.splitRatio) - 4))
+                            }
+                        } else {
+                            VStack(spacing: 0) {
+                                primaryEditorPane
+                                    .frame(height: max(60, geo.size.height * workspace.splitRatio - 4))
+
+                                NppSplitterBarView(workspace: workspace, totalSize: geo.size.height, isVertical: false)
+                                    .frame(height: 8)
+
+                                secondaryEditorPane
+                                    .frame(height: max(60, geo.size.height * (1.0 - workspace.splitRatio) - 4))
+                            }
                         }
-                        .padding(.top, 8)
-                        Spacer()
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(NSColor.textBackgroundColor))
+                } else {
+                    if let doc = workspace.activeDocument {
+                        NppEditorView(document: doc, workspace: workspace)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        noDocPlaceholderView
+                    }
                 }
 
                 if workspace.showCharacterPanel {
@@ -155,6 +173,50 @@ public struct NppMainWindowView: View {
                 .help(workspace.tr("Restore View (F11/F12)"))
             }
         }
+    }
+
+    private var primaryEditorPane: some View {
+        VStack(spacing: 0) {
+            if !workspace.hideTabBar {
+                NppTabBarView(workspace: workspace, viewIndex: 0)
+            }
+            if let doc = workspace.activeDocument {
+                NppEditorView(document: doc, workspace: workspace)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                noDocPlaceholderView
+            }
+        }
+    }
+
+    private var secondaryEditorPane: some View {
+        VStack(spacing: 0) {
+            if !workspace.hideTabBar {
+                NppTabBarView(workspace: workspace, viewIndex: 1)
+            }
+            if let doc = workspace.secondaryActiveDocument {
+                NppEditorView(document: doc, workspace: workspace)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                noDocPlaceholderView
+            }
+        }
+    }
+
+    private var noDocPlaceholderView: some View {
+        VStack {
+            Spacer()
+            Text(workspace.tr("No Document Open"))
+                .font(.title2)
+                .foregroundColor(.secondary)
+            Button(workspace.tr("Create New")) {
+                workspace.newDocument()
+            }
+            .padding(.top, 8)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(NSColor.textBackgroundColor))
     }
 }
 
@@ -408,6 +470,16 @@ public struct NppCharacterPanelView: View {
             case 13: charDisplay = "CR"
             case 32: charDisplay = "SPACE"
             case 1...31: charDisplay = "CTL"
+            case 128...255:
+                let byte = UInt8(code)
+                let data = Data([byte])
+                if let s = String(data: data, encoding: .windowsCP1252) {
+                    charDisplay = s
+                } else if let scalar = UnicodeScalar(code) {
+                    charDisplay = String(scalar)
+                } else {
+                    charDisplay = "?"
+                }
             default:
                 if let scalar = UnicodeScalar(code) {
                     charDisplay = String(scalar)
@@ -505,14 +577,134 @@ public struct NppCharacterPanelView: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) {
+                    guard item.dec > 0 else { return } // Disallow inserting raw NUL (code 0)
                     guard let tv = workspace.activeTextView, tv.isEditable else { return }
-                    if let scalar = UnicodeScalar(item.dec) {
-                        tv.insertText(String(scalar), replacementRange: tv.selectedRange())
+                    let stringToInsert: String
+                    if item.dec >= 128 && item.dec <= 255 {
+                        let data = Data([UInt8(item.dec)])
+                        stringToInsert = String(data: data, encoding: .windowsCP1252) ?? (UnicodeScalar(item.dec).map(String.init) ?? "")
+                    } else if let scalar = UnicodeScalar(item.dec) {
+                        stringToInsert = String(scalar)
+                    } else {
+                        stringToInsert = ""
                     }
+                    guard !stringToInsert.isEmpty else { return }
+                    tv.insertText(stringToInsert, replacementRange: tv.selectedRange())
+                    workspace.activeDocument?.content = tv.string
+                    workspace.activeDocument?.isDirty = true
+                    tv.window?.makeFirstResponder(tv)
                 }
             }
             .listStyle(PlainListStyle())
         }
         .background(Color(NSColor.windowBackgroundColor))
+    }
+}
+
+// MARK: - Authentic Notepad++ Dual View Splitter Bar (view-rotate-4.png)
+public struct NppSplitterBarView: View {
+    @ObservedObject var workspace: NppWorkspace
+    let totalSize: CGFloat
+    let isVertical: Bool
+    @State private var isHovering: Bool = false
+
+    public init(workspace: NppWorkspace, totalSize: CGFloat, isVertical: Bool) {
+        self.workspace = workspace
+        self.totalSize = totalSize
+        self.isVertical = isVertical
+    }
+
+    public var body: some View {
+        ZStack {
+            // Splitter Divider Bar
+            Rectangle()
+                .fill(isHovering ? Color(NSColor.selectedControlColor).opacity(0.3) : Color(NSColor.separatorColor).opacity(0.6))
+
+            // Authentic Notepad++ Center rotation arrows handle
+            if isVertical {
+                // Vertical split (Left / Right): Rotate Left (◀) / Rotate Right (▶)
+                HStack(spacing: 2) {
+                    Button(action: {
+                        workspace.rotateSplitterLeft()
+                    }) {
+                        Image(systemName: "arrowtriangle.left.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 8, height: 14)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(workspace.tr("Rotate to left"))
+
+                    Button(action: {
+                        workspace.rotateSplitterRight()
+                    }) {
+                        Image(systemName: "arrowtriangle.right.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 8, height: 14)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(workspace.tr("Rotate to right"))
+                }
+                .padding(2)
+                .background(
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color(NSColor.windowBackgroundColor))
+                        .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 1)
+                )
+            } else {
+                // Horizontal split (Top / Bottom): Rotate Up (▲) / Rotate Down (▼)
+                VStack(spacing: 2) {
+                    Button(action: {
+                        workspace.rotateSplitterLeft()
+                    }) {
+                        Image(systemName: "arrowtriangle.up.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 14, height: 8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(workspace.tr("Rotate to left"))
+
+                    Button(action: {
+                        workspace.rotateSplitterRight()
+                    }) {
+                        Image(systemName: "arrowtriangle.down.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .frame(width: 14, height: 8)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help(workspace.tr("Rotate to right"))
+                }
+                .padding(2)
+                .background(
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color(NSColor.windowBackgroundColor))
+                        .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 1)
+                )
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering {
+                if isVertical {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.resizeUpDown.push()
+                }
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    let delta = isVertical ? value.translation.width : value.translation.height
+                    let newRatio = workspace.splitRatio + (delta / max(100, totalSize))
+                    workspace.splitRatio = max(0.15, min(0.85, newRatio))
+                }
+        )
     }
 }

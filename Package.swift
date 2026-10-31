@@ -41,7 +41,8 @@ let package = Package(
         .executableTarget(
             name: "NotepadPlusPlusMac",
             dependencies: ["NppCore"],
-            path: "Sources/NotepadPlusPlusMac"
+            path: "Sources/NotepadPlusPlusMac",
+            resources: [.copy("Resources/autoCompletion")]
         )
     ],
     cxxLanguageStandard: .cxx17

@@ -347,149 +347,195 @@ public final class NppEditOperations {
         }
     }
 
-    public static func removeEmptyLines(in doc: NppDocument, removeBlankChars: Bool = false) {
+    // MARK: - Line Operations Scope & Undo Preserving Helper
+    private static func applyLinesTransform(
+        in doc: NppDocument,
+        selectedRange: NSRange? = nil,
+        textView: NSTextView? = nil,
+        transform: ([String]) -> [String]
+    ) {
         guard !doc.isReadOnly else { return }
-        let lines = doc.content.nppLines()
-        let filtered = lines.filter { line in
-            if removeBlankChars {
-                return !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            } else {
-                return !line.isEmpty
-            }
+        let fullText = (textView?.string ?? doc.content) as NSString
+        // Sorting changes line order, not the line-ending style of the text being sorted.
+        // A pasted selection may have a different EOL from the document setting.
+        func lineSeparator(in text: String) -> String {
+            if text.contains("\r\n") { return "\r\n" }
+            if text.contains("\n") { return "\n" }
+            if text.contains("\r") { return "\r" }
+            return doc.eolFormat.characters
         }
-        let separator = doc.eolFormat.characters
-        doc.content = filtered.joined(separator: separator)
-        doc.isDirty = true
-    }
 
-    public static func removeDuplicateLines(in doc: NppDocument, consecutiveOnly: Bool = false) {
-        guard !doc.isReadOnly else { return }
-        let lines = doc.content.nppLines()
-        var result: [String] = []
+        if let sel = selectedRange, sel.length > 0 {
+            let spanRange = fullText.lineRange(for: sel)
+            let spanText = fullText.substring(with: spanRange)
+            let lines = spanText.nppLines()
+            let transformed = transform(lines)
+            var newSpan = transformed.joined(separator: lineSeparator(in: spanText))
+            if spanText.hasSuffix("\r\n") {
+                newSpan += "\r\n"
+            } else if spanText.hasSuffix("\n") {
+                newSpan += "\n"
+            } else if spanText.hasSuffix("\r") {
+                newSpan += "\r"
+            }
 
-        if consecutiveOnly {
-            var last: String?
-            for line in lines {
-                if line != last {
-                    result.append(line)
-                    last = line
+            if let tv = textView {
+                if tv.shouldChangeText(in: spanRange, replacementString: newSpan) {
+                    tv.undoManager?.beginUndoGrouping()
+                    tv.replaceCharacters(in: spanRange, with: newSpan)
+                    tv.didChangeText()
+                    tv.undoManager?.endUndoGrouping()
+                    doc.content = tv.string
+                    doc.isDirty = true
                 }
+            } else {
+                let newFull = fullText.replacingCharacters(in: spanRange, with: newSpan)
+                doc.content = newFull
+                doc.isDirty = true
             }
         } else {
-            var seen = Set<String>()
-            for line in lines {
-                if !seen.contains(line) {
-                    seen.insert(line)
-                    result.append(line)
+            let lines = (fullText as String).nppLines()
+            let transformed = transform(lines)
+            let newContent = transformed.joined(separator: lineSeparator(in: fullText as String))
+
+            if let tv = textView {
+                let fullRange = NSRange(location: 0, length: fullText.length)
+                if tv.shouldChangeText(in: fullRange, replacementString: newContent) {
+                    tv.undoManager?.beginUndoGrouping()
+                    tv.replaceCharacters(in: fullRange, with: newContent)
+                    tv.didChangeText()
+                    tv.undoManager?.endUndoGrouping()
+                    doc.content = tv.string
+                    doc.isDirty = true
+                }
+            } else {
+                doc.content = newContent
+                doc.isDirty = true
+            }
+        }
+    }
+
+    public static func removeEmptyLines(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil, removeBlankChars: Bool = false) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            lines.filter { line in
+                if removeBlankChars {
+                    return !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                } else {
+                    return !line.isEmpty
                 }
             }
         }
-
-        let separator = doc.eolFormat.characters
-        doc.content = result.joined(separator: separator)
-        doc.isDirty = true
     }
 
-    public static func removeConsecutiveDuplicateLines(in doc: NppDocument) {
-        guard !doc.isReadOnly else { return }
-        removeDuplicateLines(in: doc, consecutiveOnly: true)
-    }
-
-    public static func sortLines(in doc: NppDocument, ascending: Bool = true, ignoreCase: Bool = false) {
-        guard !doc.isReadOnly else { return }
-        var lines = doc.content.nppLines()
-        lines.sort { a, b in
-            let comp: ComparisonResult
-            if ignoreCase {
-                comp = a.caseInsensitiveCompare(b)
+    public static func removeDuplicateLines(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil, consecutiveOnly: Bool = false) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            var result: [String] = []
+            if consecutiveOnly {
+                var last: String?
+                for line in lines {
+                    if line != last {
+                        result.append(line)
+                        last = line
+                    }
+                }
             } else {
-                comp = a.compare(b)
+                var seen = Set<String>()
+                for line in lines {
+                    if !seen.contains(line) {
+                        seen.insert(line)
+                        result.append(line)
+                    }
+                }
             }
-            return ascending ? (comp == .orderedAscending) : (comp == .orderedDescending)
+            return result
         }
-        let separator = doc.eolFormat.characters
-        doc.content = lines.joined(separator: separator)
-        doc.isDirty = true
     }
 
-    public static func randomizeLineOrder(in doc: NppDocument) {
-        guard !doc.isReadOnly else { return }
-        var lines = doc.content.nppLines()
-        lines.shuffle()
-        let separator = doc.eolFormat.characters
-        doc.content = lines.joined(separator: separator)
-        doc.isDirty = true
+    public static func removeConsecutiveDuplicateLines(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil) {
+        removeDuplicateLines(in: doc, selectedRange: selectedRange, textView: textView, consecutiveOnly: true)
     }
 
-    public static func sortLinesCaseInsensitive(in doc: NppDocument, ascending: Bool = true) {
-        guard !doc.isReadOnly else { return }
-        var lines = doc.content.nppLines()
-        lines.sort { a, b in
-            let comp = a.localizedCaseInsensitiveCompare(b)
-            return ascending ? (comp == .orderedAscending) : (comp == .orderedDescending)
-        }
-        let separator = doc.eolFormat.characters
-        doc.content = lines.joined(separator: separator)
-        doc.isDirty = true
-    }
-
-    public static func sortLinesByLength(in doc: NppDocument, ascending: Bool = true) {
-        guard !doc.isReadOnly else { return }
-        var lines = doc.content.nppLines()
-        lines.sort { a, b in
-            if a.count != b.count {
-                return ascending ? (a.count < b.count) : (a.count > b.count)
+    public static func sortLines(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil, ascending: Bool = true, ignoreCase: Bool = false) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            var sorted = lines
+            sorted.sort { a, b in
+                let comp: ComparisonResult = ignoreCase ? a.caseInsensitiveCompare(b) : a.compare(b)
+                return ascending ? (comp == .orderedAscending) : (comp == .orderedDescending)
             }
-            return ascending ? (a < b) : (a > b)
+            return sorted
         }
-        let separator = doc.eolFormat.characters
-        doc.content = lines.joined(separator: separator)
-        doc.isDirty = true
     }
 
-    public static func reverseLineOrder(in doc: NppDocument) {
-        guard !doc.isReadOnly else { return }
-        let lines = doc.content.nppLines()
-        let reversed = lines.reversed()
-        let separator = doc.eolFormat.characters
-        doc.content = reversed.joined(separator: separator)
-        doc.isDirty = true
+    public static func randomizeLineOrder(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            var shuffled = lines
+            shuffled.shuffle()
+            return shuffled
+        }
     }
 
-    public static func sortLinesAsIntegers(in doc: NppDocument, ascending: Bool = true) {
-        guard !doc.isReadOnly else { return }
-        var lines = doc.content.nppLines()
-        lines.sort { a, b in
-            let intA = extractLeadingInteger(from: a)
-            let intB = extractLeadingInteger(from: b)
-            if let ia = intA, let ib = intB {
-                return ascending ? (ia < ib) : (ia > ib)
+    public static func sortLinesCaseInsensitive(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil, ascending: Bool = true) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            var sorted = lines
+            sorted.sort { a, b in
+                let comp = a.localizedCaseInsensitiveCompare(b)
+                return ascending ? (comp == .orderedAscending) : (comp == .orderedDescending)
             }
-            if intA != nil { return ascending }
-            if intB != nil { return !ascending }
-            return ascending ? (a < b) : (a > b)
+            return sorted
         }
-        let separator = doc.eolFormat.characters
-        doc.content = lines.joined(separator: separator)
-        doc.isDirty = true
     }
 
-    public static func sortLinesAsDecimals(in doc: NppDocument, ascending: Bool = true, usesComma: Bool = false) {
-        guard !doc.isReadOnly else { return }
-        var lines = doc.content.nppLines()
-        lines.sort { a, b in
-            let dblA = extractLeadingDouble(from: a, usesComma: usesComma)
-            let dblB = extractLeadingDouble(from: b, usesComma: usesComma)
-            if let da = dblA, let db = dblB {
-                return ascending ? (da < db) : (da > db)
+    public static func sortLinesByLength(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil, ascending: Bool = true) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            var sorted = lines
+            sorted.sort { a, b in
+                if a.count != b.count {
+                    return ascending ? (a.count < b.count) : (a.count > b.count)
+                }
+                return ascending ? (a < b) : (a > b)
             }
-            if dblA != nil { return ascending }
-            if dblB != nil { return !ascending }
-            return ascending ? (a < b) : (a > b)
+            return sorted
         }
-        let separator = doc.eolFormat.characters
-        doc.content = lines.joined(separator: separator)
-        doc.isDirty = true
+    }
+
+    public static func reverseLineOrder(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            return Array(lines.reversed())
+        }
+    }
+
+    public static func sortLinesAsIntegers(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil, ascending: Bool = true) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            var sorted = lines
+            sorted.sort { a, b in
+                let intA = extractLeadingInteger(from: a)
+                let intB = extractLeadingInteger(from: b)
+                if let ia = intA, let ib = intB {
+                    return ascending ? (ia < ib) : (ia > ib)
+                }
+                if intA != nil { return ascending }
+                if intB != nil { return !ascending }
+                return ascending ? (a < b) : (a > b)
+            }
+            return sorted
+        }
+    }
+
+    public static func sortLinesAsDecimals(in doc: NppDocument, selectedRange: NSRange? = nil, textView: NSTextView? = nil, ascending: Bool = true, usesComma: Bool = false) {
+        applyLinesTransform(in: doc, selectedRange: selectedRange, textView: textView) { lines in
+            var sorted = lines
+            sorted.sort { a, b in
+                let dblA = extractLeadingDouble(from: a, usesComma: usesComma)
+                let dblB = extractLeadingDouble(from: b, usesComma: usesComma)
+                if let da = dblA, let db = dblB {
+                    return ascending ? (da < db) : (da > db)
+                }
+                if dblA != nil { return ascending }
+                if dblB != nil { return !ascending }
+                return ascending ? (a < b) : (a > b)
+            }
+            return sorted
+        }
     }
 
     public static func insertEmptyLineAbove(in textView: NSTextView) {
@@ -533,6 +579,7 @@ public final class NppEditOperations {
             trimmed = trimmed.replacingOccurrences(of: ",", with: ".")
         }
         let scanner = Scanner(string: trimmed)
+        scanner.locale = Locale(identifier: "en_US_POSIX")
         return scanner.scanDouble()
     }
 

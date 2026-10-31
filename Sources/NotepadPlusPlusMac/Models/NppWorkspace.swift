@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import NppCore
 
 public struct ClipboardItem: Identifiable, Equatable {
     public let id = UUID()
@@ -22,12 +23,44 @@ public struct NppUserDefineLanguage: Codable, Equatable, Identifiable {
     public var name: String
     public var extensions: String
     public var ignoreCase: Bool
+    public var keywordLists: [String: String]
+    public var prefixModes: [String: Bool]
+    public var decimalSeparator: Int
+    public var styleForegrounds: [String: String]
+    /// Original UserLang element, retained so unedited styles and advanced rules survive export.
+    public var sourceXML: String?
 
-    public init(id: UUID = UUID(), name: String, extensions: String = "", ignoreCase: Bool = true) {
+    public init(id: UUID = UUID(), name: String, extensions: String = "", ignoreCase: Bool = true,
+                keywordLists: [String: String] = [:], prefixModes: [String: Bool] = [:],
+                decimalSeparator: Int = 0,
+                styleForegrounds: [String: String] = [:],
+                sourceXML: String? = nil) {
         self.id = id
         self.name = name
         self.extensions = extensions
         self.ignoreCase = ignoreCase
+        self.keywordLists = keywordLists
+        self.prefixModes = prefixModes
+        self.decimalSeparator = decimalSeparator
+        self.styleForegrounds = styleForegrounds
+        self.sourceXML = sourceXML
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, extensions, ignoreCase, keywordLists, prefixModes, decimalSeparator, styleForegrounds, sourceXML
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try values.decode(String.self, forKey: .name)
+        extensions = try values.decodeIfPresent(String.self, forKey: .extensions) ?? ""
+        ignoreCase = try values.decodeIfPresent(Bool.self, forKey: .ignoreCase) ?? true
+        keywordLists = try values.decodeIfPresent([String: String].self, forKey: .keywordLists) ?? [:]
+        prefixModes = try values.decodeIfPresent([String: Bool].self, forKey: .prefixModes) ?? [:]
+        decimalSeparator = try values.decodeIfPresent(Int.self, forKey: .decimalSeparator) ?? 0
+        styleForegrounds = try values.decodeIfPresent([String: String].self, forKey: .styleForegrounds) ?? [:]
+        sourceXML = try values.decodeIfPresent(String.self, forKey: .sourceXML)
     }
 }
 
@@ -607,7 +640,8 @@ public final class NppWorkspace: ObservableObject {
                     language: activeDocument?.language ?? "Plain Text",
                     isDarkMode: theme.isDark,
                     baseFont: resolvedFont,
-                    theme: theme
+                    theme: theme,
+                    userDefinedLanguage: userDefinedLanguage(named: activeDocument?.language ?? "")
                 )
             }
             if let scroll = tv.enclosingScrollView, let gutter = scroll.verticalRulerView as? NppGutterView {
@@ -774,7 +808,7 @@ public final class NppWorkspace: ObservableObject {
     @Published public var funcParamsHint: Bool = true
     @Published public var autoCompletionThreshold: Int = 1
     @Published public var autoCompletionKeyTab: Bool = true
-    @Published public var autoCompletionKeyEnter: Bool = true
+    @Published public var autoCompletionKeyEnter: Bool = false
     @Published public var autoCompletionIgnoreNumbers: Bool = true
     @Published public var autoInsertParen: Bool = true
     @Published public var autoInsertBracket: Bool = true
@@ -838,10 +872,33 @@ public final class NppWorkspace: ObservableObject {
     @Published public var saveAllConfirmDialog: Bool = true
     @Published public var allowSymlinksInFAW: Bool = true
     @Published public var sessionFileExt: String = "session"
+    private var isLoadingSession = false
+    public var sessionPlaceholderDecisionHandler: (([URL]) -> Bool)? = nil
     @Published public var workspaceFileExt: String = "workspace"
 
     // Run Command State
     @Published public var lastRunCommand: String = "python3 $(CURRENT_FILE)"
+    @Published public var runCommandHistory: [String] = []
+    public struct NppSavedRunCommand: Codable, Equatable, Identifiable {
+        public var id: UUID
+        public var name: String
+        public var command: String
+        public var shortcut: String
+        public var inTerminal: Bool
+
+        public init(id: UUID = UUID(), name: String, command: String,
+                    shortcut: String = "", inTerminal: Bool = false) {
+            self.id = id
+            self.name = name
+            self.command = command
+            self.shortcut = shortcut
+            self.inTerminal = inTerminal
+        }
+    }
+    public static let savedRunCommandsKey = "npp.savedRunCommands.v1"
+    @Published public var savedRunCommands: [NppSavedRunCommand] = []
+    @Published public var requestedShortcutMapperTab: Int = 0
+    private let runCommandDefaults: UserDefaults
 
     // Robust macOS Font Resolution for Family and PostScript names
     public static func resolveFont(name: String, size: CGFloat, bold: Bool = false, italic: Bool = false) -> NSFont {
@@ -914,7 +971,8 @@ public final class NppWorkspace: ObservableObject {
                     language: activeDocument?.language ?? "Plain Text",
                     isDarkMode: currentTheme.isDark,
                     baseFont: resolved,
-                    theme: currentTheme
+                    theme: currentTheme,
+                    userDefinedLanguage: userDefinedLanguage(named: activeDocument?.language ?? "")
                 )
             }
             tv.needsDisplay = true
@@ -960,9 +1018,128 @@ public final class NppWorkspace: ObservableObject {
         searchFileGroups.reduce(0) { $0 + $1.matches.count }
     }
 
-    public init() {
+    public init(runCommandDefaults: UserDefaults = .standard) {
+        self.runCommandDefaults = runCommandDefaults
         newDocument()
         loadSavedMacros()
+        loadSavedRunCommands()
+        loadUserDefinedLanguages()
+    }
+
+    public func loadSavedRunCommands() {
+        guard let data = runCommandDefaults.data(forKey: Self.savedRunCommandsKey),
+              let commands = try? JSONDecoder().decode([NppSavedRunCommand].self, from: data)
+        else { return }
+        savedRunCommands = commands
+    }
+
+    public func persistSavedRunCommands() {
+        if let data = try? JSONEncoder().encode(savedRunCommands) {
+            runCommandDefaults.set(data, forKey: Self.savedRunCommandsKey)
+        }
+    }
+
+    @discardableResult
+    public func saveRunCommand(name: String, command: String, shortcut: String = "",
+                               inTerminal: Bool = false) -> Bool {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !body.isEmpty,
+              !savedRunCommands.contains(where: { $0.name == title }) else { return false }
+        savedRunCommands.append(NppSavedRunCommand(name: title, command: body,
+                                                   shortcut: shortcut, inTerminal: inTerminal))
+        persistSavedRunCommands()
+        return true
+    }
+
+    public func updateRunCommand(id: UUID, name: String, shortcut: String) -> Bool {
+        guard let index = savedRunCommands.firstIndex(where: { $0.id == id }) else { return false }
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              !savedRunCommands.contains(where: { $0.id != id && $0.name == title }) else { return false }
+        savedRunCommands[index].name = title
+        savedRunCommands[index].shortcut = shortcut
+        persistSavedRunCommands()
+        return true
+    }
+
+    public func deleteRunCommand(id: UUID) {
+        savedRunCommands.removeAll { $0.id == id }
+        persistSavedRunCommands()
+    }
+
+    private static var userDefinedLanguagesDirectory: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return support.appendingPathComponent("NotepadPlusPlusMac", isDirectory: true)
+    }
+
+    private static let excludedSeparateUDLKey = "npp.excludedSeparateUDLNames.v1"
+
+    public func excludeSeparateUserDefinedLanguage(named name: String) {
+        var excluded = Set(UserDefaults.standard.stringArray(forKey: Self.excludedSeparateUDLKey) ?? [])
+        excluded.insert(name)
+        UserDefaults.standard.set(excluded.sorted(), forKey: Self.excludedSeparateUDLKey)
+    }
+
+    public func includeSeparateUserDefinedLanguage(named name: String) {
+        var excluded = Set(UserDefaults.standard.stringArray(forKey: Self.excludedSeparateUDLKey) ?? [])
+        excluded.remove(name)
+        UserDefaults.standard.set(excluded.sorted(), forKey: Self.excludedSeparateUDLKey)
+    }
+
+    public func loadUserDefinedLanguages(from storageDirectory: URL? = nil) {
+        let directory = storageDirectory ?? Self.userDefinedLanguagesDirectory
+        var loaded: [NppUserDefineLanguage] = []
+        let mainFile = directory.appendingPathComponent("userDefineLang.xml")
+        if let data = try? Data(contentsOf: mainFile), let languages = try? NppUDLCodec.decode(data) {
+            loaded.append(contentsOf: languages)
+        }
+        let separateDirectory = directory.appendingPathComponent("userDefineLangs", isDirectory: true)
+        let excluded = Set(UserDefaults.standard.stringArray(forKey: Self.excludedSeparateUDLKey) ?? [])
+        if let files = try? FileManager.default.contentsOfDirectory(at: separateDirectory,
+                                                                    includingPropertiesForKeys: nil,
+                                                                    options: [.skipsHiddenFiles]) {
+            for file in files where file.pathExtension.lowercased() == "xml" {
+                if let data = try? Data(contentsOf: file), let languages = try? NppUDLCodec.decode(data) {
+                    loaded.append(contentsOf: languages.filter { candidate in
+                        !excluded.contains(candidate.name) && !loaded.contains { $0.name == candidate.name }
+                    })
+                }
+            }
+        }
+        userDefinedLanguages = loaded
+    }
+
+    public func saveUserDefinedLanguages(to storageDirectory: URL? = nil) {
+        let directory = storageDirectory ?? Self.userDefinedLanguagesDirectory
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let data = try NppUDLCodec.encode(userDefinedLanguages)
+            try data.write(to: directory.appendingPathComponent("userDefineLang.xml"), options: .atomic)
+        } catch {
+            NSLog("Failed to save user defined languages: %@", error.localizedDescription)
+        }
+        if let document = activeDocument,
+           let language = userDefinedLanguage(named: document.language),
+           let textView = activeTextView, let storage = textView.textStorage {
+            NppSyntaxHighlighter.highlight(textStorage: storage, language: document.language,
+                                           isDarkMode: currentTheme.isDark,
+                                           baseFont: textView.font, theme: currentTheme,
+                                           userDefinedLanguage: language)
+        }
+    }
+
+    public func userDefinedLanguage(for url: URL) -> NppUserDefineLanguage? {
+        let fileExtension = url.pathExtension.lowercased()
+        guard !fileExtension.isEmpty else { return nil }
+        return userDefinedLanguages.first { language in
+            language.extensions.split(whereSeparator: { $0.isWhitespace })
+                .contains { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased() == fileExtension }
+        }
+    }
+
+    public func userDefinedLanguage(named name: String) -> NppUserDefineLanguage? {
+        userDefinedLanguages.first { $0.name == name }
     }
 
     public func newDocument() {
@@ -983,15 +1160,25 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func openFile(url: URL) {
+        let configuredSessionExtension = sessionFileExt.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+        if !isLoadingSession && !configuredSessionExtension.isEmpty &&
+            url.pathExtension.lowercased() == configuredSessionExtension {
+            _ = loadSession(from: url)
+            return
+        }
         addRecentFile(url)
         // If already open, just switch to it
         if let existing = documents.first(where: { $0.filePath == url }) {
+            if existing.isSessionPlaceholder && FileManager.default.fileExists(atPath: url.path) {
+                reloadFromDisk(for: existing)
+            }
             activeDocumentId = existing.id
             return
         }
 
         do {
             let doc = try NppDocument.fromFile(url: url)
+            if let udl = userDefinedLanguage(for: url) { doc.language = udl.name }
             // If only single untitled document is open and empty, replace it
             if documents.count == 1 && documents[0].filePath == nil && documents[0].content.isEmpty && !documents[0].isDirty {
                 documents = [doc]
@@ -1016,14 +1203,155 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
-    public func closeDocument(id: UUID) {
-        guard let index = documents.firstIndex(where: { $0.id == id }) else { return }
-        // Authentic Notepad++ (Notepad_plus.cpp L5165): Pinned tab cannot be closed
-        if documents[index].isPinned {
-            NSSound.beep()
-            return
+    // MARK: - Save Confirmation & Dual View State
+    public enum SavePromptResult: String, Codable {
+        case save
+        case dontSave
+        case cancel
+    }
+
+    public var isTestRunning: Bool = false
+    public var confirmSaveHandler: ((NppDocument) -> SavePromptResult)? = nil
+
+    public enum SplitDirection: String, Codable {
+        case vertical   // Left / Right
+        case horizontal // Top / Bottom
+    }
+
+    @Published public var secondaryDocumentIds: [UUID] = []
+    @Published public var secondaryActiveDocumentId: UUID? = nil
+    @Published public var splitDirection: SplitDirection = .vertical
+    @Published public var splitRatio: CGFloat = 0.5
+    @Published public var clonedDocumentIds: Set<UUID> = []
+    @Published public var activeView: Int = 0 // 0: Primary, 1: Secondary
+
+    public var isDualView: Bool {
+        return !secondaryDocumentIds.isEmpty
+    }
+
+    public var primaryDocuments: [NppDocument] {
+        return documents.filter { doc in
+            !secondaryDocumentIds.contains(doc.id) || clonedDocumentIds.contains(doc.id)
         }
-        if let path = documents[index].filePath {
+    }
+
+    public var secondaryDocuments: [NppDocument] {
+        return secondaryDocumentIds.compactMap { id in
+            documents.first(where: { $0.id == id })
+        }
+    }
+
+    public var secondaryActiveDocument: NppDocument? {
+        guard !secondaryDocuments.isEmpty else { return nil }
+        if let id = secondaryActiveDocumentId, let doc = secondaryDocuments.first(where: { $0.id == id }) {
+            return doc
+        }
+        return secondaryDocuments.first
+    }
+
+    public func confirmSaveIfNeeded(for doc: NppDocument) -> SavePromptResult {
+        guard doc.isDirty else { return .dontSave }
+        if let handler = confirmSaveHandler {
+            return handler(doc)
+        }
+        if isTestRunning || CommandLine.arguments.contains("--run-tests") {
+            return .dontSave
+        }
+        let alert = NSAlert()
+        alert.messageText = "Save"
+        alert.informativeText = "Save file \"\(doc.title)\" ?"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: tr("Save"))
+        alert.addButton(withTitle: tr("Don't Save"))
+        alert.addButton(withTitle: tr("Cancel"))
+
+        let res = alert.runModal()
+        switch res {
+        case .alertFirstButtonReturn:
+            return .save
+        case .alertSecondButtonReturn:
+            return .dontSave
+        default:
+            return .cancel
+        }
+    }
+
+    public func promptSaveSynchronously(for doc: NppDocument) -> Bool {
+        if doc.filePath != nil {
+            return doc.save()
+        } else {
+            let panel = NSSavePanel()
+            panel.title = tr("Save")
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = doc.title
+            let res = panel.runModal()
+            if res == .OK, let url = panel.url {
+                guard doc.save(to: url) else { return false }
+                if let language = userDefinedLanguage(for: url) { doc.language = language.name }
+                return true
+            } else {
+                return false
+            }
+        }
+    }
+
+    @discardableResult
+    public func closeDocument(id: UUID, force: Bool = false) -> Bool {
+        guard let index = documents.firstIndex(where: { $0.id == id }) else { return true }
+        let doc = documents[index]
+        // Authentic Notepad++ (Notepad_plus.cpp L5165): Pinned tab cannot be closed
+        if doc.isPinned {
+            NSSound.beep()
+            return false
+        }
+
+        if !force && doc.isDirty {
+            let choice = confirmSaveIfNeeded(for: doc)
+            switch choice {
+            case .save:
+                if !promptSaveSynchronously(for: doc) {
+                    return false
+                }
+            case .dontSave:
+                break
+            case .cancel:
+                return false
+            }
+        }
+
+        // Dual View handling
+        if clonedDocumentIds.contains(id) {
+            if activeView == 1 || (secondaryActiveDocumentId == id && activeView == 1) {
+                secondaryDocumentIds.removeAll(where: { $0 == id })
+                clonedDocumentIds.remove(id)
+                if secondaryActiveDocumentId == id {
+                    secondaryActiveDocumentId = secondaryDocumentIds.first
+                }
+                if secondaryDocumentIds.isEmpty {
+                    activeView = 0
+                }
+                objectWillChange.send()
+                return true
+            } else if secondaryDocumentIds.contains(id) {
+                clonedDocumentIds.remove(id)
+                if activeDocumentId == id {
+                    activeDocumentId = primaryDocuments.first(where: { $0.id != id })?.id
+                }
+                objectWillChange.send()
+                return true
+            }
+        }
+
+        secondaryDocumentIds.removeAll(where: { $0 == id })
+        clonedDocumentIds.remove(id)
+        if secondaryActiveDocumentId == id {
+            secondaryActiveDocumentId = secondaryDocumentIds.first
+        }
+        if secondaryDocumentIds.isEmpty {
+            activeView = 0
+        }
+
+        if let path = doc.filePath {
             closedFilePaths.removeAll(where: { $0.path == path.path })
             closedFilePaths.append(path)
             addRecentFile(path)
@@ -1039,7 +1367,7 @@ public final class NppWorkspace: ObservableObject {
             fallbackIndex = -1
         }
 
-        stopMonitoring(document: documents[index])
+        stopMonitoring(document: doc)
         documents.remove(at: index)
 
         if documents.isEmpty {
@@ -1048,25 +1376,25 @@ public final class NppWorkspace: ObservableObject {
             let safeIndex = max(0, min(fallbackIndex, documents.count - 1))
             activeDocumentId = documents[safeIndex].id
         }
+        objectWillChange.send()
+        return true
     }
 
-    public func closeAll() {
+    @discardableResult
+    public func closeAll(force: Bool = false) -> Bool {
         // Authentic Notepad++: Pinned documents remain open
-        let pinned = documents.filter { $0.isPinned }
-        if pinned.isEmpty {
-            documents.removeAll()
-            newDocCounter = 1
-            newDocument()
-        } else {
-            documents = pinned
-            if !documents.contains(where: { $0.id == activeDocumentId }) {
-                activeDocumentId = documents.first?.id
+        let unpinned = documents.filter { !$0.isPinned }
+        for doc in unpinned {
+            if !closeDocument(id: doc.id, force: force) {
+                return false
             }
         }
+        return true
     }
 
-    public func closeAllDocuments() {
-        closeAll()
+    @discardableResult
+    public func closeAllDocuments(force: Bool = false) -> Bool {
+        return closeAll(force: force)
     }
 
     // Notepad++ Tab Pinning (Buffer::isPinned & TabBar.cpp)
@@ -1080,48 +1408,122 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // Notepad++ Tab Context Menu: Close Multiple Documents (Notepad_plus.rc & NppIO.cpp)
-    public func closeAllBut(id: UUID) {
+    @discardableResult
+    public func closeAllBut(id: UUID, force: Bool = false) -> Bool {
         // IDM_FILE_CLOSEALL_BUT_CURRENT: Closes all documents except target and pinned documents
-        documents.removeAll(where: { $0.id != id && !$0.isPinned })
-        ensureValidActiveDocument(fallbackId: id)
-    }
-
-    public func closeAllButPinned() {
-        // IDM_FILE_CLOSEALL_BUT_PINNED: Closes all unpinned documents
-        documents.removeAll(where: { !$0.isPinned })
-        ensureValidActiveDocument()
-    }
-
-    public func closeAllToLeft(of id: UUID) {
-        guard let index = documents.firstIndex(where: { $0.id == id }) else { return }
-        // IDM_FILE_CLOSEALL_TOLEFT: Skips pinned tabs
-        let leftDocs = documents[0..<index]
-        let toRemove = Set(leftDocs.filter { !$0.isPinned }.map { $0.id })
-        documents.removeAll(where: { toRemove.contains($0.id) })
-        ensureValidActiveDocument(fallbackId: id)
-    }
-
-    public func closeAllToRight(of id: UUID) {
-        guard let index = documents.firstIndex(where: { $0.id == id }) else { return }
-        // IDM_FILE_CLOSEALL_TORIGHT: Skips pinned tabs
-        if index + 1 < documents.count {
-            let rightDocs = documents[(index + 1)..<documents.count]
-            let toRemove = Set(rightDocs.filter { !$0.isPinned }.map { $0.id })
-            documents.removeAll(where: { toRemove.contains($0.id) })
+        let targets = documents.filter { $0.id != id && !$0.isPinned }
+        for doc in targets {
+            if !closeDocument(id: doc.id, force: force) {
+                return false
+            }
         }
         ensureValidActiveDocument(fallbackId: id)
+        return true
+    }
+
+    @discardableResult
+    public func closeAllButPinned(force: Bool = false) -> Bool {
+        // IDM_FILE_CLOSEALL_BUT_PINNED: Closes all unpinned documents
+        return closeAll(force: force)
+    }
+
+    @discardableResult
+    public func closeAllToLeft(of id: UUID, force: Bool = false) -> Bool {
+        guard let index = documents.firstIndex(where: { $0.id == id }) else { return false }
+        // IDM_FILE_CLOSEALL_TOLEFT: Skips pinned tabs
+        let leftDocs = Array(documents[0..<index].filter { !$0.isPinned })
+        for doc in leftDocs {
+            if !closeDocument(id: doc.id, force: force) {
+                return false
+            }
+        }
+        ensureValidActiveDocument(fallbackId: id)
+        return true
+    }
+
+    @discardableResult
+    public func closeAllToRight(of id: UUID, force: Bool = false) -> Bool {
+        guard let index = documents.firstIndex(where: { $0.id == id }) else { return false }
+        // IDM_FILE_CLOSEALL_TORIGHT: Skips pinned tabs
+        if index + 1 < documents.count {
+            let rightDocs = Array(documents[(index + 1)..<documents.count].filter { !$0.isPinned })
+            for doc in rightDocs {
+                if !closeDocument(id: doc.id, force: force) {
+                    return false
+                }
+            }
+        }
+        ensureValidActiveDocument(fallbackId: id)
+        return true
     }
 
     public func closeAllUnchanged() {
-        // IDM_FILE_CLOSEALL_UNCHANGED: Closes all clean documents except pinned
-        let retained = documents.filter { $0.isDirty || $0.isPinned }
-        if retained.isEmpty {
-            newDocument()
-            documents = [documents.last!]
+        let unchanged = documents.filter { !$0.isDirty && !$0.isPinned }
+        for doc in unchanged { _ = closeDocument(id: doc.id, force: true) }
+    }
+
+    // MARK: - Dual View Operations (IDM_VIEW_GOTO_ANOTHER_VIEW, IDM_VIEW_CLONE_TO_ANOTHER_VIEW)
+    public func moveToOtherView(id: UUID) {
+        if secondaryDocumentIds.contains(id) {
+            // Move from Secondary to Primary
+            secondaryDocumentIds.removeAll(where: { $0 == id })
+            clonedDocumentIds.remove(id)
+            if secondaryActiveDocumentId == id {
+                secondaryActiveDocumentId = secondaryDocumentIds.first
+            }
+            activeDocumentId = id
+            activeView = 0
         } else {
-            documents = retained
-            ensureValidActiveDocument()
+            // Move from Primary to Secondary
+            secondaryDocumentIds.append(id)
+            clonedDocumentIds.remove(id)
+            secondaryActiveDocumentId = id
+            activeView = 1
+            if activeDocumentId == id {
+                activeDocumentId = primaryDocuments.first?.id
+                if activeDocumentId == nil {
+                    newDocument()
+                }
+            }
         }
+        objectWillChange.send()
+    }
+
+    public func cloneToOtherView(id: UUID) {
+        clonedDocumentIds.insert(id)
+        if !secondaryDocumentIds.contains(id) {
+            secondaryDocumentIds.append(id)
+            secondaryActiveDocumentId = id
+            activeView = 1
+        } else {
+            activeDocumentId = id
+            activeView = 0
+        }
+        objectWillChange.send()
+    }
+
+    public func rotateSplitter(direction: Int = 1) {
+        splitDirection = (splitDirection == .vertical ? .horizontal : .vertical)
+        objectWillChange.send()
+    }
+
+    public func rotateSplitterLeft() {
+        rotateSplitter(direction: -1)
+    }
+
+    public func rotateSplitterRight() {
+        rotateSplitter(direction: 1)
+    }
+
+    public func newDocumentInSecondaryView() {
+        newDocCounter += 1
+        let title = "new \(newDocCounter)"
+        let newDoc = NppDocument(title: title, content: "")
+        documents.append(newDoc)
+        secondaryDocumentIds.append(newDoc.id)
+        secondaryActiveDocumentId = newDoc.id
+        activeView = 1
+        objectWillChange.send()
     }
 
     private func ensureValidActiveDocument(fallbackId: UUID? = nil) {
@@ -1139,6 +1541,7 @@ public final class NppWorkspace: ObservableObject {
         guard let url = doc.filePath else { return }
         do {
             let reloaded = try NppDocument.fromFile(url: url)
+            let wasPlaceholder = doc.isSessionPlaceholder
             doc.content = reloaded.content
             doc.encoding = reloaded.encoding
             doc.hasBOM = reloaded.hasBOM
@@ -1146,6 +1549,8 @@ public final class NppWorkspace: ObservableObject {
             doc.rawFileBytes = reloaded.rawFileBytes
             doc.lastKnownModificationDate = reloaded.lastKnownModificationDate
             doc.isDirty = false
+            doc.isSessionPlaceholder = false
+            if wasPlaceholder { doc.isReadOnly = false }
             doc.clearBookmarks()
             doc.styledTokenRanges.removeAll()
             objectWillChange.send()
@@ -1156,8 +1561,42 @@ public final class NppWorkspace: ObservableObject {
 
     // MARK: - File Status Auto-Detection
     public func checkFileStatus(for doc: NppDocument, prompt: Bool = true) -> Bool {
-        guard fileStatusAutoDetection, let path = doc.filePath?.path else { return false }
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+        guard fileStatusAutoDetection, let url = doc.filePath else { return false }
+        let path = url.path
+        let fileManager = FileManager.default
+
+        if !fileManager.fileExists(atPath: path) {
+            if prompt {
+                let alert = NSAlert()
+                alert.messageText = "\(doc.title)"
+                alert.informativeText = "The file \"\(url.lastPathComponent)\" doesn't exist anymore.\n\nKeep this file in editor?"
+                alert.addButton(withTitle: "Yes")
+                alert.addButton(withTitle: "No")
+                alert.alertStyle = .warning
+                let res = alert.runModal()
+                if res == .alertSecondButtonReturn {
+                    _ = closeDocument(id: doc.id, force: true)
+                    return true
+                }
+            }
+            return false
+        }
+
+        if doc.isSessionPlaceholder {
+            if !prompt { return false }
+            let alert = NSAlert()
+            alert.messageText = doc.title
+            alert.informativeText = tr("The file is available again. Reload it?")
+            alert.addButton(withTitle: tr("Yes"))
+            alert.addButton(withTitle: tr("No"))
+            if alert.runModal() == .alertFirstButtonReturn {
+                reloadFromDisk(for: doc)
+                return true
+            }
+            return false
+        }
+
+        guard let attrs = try? fileManager.attributesOfItem(atPath: path),
               let diskDate = attrs[.modificationDate] as? Date else { return false }
 
         guard let knownDate = doc.lastKnownModificationDate else {
@@ -1167,23 +1606,38 @@ public final class NppWorkspace: ObservableObject {
 
         // If file modification time is newer by more than 1 second
         if diskDate.timeIntervalSince(knownDate) > 1.0 {
-            if fileStatusAutoReloadSilently {
+            if fileStatusAutoReloadSilently && !doc.isDirty {
                 reloadFromDisk(for: doc)
                 return true
             } else if prompt {
                 let alert = NSAlert()
                 alert.messageText = "\(doc.title)"
-                alert.informativeText = "This file has been modified by another program.\n\nDo you want to reload it and lose the changes made in Notepad++?"
-                alert.addButton(withTitle: "Yes")
-                alert.addButton(withTitle: "No")
-                alert.alertStyle = .warning
-                let res = alert.runModal()
-                if res == .alertFirstButtonReturn {
-                    reloadFromDisk(for: doc)
-                    return true
+                if doc.isDirty {
+                    alert.informativeText = "\(doc.title) has been modified by another program.\n\nDo you want to reload it and lose the changes made in Notepad++?"
+                    alert.addButton(withTitle: "No")
+                    alert.addButton(withTitle: "Yes")
+                    alert.alertStyle = .warning
+                    let res = alert.runModal()
+                    if res == .alertSecondButtonReturn {
+                        reloadFromDisk(for: doc)
+                        return true
+                    } else {
+                        doc.lastKnownModificationDate = diskDate
+                        return false
+                    }
                 } else {
-                    doc.lastKnownModificationDate = diskDate
-                    return false
+                    alert.informativeText = "\(doc.title) has been modified by another program.\n\nDo you want to reload it?"
+                    alert.addButton(withTitle: "Yes")
+                    alert.addButton(withTitle: "No")
+                    alert.alertStyle = .informational
+                    let res = alert.runModal()
+                    if res == .alertFirstButtonReturn {
+                        reloadFromDisk(for: doc)
+                        return true
+                    } else {
+                        doc.lastKnownModificationDate = diskDate
+                        return false
+                    }
                 }
             }
         }
@@ -1203,7 +1657,8 @@ public final class NppWorkspace: ObservableObject {
         let fileDir = doc.filePath?.deletingLastPathComponent().path ?? FileManager.default.currentDirectoryPath
         let fileName = doc.filePath?.lastPathComponent ?? doc.title
         let namePart = (fileName as NSString).deletingPathExtension
-        let extPart = doc.filePath?.pathExtension ?? (fileName as NSString).pathExtension
+        let fileExtension = doc.filePath?.pathExtension ?? (fileName as NSString).pathExtension
+        let extPart = fileExtension.isEmpty ? "" : ".\(fileExtension)"
 
         let nppFullFilePath = Bundle.main.executablePath ?? CommandLine.arguments.first ?? ""
         let nppDirectory = (nppFullFilePath as NSString).deletingLastPathComponent
@@ -1212,12 +1667,15 @@ public final class NppWorkspace: ObservableObject {
         let currentCol = "\(doc.cursorCol)"
 
         let nsContent = doc.content as NSString
-        let safePos = min(doc.cursorPos, nsContent.length)
+        let safePos = max(0, min(doc.cursorPos, nsContent.length))
         let lineRange = nsContent.lineRange(for: NSRange(location: safePos, length: 0))
         let currentLineStr = nsContent.substring(with: lineRange).trimmingCharacters(in: .newlines)
 
+        let selectionLength = max(0, min(doc.selectionLength, nsContent.length - safePos))
         let wordRange = NppEditOperations.getWordRange(at: safePos, in: nsContent)
-        let currentWord = wordRange.length > 0 ? nsContent.substring(with: wordRange) : ""
+        let currentWord = selectionLength > 0
+            ? nsContent.substring(with: NSRange(location: safePos, length: selectionLength))
+            : (wordRange.length > 0 ? nsContent.substring(with: wordRange) : "")
 
         var cmd = rawCmd
         cmd = cmd.replacingOccurrences(of: "$(FULL_CURRENT_PATH)", with: filePath)
@@ -1237,7 +1695,14 @@ public final class NppWorkspace: ObservableObject {
 
     public func executeRunCommand(_ rawCmd: String, inTerminal: Bool = true) {
         lastRunCommand = rawCmd
+        runCommandHistory.removeAll { $0 == rawCmd }
+        runCommandHistory.insert(rawCmd, at: 0)
+        if runCommandHistory.count > 20 { runCommandHistory.removeLast() }
         let expanded = expandRunCommand(rawCmd)
+        if let url = URL(string: expanded), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            NSWorkspace.shared.open(url)
+            return
+        }
         let workDir = activeDocument?.filePath?.deletingLastPathComponent().path ?? FileManager.default.currentDirectoryPath
 
         if inTerminal {
@@ -1307,7 +1772,7 @@ public final class NppWorkspace: ObservableObject {
             pattern = "\\b" + pattern + "\\b"
         }
 
-        var regexOptions: NSRegularExpression.Options = []
+        var regexOptions: NSRegularExpression.Options = [.anchorsMatchLines]
         if !matchCase {
             regexOptions.insert(.caseInsensitive)
         }
@@ -1345,6 +1810,50 @@ public final class NppWorkspace: ObservableObject {
         return results
     }
 
+    public static func normalizeRegexReplacementTemplate(_ input: String) -> String {
+        var result = ""
+        var i = input.startIndex
+        while i < input.endIndex {
+            let ch = input[i]
+            if ch == "\\" {
+                let nextIndex = input.index(after: i)
+                if nextIndex < input.endIndex {
+                    let nextCh = input[nextIndex]
+                    if nextCh >= "0" && nextCh <= "9" {
+                        result.append("$")
+                        result.append(nextCh)
+                        i = input.index(after: nextIndex)
+                        continue
+                    } else if nextCh == "\\" {
+                        result.append("\\\\")
+                        i = input.index(after: nextIndex)
+                        continue
+                    } else if nextCh == "g" {
+                        let rem = input[nextIndex...]
+                        if let match = rem.range(of: #"^g[<{](\d+)[>}]"#, options: .regularExpression) {
+                            let numStr = rem[match].filter { $0.isNumber }
+                            result.append("$\(numStr)")
+                            i = match.upperBound
+                            continue
+                        }
+                    }
+                    result.append("\\")
+                    result.append(nextCh)
+                    i = input.index(after: nextIndex)
+                    continue
+                } else {
+                    result.append("\\")
+                    i = nextIndex
+                    continue
+                }
+            } else {
+                result.append(ch)
+                i = input.index(after: i)
+            }
+        }
+        return result
+    }
+
     public func jumpToMatch(_ match: NppSearchMatch) {
         if documents.contains(where: { $0.id == match.documentId }) {
             activeDocumentId = match.documentId
@@ -1367,16 +1876,17 @@ public final class NppWorkspace: ObservableObject {
             doc.cursorPos = match.charPosition
             doc.selectionLength = match.matchLength
             doc.cursorLine = match.lineNumber
+            doc.cursorCol = match.matchRangeInLine.location + 1
             if let tv = activeTextView {
-                if tv.string != doc.content {
-                    syncDocumentToTextView(doc: doc, tv: tv)
+                let isBoundToDoc = (tv.string == doc.content)
+                if isBoundToDoc {
+                    let maxLen = (tv.string as NSString).length
+                    let safeLoc = min(max(0, match.charPosition), maxLen)
+                    let safeLen = min(max(0, match.matchLength), max(0, maxLen - safeLoc))
+                    let range = NSRange(location: safeLoc, length: safeLen)
+                    tv.setSelectedRange(range)
+                    tv.scrollRangeToVisible(range)
                 }
-                let maxLen = (tv.string as NSString).length
-                let safeLoc = min(max(0, match.charPosition), maxLen)
-                let safeLen = min(max(0, match.matchLength), max(0, maxLen - safeLoc))
-                let range = NSRange(location: safeLoc, length: safeLen)
-                tv.setSelectedRange(range)
-                tv.scrollRangeToVisible(range)
             }
         }
     }
@@ -1629,13 +2139,17 @@ public final class NppWorkspace: ObservableObject {
 
     public func jumpToLine(_ line: Int) {
         guard let doc = activeDocument, let tv = activeTextView else { return }
+        let text = (tv.string.isEmpty ? doc.content : tv.string) as NSString
         let lines = doc.content.nppLines()
-        let targetLine = max(1, min(line, lines.count))
+        let targetLine = max(1, min(line, max(1, lines.count)))
+        var curLine = 1
         var charPos = 0
-        for i in 0..<(targetLine - 1) {
-            charPos += (lines[i] as NSString).length + doc.eolFormat.characters.count
+        while curLine < targetLine && charPos < text.length {
+            let lRange = text.lineRange(for: NSRange(location: charPos, length: 0))
+            charPos = NSMaxRange(lRange)
+            curLine += 1
         }
-        let targetRange = NSRange(location: min(charPos, (doc.content as NSString).length), length: 0)
+        let targetRange = NSRange(location: min(charPos, text.length), length: 0)
         tv.setSelectedRange(targetRange)
         tv.scrollRangeToVisible(targetRange)
         doc.cursorLine = targetLine
@@ -1734,7 +2248,7 @@ public final class NppWorkspace: ObservableObject {
         }
 
         var groups: [NppSearchFileGroup] = []
-        for fileUrl in targetFiles.prefix(200) {
+        for fileUrl in targetFiles {
             if let openDoc = documents.first(where: { $0.filePath?.standardizedFileURL.path == fileUrl.standardizedFileURL.path }) {
                 let matches = searchInDocument(doc: openDoc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
                 if !matches.isEmpty {
@@ -1794,19 +2308,19 @@ public final class NppWorkspace: ObservableObject {
         if wholeWord {
             pattern = "\\b" + pattern + "\\b"
         }
-        var regexOptions: NSRegularExpression.Options = []
+        var regexOptions: NSRegularExpression.Options = [.anchorsMatchLines]
         if !matchCase {
             regexOptions.insert(.caseInsensitive)
         }
         guard let regex = try? NSRegularExpression(pattern: pattern, options: regexOptions) else {
             return (0, 0)
         }
-        let template = useRegex ? replacement : NSRegularExpression.escapedTemplate(for: replacement)
+        let template = useRegex ? NppWorkspace.normalizeRegexReplacementTemplate(replacement) : NSRegularExpression.escapedTemplate(for: replacement)
 
         var totalReplacements = 0
         var filesModified = 0
 
-        for fileUrl in targetFiles.prefix(200) {
+        for fileUrl in targetFiles {
             guard let content = (try? String(contentsOf: fileUrl, encoding: .utf8)) ?? (try? String(contentsOf: fileUrl, encoding: .ascii)) else {
                 continue
             }
@@ -1980,27 +2494,47 @@ public final class NppWorkspace: ObservableObject {
         let str = tv.string as NSString
         let sel = tv.selectedRange()
 
-        let selLineRange = str.lineRange(for: sel)
-        var lineRanges: [NSRange] = []
-        str.enumerateSubstrings(in: selLineRange, options: [.byLines, .substringNotRequired]) { _, subRange, _, _ in
-            lineRanges.append(subRange)
-        }
-        if lineRanges.isEmpty {
-            lineRanges.append(selLineRange)
-        }
+        var lineInfo: [(lineRange: NSRange, colOffset: Int, replaceLength: Int)] = []
 
-        let firstLineRange = str.lineRange(for: NSRange(location: sel.location, length: 0))
-        let colOffset = sel.location - firstLineRange.location
+        if tv.selectedRanges.count > 1 {
+            for val in tv.selectedRanges {
+                let r = val.rangeValue
+                let lRange = str.lineRange(for: NSRange(location: r.location, length: 0))
+                let col = r.location - lRange.location
+                lineInfo.append((lRange, col, r.length))
+            }
+        } else if sel.length == 0 {
+            // Caret with 0 length: iterate from cursor line all the way to EOF (columnEditor.cpp:216-268)
+            let firstLineRange = str.lineRange(for: NSRange(location: sel.location, length: 0))
+            let colOffset = sel.location - firstLineRange.location
+            let spanRange = NSRange(location: firstLineRange.location, length: str.length - firstLineRange.location)
+            str.enumerateSubstrings(in: spanRange, options: [.byLines, .substringNotRequired]) { _, subRange, _, _ in
+                lineInfo.append((subRange, colOffset, 0))
+            }
+            if lineInfo.isEmpty {
+                lineInfo.append((firstLineRange, colOffset, 0))
+            }
+        } else {
+            let firstLineRange = str.lineRange(for: NSRange(location: sel.location, length: 0))
+            let colOffset = sel.location - firstLineRange.location
+            let selLineRange = str.lineRange(for: sel)
+            str.enumerateSubstrings(in: selLineRange, options: [.byLines, .substringNotRequired]) { _, subRange, _, _ in
+                lineInfo.append((subRange, colOffset, 0))
+            }
+            if lineInfo.isEmpty {
+                lineInfo.append((selLineRange, colOffset, 0))
+            }
+        }
 
         var insertStrings: [String] = []
         if isText {
-            insertStrings = Array(repeating: text, count: lineRanges.count)
+            insertStrings = Array(repeating: text, count: lineInfo.count)
         } else {
             var rawNumbers: [Int] = []
             var currentNum = initialNumber
             var currentRepeat = 0
             let effectiveRepeat = max(1, repeatCount)
-            for _ in 0..<lineRanges.count {
+            for _ in 0..<lineInfo.count {
                 rawNumbers.append(currentNum)
                 currentRepeat += 1
                 if currentRepeat >= effectiveRepeat {
@@ -2038,19 +2572,48 @@ public final class NppWorkspace: ObservableObject {
         }
 
         var modifiedText = tv.string
-        for (i, lineRange) in lineRanges.enumerated().reversed() {
-            let lineStr = (str as NSString).substring(with: lineRange)
-            let insertPos = lineRange.location + min(colOffset, (lineStr as NSString).length)
-            let insertString = insertStrings[i]
+        for (i, info) in lineInfo.enumerated().reversed() {
+            let lineStr = (str as NSString).substring(with: info.lineRange)
+            var cleanLineLen = lineStr.count
+            if lineStr.hasSuffix("\r\n") { cleanLineLen -= 2 }
+            else if lineStr.hasSuffix("\n") || lineStr.hasSuffix("\r") { cleanLineLen -= 1 }
+
+            let col = info.colOffset
+            let insertPos: Int
+            let replaceLen: Int
+            let finalInsert: String
+
+            if cleanLineLen < col {
+                // Short line: pad with spaces up to colOffset (columnEditor.cpp:250-254)
+                let padding = String(repeating: " ", count: col - cleanLineLen)
+                insertPos = info.lineRange.location + cleanLineLen
+                replaceLen = 0
+                finalInsert = padding + insertStrings[i]
+            } else {
+                insertPos = info.lineRange.location + col
+                replaceLen = min(info.replaceLength, cleanLineLen - col)
+                finalInsert = insertStrings[i]
+            }
 
             let nsMod = modifiedText as NSString
-            modifiedText = nsMod.replacingCharacters(in: NSRange(location: insertPos, length: 0), with: insertString)
+            modifiedText = nsMod.replacingCharacters(in: NSRange(location: insertPos, length: replaceLen), with: finalInsert)
         }
 
-        tv.string = modifiedText
-        doc.content = modifiedText
-        doc.isDirty = true
-        objectWillChange.send()
+        let fullRange = NSRange(location: 0, length: str.length)
+        if tv.shouldChangeText(in: fullRange, replacementString: modifiedText) {
+            tv.undoManager?.beginUndoGrouping()
+            tv.replaceCharacters(in: fullRange, with: modifiedText)
+            tv.didChangeText()
+            tv.undoManager?.endUndoGrouping()
+            doc.content = tv.string
+            doc.isDirty = true
+            objectWillChange.send()
+        } else {
+            tv.string = modifiedText
+            doc.content = modifiedText
+            doc.isDirty = true
+            objectWillChange.send()
+        }
     }
 
     public func saveActive() {
@@ -2078,7 +2641,9 @@ public final class NppWorkspace: ObservableObject {
         panel.nameFieldStringValue = doc.filePath?.lastPathComponent ?? doc.title
         panel.begin { response in
             if response == .OK, let url = panel.url {
-                _ = doc.save(to: url)
+                if doc.save(to: url), let language = self.userDefinedLanguage(for: url) {
+                    doc.language = language.name
+                }
             }
         }
     }
@@ -2106,21 +2671,7 @@ public final class NppWorkspace: ObservableObject {
 
         if let currentURL = doc.filePath {
             let newURL = currentURL.deletingLastPathComponent().appendingPathComponent(trimmed)
-            if newURL.path == currentURL.path {
-                return true
-            }
-            do {
-                try FileManager.default.moveItem(at: currentURL, to: newURL)
-                doc.filePath = newURL
-                doc.title = newURL.lastPathComponent
-                doc.language = NppDocument.detectLanguage(for: newURL)
-                addRecentFile(newURL)
-                objectWillChange.send()
-                return true
-            } catch {
-                print("Failed to rename file on disk: \(error)")
-                return false
-            }
+            return renameDocument(id: id, to: newURL)
         } else {
             doc.title = trimmed
             let fakeURL = URL(fileURLWithPath: "/tmp/\(trimmed)")
@@ -2129,6 +2680,28 @@ public final class NppWorkspace: ObservableObject {
             }
             objectWillChange.send()
             return true
+        }
+    }
+
+    @discardableResult
+    public func renameDocument(id: UUID, to newURL: URL) -> Bool {
+        guard let doc = documents.first(where: { $0.id == id }),
+              let currentURL = doc.filePath else { return false }
+        if newURL.path == currentURL.path { return true }
+        guard !FileManager.default.fileExists(atPath: newURL.path) else { return false }
+        do {
+            try FileManager.default.moveItem(at: currentURL, to: newURL)
+            doc.filePath = newURL
+            doc.title = newURL.lastPathComponent
+            doc.language = userDefinedLanguage(for: newURL)?.name ?? NppDocument.detectLanguage(for: newURL)
+            recentFiles.removeAll { $0.path == currentURL.path }
+            closedFilePaths.removeAll { $0.path == currentURL.path }
+            addRecentFile(newURL)
+            objectWillChange.send()
+            return true
+        } catch {
+            NSLog("Failed to rename file on disk: %@", error.localizedDescription)
+            return false
         }
     }
 
@@ -2141,13 +2714,12 @@ public final class NppWorkspace: ObservableObject {
             panel.directoryURL = currentURL.deletingLastPathComponent()
             panel.nameFieldStringValue = currentURL.lastPathComponent
             if panel.runModal() == .OK, let destURL = panel.url {
-                if destURL.path != currentURL.path {
-                    try? FileManager.default.moveItem(at: currentURL, to: destURL)
-                    doc.filePath = destURL
-                    doc.title = destURL.lastPathComponent
-                    doc.language = NppDocument.detectLanguage(for: destURL)
-                    addRecentFile(destURL)
-                    objectWillChange.send()
+                if !renameDocument(id: doc.id, to: destURL) {
+                    let alert = NSAlert()
+                    alert.messageText = tr("Rename...")
+                    alert.informativeText = tr("Could not rename the file.")
+                    alert.alertStyle = .warning
+                    alert.runModal()
                 }
             }
         } else {
@@ -2168,15 +2740,36 @@ public final class NppWorkspace: ObservableObject {
     @discardableResult
     public func saveCopyAs(for doc: NppDocument, to url: URL) -> Bool {
         // IDM_FILE_SAVECOPYAS: Writes content to disk without changing the buffer's own filePath or dirty state
-        let origPath = doc.filePath
-        let origTitle = doc.title
-        let origDirty = doc.isDirty
-        let ok = doc.save(to: url)
-        doc.filePath = origPath
-        doc.title = origTitle
-        doc.isDirty = origDirty
-        objectWillChange.send()
-        return ok
+        guard let data = doc.encodedData() else { return false }
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            NSLog("Failed to save document copy: %@", error.localizedDescription)
+            return false
+        }
+    }
+
+    @discardableResult
+    public func moveActiveFileToTrash() -> Bool {
+        guard let doc = activeDocument, let url = doc.filePath, !doc.isPinned else { return false }
+        if doc.isDirty {
+            switch confirmSaveIfNeeded(for: doc) {
+            case .save:
+                guard promptSaveSynchronously(for: doc) else { return false }
+            case .dontSave:
+                break
+            case .cancel:
+                return false
+            }
+        }
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            return closeDocument(id: doc.id, force: true)
+        } catch {
+            NSLog("Failed to move file to Trash: %@", error.localizedDescription)
+            return false
+        }
     }
 
     public func promptSaveCopyAs(for targetDoc: NppDocument? = nil) {
@@ -2222,10 +2815,46 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func saveSession(to url: URL) -> Bool {
-        let paths = documents.compactMap { $0.filePath?.path }
-        guard let data = try? JSONSerialization.data(withJSONObject: paths, options: [.prettyPrinted]) else { return false }
+        func escaped(_ value: String) -> String {
+            value.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+        }
+        var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<NotepadPlus>\n"
+        xml += "    <Session activeView=\"\(activeView)\">\n"
+        let savedPrimary = primaryDocuments.filter { $0.filePath != nil }
+        let activeIdx = savedPrimary.firstIndex(where: { $0.id == activeDocumentId }) ?? 0
+        xml += "        <mainView activeIndex=\"\(activeIdx)\">\n"
+        for doc in savedPrimary {
+            guard let path = doc.filePath?.path else { continue }
+            let start = doc.cursorPos
+            let end = doc.cursorPos + doc.selectionLength
+            xml += "            <File firstVisibleLine=\"0\" xOffset=\"0\" scrollWidth=\"100\" startPos=\"\(start)\" endPos=\"\(end)\" selMode=\"0\" lang=\"\(escaped(doc.language))\" encoding=\"\(escaped(doc.encoding))\" filename=\"\(escaped(path))\">\n"
+            for bLine in doc.bookmarkedLines.sorted() {
+                xml += "                <Mark line=\"\(bLine)\" />\n"
+            }
+            xml += "            </File>\n"
+        }
+        xml += "        </mainView>\n"
+        let savedSecondary = secondaryDocuments.filter { $0.filePath != nil }
+        let subIdx = savedSecondary.firstIndex(where: { $0.id == secondaryActiveDocumentId }) ?? 0
+        xml += "        <subView activeIndex=\"\(subIdx)\">\n"
+        for doc in savedSecondary {
+            guard let path = doc.filePath?.path else { continue }
+            let start = doc.cursorPos
+            let end = doc.cursorPos + doc.selectionLength
+            xml += "            <File firstVisibleLine=\"0\" xOffset=\"0\" scrollWidth=\"100\" startPos=\"\(start)\" endPos=\"\(end)\" selMode=\"0\" lang=\"\(escaped(doc.language))\" encoding=\"\(escaped(doc.encoding))\" filename=\"\(escaped(path))\">\n"
+            for bLine in doc.bookmarkedLines.sorted() {
+                xml += "                <Mark line=\"\(bLine)\" />\n"
+            }
+            xml += "            </File>\n"
+        }
+        xml += "        </subView>\n"
+        xml += "    </Session>\n</NotepadPlus>\n"
+
         do {
-            try data.write(to: url)
+            try xml.write(to: url, atomically: true, encoding: .utf8)
             return true
         } catch {
             return false
@@ -2233,15 +2862,112 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func loadSession(from url: URL) -> Bool {
-        guard let data = try? Data(contentsOf: url),
-              let paths = try? JSONSerialization.jsonObject(with: data) as? [String] else { return false }
-        for p in paths {
-            let fileURL = URL(fileURLWithPath: p)
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                openFile(url: fileURL)
+        guard let data = try? Data(contentsOf: url) else { return false }
+        guard !isLoadingSession else { return false }
+        isLoadingSession = true
+        defer { isLoadingSession = false }
+        if let xml = try? XMLDocument(data: data),
+           let root = xml.rootElement(),
+           let session = (root.name == "Session" ? root : root.elements(forName: "Session").first) {
+            func attribute(_ element: XMLElement, _ name: String) -> String? {
+                element.attribute(forName: name)?.stringValue
             }
+            let missingFiles = ["mainView", "subView"].flatMap { viewName in
+                session.elements(forName: viewName).first?.elements(forName: "File") ?? []
+            }.compactMap { file -> URL? in
+                guard let path = attribute(file, "filename"), !path.isEmpty else { return nil }
+                let fileURL = URL(fileURLWithPath: path).standardizedFileURL
+                return FileManager.default.fileExists(atPath: fileURL.path) ? nil : fileURL
+            }
+            let keepMissing: Bool
+            if !keepAbsentFilesInSession || missingFiles.isEmpty {
+                keepMissing = false
+            } else if let decision = sessionPlaceholderDecisionHandler {
+                keepMissing = decision(missingFiles)
+            } else if isTestRunning || CommandLine.arguments.contains("--run-tests") {
+                keepMissing = true
+            } else {
+                let alert = NSAlert()
+                alert.messageText = tr("Remember inaccessible files from past session")
+                alert.informativeText = tr("Keep inaccessible files as read-only placeholders?")
+                alert.addButton(withTitle: tr("Yes"))
+                alert.addButton(withTitle: tr("No"))
+                keepMissing = alert.runModal() == .alertFirstButtonReturn
+            }
+            var loadedPrimary: [UUID] = []
+            var loadedSecondary: [UUID] = []
+            for (viewName, isSecondary) in [("mainView", false), ("subView", true)] {
+                guard let view = session.elements(forName: viewName).first else { continue }
+                for file in view.elements(forName: "File") {
+                    guard let path = attribute(file, "filename"), !path.isEmpty else { continue }
+                    let fileURL = URL(fileURLWithPath: path).standardizedFileURL
+                    if FileManager.default.fileExists(atPath: fileURL.path) {
+                        openFile(url: fileURL)
+                    } else if keepMissing {
+                        if !documents.contains(where: { $0.filePath?.standardizedFileURL == fileURL }) {
+                            let placeholder = NppDocument(title: fileURL.lastPathComponent, content: "")
+                            placeholder.filePath = fileURL
+                            placeholder.isReadOnly = true
+                            placeholder.isSessionPlaceholder = true
+                            documents.append(placeholder)
+                        }
+                    } else {
+                        continue
+                    }
+                    guard let doc = documents.first(where: { $0.filePath?.standardizedFileURL == fileURL }) else { continue }
+                    if isSecondary {
+                        if loadedPrimary.contains(doc.id) {
+                            if !secondaryDocumentIds.contains(doc.id) { cloneToOtherView(id: doc.id) }
+                        } else if !secondaryDocumentIds.contains(doc.id) {
+                            moveToOtherView(id: doc.id)
+                        }
+                        loadedSecondary.append(doc.id)
+                    } else {
+                        if secondaryDocumentIds.contains(doc.id) && !clonedDocumentIds.contains(doc.id) {
+                            cloneToOtherView(id: doc.id)
+                        }
+                        loadedPrimary.append(doc.id)
+                    }
+                    if let language = attribute(file, "lang"), !language.isEmpty {
+                        doc.language = language
+                    }
+                    let length = (doc.content as NSString).length
+                    let start = min(max(0, Int(attribute(file, "startPos") ?? "") ?? 0), length)
+                    let end = min(max(start, Int(attribute(file, "endPos") ?? "") ?? start), length)
+                    doc.cursorPos = start
+                    doc.selectionLength = end - start
+                    let prefix = (doc.content as NSString).substring(to: start) as NSString
+                    let lineStart = prefix.range(of: "\n", options: .backwards)
+                    doc.cursorLine = prefix.components(separatedBy: "\n").count
+                    doc.cursorCol = start - (lineStart.location == NSNotFound ? -1 : lineStart.location)
+                    doc.bookmarkedLines = Set(file.elements(forName: "Mark").compactMap {
+                        Int(attribute($0, "line") ?? "")
+                    }.filter { $0 > 0 })
+                }
+            }
+            let mainIndex = Int(attribute(session.elements(forName: "mainView").first ?? session, "activeIndex") ?? "") ?? 0
+            let subIndex = Int(attribute(session.elements(forName: "subView").first ?? session, "activeIndex") ?? "") ?? 0
+            if loadedSecondary.indices.contains(subIndex) {
+                secondaryActiveDocumentId = loadedSecondary[subIndex]
+            }
+            if attribute(session, "activeView") == "1", let id = secondaryActiveDocumentId {
+                activeView = 1
+                activeDocumentId = id
+            } else if loadedPrimary.indices.contains(mainIndex) {
+                activeView = 0
+                activeDocumentId = loadedPrimary[mainIndex]
+            }
+            return true
+        } else if let paths = try? JSONSerialization.jsonObject(with: data) as? [String] {
+            for p in paths {
+                let fileURL = URL(fileURLWithPath: p)
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    openFile(url: fileURL)
+                }
+            }
+            return true
         }
-        return true
+        return false
     }
 
     public func promptSaveSession() {
@@ -2797,22 +3523,108 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
-    public func moveTabToStart() {
-        guard let currentId = activeDocumentId,
-              let index = documents.firstIndex(where: { $0.id == currentId }),
-              index > 0 else { return }
-        let doc = documents.remove(at: index)
-        documents.insert(doc, at: 0)
-        activeDocumentId = currentId
+    public func moveTabToStart(id: UUID? = nil, viewIndex: Int? = nil) {
+        let isSecondary = (viewIndex == 1) || (viewIndex == nil && activeView == 1)
+        if isSecondary {
+            let targetId = id ?? secondaryActiveDocumentId ?? secondaryDocumentIds.first
+            guard let targetId = targetId,
+                  let index = secondaryDocumentIds.firstIndex(of: targetId),
+                  index > 0 else { return }
+            let item = secondaryDocumentIds.remove(at: index)
+            secondaryDocumentIds.insert(item, at: 0)
+            secondaryActiveDocumentId = targetId
+        } else {
+            let targetId = id ?? activeDocumentId ?? documents.first?.id
+            guard let targetId = targetId,
+                  let index = documents.firstIndex(where: { $0.id == targetId }),
+                  index > 0 else { return }
+            let doc = documents.remove(at: index)
+            documents.insert(doc, at: 0)
+            activeDocumentId = targetId
+        }
+        objectWillChange.send()
     }
 
-    public func moveTabToEnd() {
-        guard let currentId = activeDocumentId,
-              let index = documents.firstIndex(where: { $0.id == currentId }),
-              index + 1 < documents.count else { return }
-        let doc = documents.remove(at: index)
-        documents.append(doc)
-        activeDocumentId = currentId
+    public func moveTabToEnd(id: UUID? = nil, viewIndex: Int? = nil) {
+        let isSecondary = (viewIndex == 1) || (viewIndex == nil && activeView == 1)
+        if isSecondary {
+            let targetId = id ?? secondaryActiveDocumentId ?? secondaryDocumentIds.last
+            guard let targetId = targetId,
+                  let index = secondaryDocumentIds.firstIndex(of: targetId),
+                  index + 1 < secondaryDocumentIds.count else { return }
+            let item = secondaryDocumentIds.remove(at: index)
+            secondaryDocumentIds.append(item)
+            secondaryActiveDocumentId = targetId
+        } else {
+            let targetId = id ?? activeDocumentId ?? documents.last?.id
+            guard let targetId = targetId,
+                  let index = documents.firstIndex(where: { $0.id == targetId }),
+                  index + 1 < documents.count else { return }
+            let doc = documents.remove(at: index)
+            documents.append(doc)
+            activeDocumentId = targetId
+        }
+        objectWillChange.send()
+    }
+
+    public func reorderTab(draggedId: UUID, targetId: UUID, viewIndex: Int) {
+        guard draggedId != targetId else { return }
+        if viewIndex == 1 {
+            guard let from = secondaryDocumentIds.firstIndex(of: draggedId),
+                  let to = secondaryDocumentIds.firstIndex(of: targetId) else { return }
+            let id = secondaryDocumentIds.remove(at: from)
+            secondaryDocumentIds.insert(id, at: to)
+        } else {
+            guard let from = documents.firstIndex(where: { $0.id == draggedId }),
+                  let to = documents.firstIndex(where: { $0.id == targetId }) else { return }
+            let doc = documents.remove(at: from)
+            documents.insert(doc, at: to)
+        }
+        objectWillChange.send()
+    }
+
+    // MARK: - Column Mode Selection (IDM_EDIT_BEGINENDSELECT_COLUMNMODE)
+    @Published public var isColumnModeSelecting: Bool = false
+    @Published public var columnModeStartAnchor: (line: Int, col: Int)? = nil
+
+    public func toggleColumnModeSelection() {
+        guard let tv = activeTextView else { return }
+        if isColumnModeSelecting {
+            isColumnModeSelecting = false
+            if let start = columnModeStartAnchor {
+                let text = tv.string as NSString
+                let sel = tv.selectedRange()
+                let curPos = min(sel.location, text.length)
+                let curLineRange = text.lineRange(for: NSRange(location: curPos, length: 0))
+                var curLineNum = 1
+                var idx = 0
+                while idx < curLineRange.location {
+                    curLineNum += 1
+                    idx = NSMaxRange(text.lineRange(for: NSRange(location: idx, length: 0)))
+                }
+                let curCol = curPos - curLineRange.location
+                if let nppTv = tv as? NppTextView {
+                    let colRanges = nppTv.computeColumnRanges(fromLine: start.line, fromCol: start.col, toLine: curLineNum, toCol: curCol)
+                    tv.selectedRanges = colRanges
+                }
+            }
+            columnModeStartAnchor = nil
+        } else {
+            isColumnModeSelecting = true
+            let text = tv.string as NSString
+            let sel = tv.selectedRange()
+            let curPos = min(sel.location, text.length)
+            let curLineRange = text.lineRange(for: NSRange(location: curPos, length: 0))
+            var curLineNum = 1
+            var idx = 0
+            while idx < curLineRange.location {
+                curLineNum += 1
+                idx = NSMaxRange(text.lineRange(for: NSRange(location: idx, length: 0)))
+            }
+            let curCol = curPos - curLineRange.location
+            columnModeStartAnchor = (curLineNum, curCol)
+        }
+        objectWillChange.send()
     }
 
     public func moveTabForward() {
@@ -2915,10 +3727,12 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
-    public func closeActive() {
+    @discardableResult
+    public func closeActive(force: Bool = false) -> Bool {
         if let doc = activeDocument {
-            closeDocument(id: doc.id)
+            return closeDocument(id: doc.id, force: force)
         }
+        return true
     }
 
     public func printActive() {
@@ -3092,12 +3906,25 @@ public final class NppWorkspace: ObservableObject {
         doc.selectionLength = sel.length
     }
 
-    /// Synchronizes changes from NppDocument into NSTextView, safely clamping and preserving selection.
-    private func syncDocumentToTextView(doc: NppDocument, tv: NSTextView) {
+    public func applyTextToTextViewPreservingUndo(tv: NSTextView, newText: String) {
+        guard tv.string != newText else { return }
+        let fullRange = NSRange(location: 0, length: (tv.string as NSString).length)
+        if tv.shouldChangeText(in: fullRange, replacementString: newText) {
+            tv.undoManager?.beginUndoGrouping()
+            tv.replaceCharacters(in: fullRange, with: newText)
+            tv.didChangeText()
+            tv.undoManager?.endUndoGrouping()
+        } else {
+            tv.string = newText
+        }
+    }
+
+    /// Synchronizes changes from NppDocument into NSTextView, safely clamping and preserving selection with Undo preservation.
+    public func syncDocumentToTextView(doc: NppDocument, tv: NSTextView) {
         if tv.string != doc.content {
             let sel = tv.selectedRange()
             let newLen = (doc.content as NSString).length
-            tv.string = doc.content
+            applyTextToTextViewPreservingUndo(tv: tv, newText: doc.content)
             let safeLoc = min(sel.location, newLen)
             let safeLen = min(sel.length, max(0, newLen - safeLoc))
             tv.setSelectedRange(NSRange(location: safeLoc, length: safeLen))
@@ -4137,15 +4964,32 @@ public final class NppWorkspace: ObservableObject {
             guard let self = self, let doc = doc, let url = doc.filePath else { return }
             if let data = try? Data(contentsOf: url) {
                 doc.rawFileBytes = data
-                let decoded = String(decoding: data, as: UTF8.self)
+                var decoded: String = ""
+                data.withUnsafeBytes { (rawBuffer: UnsafeRawBufferPointer) -> Void in
+                    guard let ptr = rawBuffer.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
+                    var decodedLen: Int32 = 0
+                    let norm = NppDocument.normalizeCharset(doc.encoding)
+                    if norm == "UTF-8" {
+                        decoded = String(decoding: data, as: UTF8.self)
+                    } else if let decodedPtr = npp_decode_to_utf8(ptr, data.count, norm, &decodedLen) {
+                        let decodedData = Data(bytes: decodedPtr, count: Int(decodedLen))
+                        decoded = String(bytes: decodedData, encoding: .utf8) ?? String(decoding: decodedData, as: UTF8.self)
+                        npp_free_string(decodedPtr)
+                    } else {
+                        decoded = String(decoding: data, as: UTF8.self)
+                    }
+                }
                 doc.content = decoded
                 doc.isDirty = false
                 if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
                    let modDate = attrs[.modificationDate] as? Date {
                     doc.lastKnownModificationDate = modDate
                 }
-                if self.activeDocumentId == doc.id {
-                    self.scrollToBottom()
+                if self.activeDocumentId == doc.id, let tv = self.activeTextView {
+                    tv.string = decoded
+                    let len = (decoded as NSString).length
+                    tv.setSelectedRange(NSRange(location: len, length: 0))
+                    tv.scrollRangeToVisible(NSRange(location: len, length: 0))
                 }
             }
         }
@@ -4189,10 +5033,15 @@ public final class NppWorkspace: ObservableObject {
                     name = String(name[..<brace])
                 }
                 name = name.trimmingCharacters(in: .whitespaces)
-                for prefix in ["class ", "struct ", "func ", "def ", "function ", "void ", "int ", "public ", "private "] {
-                    if name.hasPrefix(prefix) {
-                        name = String(name.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
-                        break
+                var changed = true
+                while changed {
+                    changed = false
+                    for prefix in ["public ", "private ", "fileprivate ", "internal ", "open ", "static ", "final ", "class ", "struct ", "func ", "def ", "function ", "void ", "int ", "bool ", "double ", "float "] {
+                        if name.hasPrefix(prefix) {
+                            name = String(name.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                            changed = true
+                            break
+                        }
                     }
                 }
                 results.append(NppFunctionItem(name: name, line: idx + 1, isClass: isClass))

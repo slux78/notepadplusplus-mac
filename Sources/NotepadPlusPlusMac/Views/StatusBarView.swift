@@ -18,7 +18,7 @@ public struct NppStatusBarView: View {
                 NppActiveStatusBarContent(doc: doc, workspace: workspace)
             } else {
                 HStack {
-                    Text("No document")
+                    Text(workspace.tr("No document"))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.secondary)
                         .padding(.leading, 8)
@@ -61,7 +61,7 @@ public struct NppActiveStatusBarContent: View {
                         }
                     }
                 } label: {
-                    Text(doc.language.isEmpty ? "Normal text file" : "\(doc.language) file")
+                    Text(doc.language.isEmpty ? workspace.tr("Normal text file") : "\(doc.language) file")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.primary)
                         .lineLimit(1)
@@ -72,7 +72,7 @@ public struct NppActiveStatusBarContent: View {
 
             // Box 2: length : 108   lines : 10 (Double click opens View > Summary per user-interface.md:301)
             let charCount = (doc.content as NSString).length
-            let lineCount = max(1, doc.content.nppLines().count)
+            let lineCount = Self.countLines(in: doc.content)
             let box2Text = "length : \(charCount)   lines : \(lineCount)"
             let box2TextWidth = (box2Text as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)]).width
             let box2ActualWidth = max(NppStatusBarView.box2Width, box2TextWidth + 24)
@@ -222,8 +222,18 @@ public struct NppActiveStatusBarContent: View {
         .frame(height: 22)
     }
 
+    private static func countLines(in string: String) -> Int {
+        var count = 1
+        for u in string.utf8 {
+            if u == 10 { // ASCII '\n'
+                count += 1
+            }
+        }
+        return count
+    }
+
     private func showGoToLineDialog() {
-        let totalLines = max(1, doc.content.nppLines().count)
+        let totalLines = Self.countLines(in: doc.content)
         let alert = NSAlert()
         alert.messageText = workspace.tr("Go to...")
         alert.informativeText = "1 - \(totalLines):"
@@ -261,6 +271,6 @@ public struct NppStatusBarBox<Content: View>: View {
         }
         .padding(.leading, 3)
         .padding(.trailing, 1)
-        .frame(width: width)
+        .frame(minWidth: min(width, 40), idealWidth: width, maxWidth: width)
     }
 }

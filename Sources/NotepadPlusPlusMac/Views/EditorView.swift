@@ -74,7 +74,8 @@ public struct NppEditorView: NSViewRepresentable {
                 language: document.language,
                 isDarkMode: theme.isDark,
                 baseFont: targetFont,
-                theme: theme
+                theme: theme,
+                userDefinedLanguage: workspace.userDefinedLanguage(named: document.language)
             )
         }
 
@@ -155,14 +156,20 @@ public struct NppEditorView: NSViewRepresentable {
         }
 
         // Jump to match from Find All Results panel
-        if let match = workspace.targetJumpMatch, match.documentId == document.id {
-            let targetRange = NSRange(location: match.charPosition, length: match.matchLength)
-            if NSMaxRange(targetRange) <= (textView.string as NSString).length {
-                textView.setSelectedRange(targetRange)
-                textView.scrollRangeToVisible(targetRange)
-            }
-            DispatchQueue.main.async {
-                self.workspace.targetJumpMatch = nil
+        if let match = workspace.targetJumpMatch {
+            let isTargetDoc = match.documentId == document.id ||
+                (match.filePath != nil && document.filePath != nil &&
+                 match.filePath?.standardizedFileURL.path == document.filePath?.standardizedFileURL.path)
+            if isTargetDoc {
+                let targetRange = NSRange(location: match.charPosition, length: match.matchLength)
+                if NSMaxRange(targetRange) <= (textView.string as NSString).length {
+                    textView.setSelectedRange(targetRange)
+                    textView.scrollRangeToVisible(targetRange)
+                    textView.window?.makeFirstResponder(textView)
+                }
+                DispatchQueue.main.async {
+                    self.workspace.targetJumpMatch = nil
+                }
             }
         }
 
@@ -207,8 +214,30 @@ public struct NppEditorView: NSViewRepresentable {
             let delta = replLen - affectedCharRange.length
             if delta != 0 || affectedCharRange.length > 0 {
                 parent.document.adjustStyledRanges(affectedRange: affectedCharRange, delta: delta)
+                parent.document.adjustBookmarks(affectedRange: affectedCharRange, replacementString: replacementString ?? "", currentText: textView.string)
             }
             return true
+        }
+
+        public func textView(_ textView: NSTextView, completions words: [String], forPartialWordRange charRange: NSRange, indexOfSelectedItem index: UnsafeMutablePointer<Int>?) -> [String] {
+            let ws = parent.workspace
+            let manualMode = (textView as? NppTextView)?.completionModeOverride
+            if manualMode == 3 {
+                return NppCompletionEngine.shared.pathCandidates(
+                    text: textView.string,
+                    caret: NSMaxRange(charRange),
+                    documentURL: parent.document.filePath
+                )
+            }
+            return NppCompletionEngine.shared.candidates(
+                text: textView.string,
+                caret: NSMaxRange(charRange),
+                language: parent.document.language,
+                mode: manualMode ?? ws.autoCompletionType,
+                minimumLength: ws.autoCompletionThreshold,
+                ignoreNumbers: ws.autoCompletionIgnoreNumbers,
+                manual: manualMode != nil
+            )
         }
 
         public func textDidChange(_ notification: Notification) {
@@ -354,7 +383,10 @@ public struct NppEditorView: NSViewRepresentable {
             guard let tv = textView, let ts = tv.textStorage else { return }
             guard !parent.workspace.isLargeFile(doc: parent.document) else { return }
             let isDark = tv.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            NppSyntaxHighlighter.highlight(textStorage: ts, language: parent.document.language, isDarkMode: isDark, baseFont: tv.font, theme: parent.workspace.currentTheme)
+            NppSyntaxHighlighter.highlight(textStorage: ts, language: parent.document.language,
+                                           isDarkMode: isDark, baseFont: tv.font,
+                                           theme: parent.workspace.currentTheme,
+                                           userDefinedLanguage: parent.workspace.userDefinedLanguage(named: parent.document.language))
             if !parent.document.styledTokenRanges.isEmpty {
                 ts.beginEditing()
                 for (styleIdx, tokenRanges) in parent.document.styledTokenRanges {
@@ -372,6 +404,96 @@ public struct NppEditorView: NSViewRepresentable {
 public final class NppTextView: NSTextView {
     weak var editorCoordinator: NppEditorView.Coordinator?
     public weak var workspace: NppWorkspace?
+    var completionModeOverride: Int?
+    private var parameterHintPopover: NSPopover?
+    private var completionPopupActive = false
+    private var completionOriginalPrefix = ""
+
+    public override var rangeForUserCompletion: NSRange {
+        if completionModeOverride == 3 {
+            return NppCompletionEngine.pathNameRange(in: string as NSString, before: selectedRange().location)
+        }
+        return super.rangeForUserCompletion
+    }
+
+    public func triggerCompletion(mode: Int) {
+        let caret = selectedRange().location
+        let engine = NppCompletionEngine.shared
+        let suggestions: [String]
+        if mode == 3 {
+            suggestions = engine.pathCandidates(text: string, caret: caret, documentURL: resolvedDocument?.filePath)
+        } else {
+            suggestions = engine.candidates(
+                text: string, caret: caret, language: resolvedDocument?.language ?? "",
+                mode: mode, minimumLength: 1, ignoreNumbers: false, manual: true
+            )
+        }
+        if suggestions.count == 1 {
+            let range = mode == 3
+                ? NppCompletionEngine.pathNameRange(in: string as NSString, before: caret)
+                : NppCompletionEngine.wordRange(in: string as NSString, before: caret)
+            insertText(suggestions[0], replacementRange: range)
+            return
+        }
+        guard !suggestions.isEmpty else { return }
+        completionModeOverride = mode
+        showCompletions()
+    }
+
+    private func showCompletions() {
+        let range = rangeForUserCompletion
+        if NSMaxRange(range) <= (string as NSString).length {
+            completionOriginalPrefix = (string as NSString).substring(with: range)
+        }
+        completionPopupActive = true
+        complete(nil)
+    }
+
+    public override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange,
+                                          movement: Int, isFinal flag: Bool) {
+        let disallowedTab = movement == NSTabTextMovement && resolvedWorkspace?.autoCompletionKeyTab == false
+        let disallowedEnter = movement == NSReturnTextMovement && resolvedWorkspace?.autoCompletionKeyEnter == false
+        if flag { completionPopupActive = false; completionModeOverride = nil }
+        if flag && (disallowedTab || disallowedEnter) {
+            super.insertCompletion(completionOriginalPrefix, forPartialWordRange: charRange,
+                                   movement: NSCancelTextMovement, isFinal: true)
+            if disallowedEnter {
+                insertText("\n", replacementRange: selectedRange())
+            } else {
+                let ws = resolvedWorkspace
+                let indent = ws?.replaceTabBySpace == true
+                    ? String(repeating: " ", count: ws?.tabSize ?? 4) : "\t"
+                insertText(indent, replacementRange: selectedRange())
+            }
+            return
+        }
+        super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
+    }
+
+    public func showParameterHint(force: Bool = false) {
+        guard force || resolvedWorkspace?.funcParamsHint == true,
+              let window,
+              let hint = NppCompletionEngine.shared.parameterHint(
+                in: string, caret: selectedRange().location,
+                language: resolvedDocument?.language ?? ""
+              ) else { return }
+        parameterHintPopover?.close()
+        let label = NSTextField(wrappingLabelWithString: hint)
+        label.font = NSFont.systemFont(ofSize: 12)
+        label.frame = NSRect(x: 10, y: 10, width: 420, height: 60)
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 80))
+        view.addSubview(label)
+        let controller = NSViewController()
+        controller.view = view
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = controller
+        popover.contentSize = view.frame.size
+        let screenRect = firstRect(forCharacterRange: selectedRange(), actualRange: nil)
+        let localRect = convert(window.convertFromScreen(screenRect), from: nil)
+        popover.show(relativeTo: localRect, of: self, preferredEdge: .maxY)
+        parameterHintPopover = popover
+    }
 
     // MARK: - Auto-Completion Matched Pairs Tracking (Notepad++ / Scintilla Parity)
     public struct MatchedCharInserted: Equatable {
@@ -387,9 +509,97 @@ public final class NppTextView: NSTextView {
     }
     public var insertedMatchedChars: [MatchedCharInserted] = []
 
+    private var isOptionDragging = false
+    private var optionDragStartPoint: NSPoint = .zero
+    private var optionDragStartLine: Int = 1
+    private var optionDragStartCol: Int = 0
+
+    private func lineAndCol(for point: NSPoint) -> (line: Int, col: Int, charIndex: Int) {
+        guard let lm = self.layoutManager, let tc = self.textContainer else { return (1, 0, 0) }
+        let docY = point.y - self.textContainerOrigin.y
+        let text = self.string as NSString
+        guard text.length > 0 else { return (1, 0, 0) }
+        let glyphIndex = lm.glyphIndex(for: NSPoint(x: max(0, point.x - self.textContainerOrigin.x), y: max(0, docY)), in: tc)
+        let charIndex = lm.characterIndexForGlyph(at: glyphIndex)
+        let safeIndex = min(charIndex, text.length)
+        let lineRange = text.lineRange(for: NSRange(location: safeIndex, length: 0))
+        var lineNum = 1
+        var cur = 0
+        while cur < lineRange.location {
+            lineNum += 1
+            cur = NSMaxRange(text.lineRange(for: NSRange(location: cur, length: 0)))
+        }
+        let col = safeIndex - lineRange.location
+        return (lineNum, col, safeIndex)
+    }
+
+    public func computeColumnRanges(fromLine: Int, fromCol: Int, toLine: Int, toCol: Int) -> [NSValue] {
+        let text = self.string as NSString
+        guard text.length > 0 else { return [NSValue(range: NSRange(location: 0, length: 0))] }
+        let minL = min(fromLine, toLine)
+        let maxL = max(fromLine, toLine)
+        let minC = min(fromCol, toCol)
+        let maxC = max(fromCol, toCol)
+
+        var ranges: [NSValue] = []
+        var curLine = 1
+        var curPos = 0
+        while curPos < text.length && curLine <= maxL {
+            let lRange = text.lineRange(for: NSRange(location: curPos, length: 0))
+            if curLine >= minL && curLine <= maxL {
+                let lineStr = text.substring(with: lRange)
+                var lineCleanLen = lineStr.count
+                if lineStr.hasSuffix("\r\n") { lineCleanLen -= 2 }
+                else if lineStr.hasSuffix("\n") || lineStr.hasSuffix("\r") { lineCleanLen -= 1 }
+
+                let startOffset = min(minC, lineCleanLen)
+                let endOffset = min(maxC, lineCleanLen)
+                let length = max(0, endOffset - startOffset)
+                let r = NSRange(location: lRange.location + startOffset, length: length)
+                ranges.append(NSValue(range: r))
+            }
+            curPos = NSMaxRange(lRange)
+            curLine += 1
+        }
+        return ranges.isEmpty ? [NSValue(range: NSRange(location: 0, length: 0))] : ranges
+    }
+
     public override func mouseDown(with event: NSEvent) {
         insertedMatchedChars.removeAll()
+        if event.modifierFlags.contains(.option) {
+            isOptionDragging = true
+            optionDragStartPoint = self.convert(event.locationInWindow, from: nil)
+            let (l, c, charIdx) = lineAndCol(for: optionDragStartPoint)
+            optionDragStartLine = l
+            optionDragStartCol = c
+            let r = NSRange(location: charIdx, length: 0)
+            self.selectedRanges = [NSValue(range: r)]
+            return
+        }
+        isOptionDragging = false
         super.mouseDown(with: event)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        if isOptionDragging {
+            let pt = self.convert(event.locationInWindow, from: nil)
+            let (curL, curC, _) = lineAndCol(for: pt)
+            let colRanges = computeColumnRanges(
+                fromLine: optionDragStartLine, fromCol: optionDragStartCol,
+                toLine: curL, toCol: curC
+            )
+            self.selectedRanges = colRanges
+            return
+        }
+        super.mouseDragged(with: event)
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        if isOptionDragging {
+            isOptionDragging = false
+            return
+        }
+        super.mouseUp(with: event)
     }
 
     public func cleanInvalidMatchedChars(caretPos: Int, typedChar: Character? = nil) {
@@ -527,6 +737,15 @@ public final class NppTextView: NSTextView {
             return
         }
 
+        if completionPopupActive && event.keyCode == 48 {
+            super.keyDown(with: event)
+            return
+        }
+
+        if event.keyCode == 53 || event.characters == ")" {
+            parameterHintPopover?.close()
+        }
+
         // Tab key: indent operations or spaces/tabs according to workspace.tabSize & replaceTabBySpace
         if event.keyCode == 48 && !event.modifierFlags.contains(.control) {
             let count = resolvedWorkspace?.tabSize ?? 4
@@ -642,6 +861,7 @@ public final class NppTextView: NSTextView {
                         self.insertText("()", replacementRange: range)
                         self.setSelectedRange(NSRange(location: range.location + 1, length: 0))
                         insertedMatchedChars.append(MatchedCharInserted(openChar: "(", closeChar: ")", openPos: range.location))
+                        showParameterHint()
                         return
                     }
                 }
@@ -692,7 +912,24 @@ public final class NppTextView: NSTextView {
 
         super.keyDown(with: event)
         if let chars = event.characters, let first = chars.first {
+            if first == "(" { showParameterHint() }
             cleanInvalidMatchedChars(caretPos: self.selectedRange().location, typedChar: first)
+            if let ws = resolvedWorkspace, ws.autoCompletionEnabled,
+               !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
+               (first.isLetter || first.isNumber || first == "_"),
+               self.window != nil, self.selectedRange().length == 0 {
+                let mode = ws.autoCompletionType
+                let candidates = NppCompletionEngine.shared.candidates(
+                    text: self.string,
+                    caret: self.selectedRange().location,
+                    language: resolvedDocument?.language ?? "",
+                    mode: mode,
+                    minimumLength: ws.autoCompletionThreshold,
+                    ignoreNumbers: ws.autoCompletionIgnoreNumbers,
+                    manual: false
+                )
+                if !candidates.isEmpty { showCompletions() }
+            }
         }
     }
 
@@ -705,6 +942,68 @@ public final class NppTextView: NSTextView {
         super.insertText(string, replacementRange: replacementRange)
     }
 
+    public override func insertNewline(_ sender: Any?) {
+        insertedMatchedChars.removeAll()
+        guard let ws = resolvedWorkspace, ws.autoIndentMode > 0 else {
+            super.insertNewline(sender)
+            if let ws = resolvedWorkspace, ws.isMacroRecording {
+                ws.recordMacroStep(.insertNewline)
+            }
+            return
+        }
+
+        let text = self.string as NSString
+        let sel = self.selectedRange()
+        let curPos = min(sel.location, text.length)
+        let lineRange = text.lineRange(for: NSRange(location: curPos, length: 0))
+        let lineBeforeCaret = text.substring(with: NSRange(location: lineRange.location, length: curPos - lineRange.location))
+
+        var indent = ""
+        for ch in lineBeforeCaret {
+            if ch == " " || ch == "\t" {
+                indent.append(ch)
+            } else {
+                break
+            }
+        }
+
+        let trimmed = lineBeforeCaret.trimmingCharacters(in: .whitespaces)
+        var extraIndent = ""
+        let tabIndent = ws.replaceTabBySpace ? String(repeating: " ", count: max(1, ws.tabSize)) : "\t"
+
+        if ws.autoIndentMode == 2 {
+            if trimmed.hasSuffix("{") || trimmed.hasSuffix("(") || trimmed.hasSuffix("[") || trimmed.hasSuffix(":") {
+                extraIndent = tabIndent
+            }
+        }
+
+        let nextChar: String? = (curPos < text.length) ? text.substring(with: NSRange(location: curPos, length: 1)) : nil
+        let isBetweenBraces = (trimmed.hasSuffix("{") && nextChar == "}") ||
+                              (trimmed.hasSuffix("(") && nextChar == ")") ||
+                              (trimmed.hasSuffix("[") && nextChar == "]")
+
+        if ws.autoIndentMode == 2 && isBetweenBraces {
+            let insertStr = "\n" + indent + extraIndent + "\n" + indent
+            if self.shouldChangeText(in: sel, replacementString: insertStr) {
+                self.replaceCharacters(in: sel, with: insertStr)
+                self.didChangeText()
+                let targetPos = curPos + 1 + indent.count + extraIndent.count
+                self.setSelectedRange(NSRange(location: targetPos, length: 0))
+            }
+        } else {
+            let insertStr = "\n" + indent + extraIndent
+            if self.shouldChangeText(in: sel, replacementString: insertStr) {
+                self.replaceCharacters(in: sel, with: insertStr)
+                self.didChangeText()
+                self.setSelectedRange(NSRange(location: curPos + insertStr.count, length: 0))
+            }
+        }
+
+        if ws.isMacroRecording {
+            ws.recordMacroStep(.insertNewline)
+        }
+    }
+
     public override func doCommand(by selector: Selector) {
         if selector == #selector(NSStandardKeyBindingResponding.deleteBackward(_:)) {
             if handleSmartPairDeleteBackward() {
@@ -715,7 +1014,8 @@ public final class NppTextView: NSTextView {
             }
         }
         if selector == #selector(NSStandardKeyBindingResponding.insertNewline(_:)) {
-            insertedMatchedChars.removeAll()
+            self.insertNewline(nil)
+            return
         }
 
         if let ws = resolvedWorkspace, ws.isMacroRecording {

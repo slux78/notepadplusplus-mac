@@ -305,21 +305,46 @@ public final class NppGutterView: NSRulerView {
             return
         }
 
+        let pointInGutter = self.convert(event.locationInWindow, from: nil)
         let pointInTextView = textView.convert(event.locationInWindow, from: nil)
         let docY = pointInTextView.y - textView.textContainerOrigin.y
         let text = textView.string as NSString
+        let showBookmarkMargin = workspace?.displayBookmarkMargin ?? true
+        let bookmarkMarginWidth: CGFloat = 18.0
+
         guard text.length > 0 else {
-            workspace?.toggleBookmark(line: 1)
-            needsDisplay = true
+            if showBookmarkMargin && pointInGutter.x <= bookmarkMarginWidth {
+                workspace?.toggleBookmark(line: 1)
+                needsDisplay = true
+            } else {
+                textView.setSelectedRange(NSRange(location: 0, length: 0))
+                textView.window?.makeFirstResponder(textView)
+            }
             return
         }
 
-        let glyphIndex = layoutManager.glyphIndex(for: NSPoint(x: 0, y: max(0, docY)), in: textContainer)
-        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-        let clickedLine = getLineNumber(for: charIndex, in: text)
+        // Check if clicked in trailing empty line fragment rect
+        var clickedLine: Int
+        var targetLineRange: NSRange
+        let extraRect = layoutManager.extraLineFragmentRect
+        if text.character(at: text.length - 1) == 10 && extraRect.height > 0 && docY >= extraRect.minY {
+            clickedLine = getLineNumber(for: text.length, in: text)
+            targetLineRange = NSRange(location: text.length, length: 0)
+        } else {
+            let glyphIndex = layoutManager.glyphIndex(for: NSPoint(x: 0, y: max(0, docY)), in: textContainer)
+            let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+            clickedLine = getLineNumber(for: charIndex, in: text)
+            targetLineRange = text.lineRange(for: NSRange(location: min(charIndex, text.length), length: 0))
+        }
 
-        workspace?.toggleBookmark(line: clickedLine)
-        needsDisplay = true
+        if showBookmarkMargin && pointInGutter.x <= bookmarkMarginWidth {
+            workspace?.toggleBookmark(line: clickedLine)
+            needsDisplay = true
+        } else {
+            // Clicked on line numbers margin: select the line
+            textView.setSelectedRange(targetLineRange)
+            textView.window?.makeFirstResponder(textView)
+        }
     }
 
     private func getLineNumber(for charIndex: Int, in string: NSString) -> Int {

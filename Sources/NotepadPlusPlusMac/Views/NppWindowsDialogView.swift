@@ -7,6 +7,7 @@ public struct NppWindowsDialogView: View {
     public let onClose: () -> Void
 
     @State private var selectedDocIds: Set<UUID> = []
+    @State private var lastClickedDocId: UUID? = nil
     @State private var sortColumn: Int = 0 // 0: Name, 1: Path, 2: Type, 3: Size, 4: Modified Time
     @State private var isAscending: Bool = true
 
@@ -209,6 +210,10 @@ public struct NppWindowsDialogView: View {
         .frame(height: 22)
         .background(isSelected ? Color.accentColor.opacity(0.25) : (isActive ? Color.accentColor.opacity(0.08) : Color.clear))
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            selectedDocIds = [doc.id]
+            activateSelected()
+        }
         .onTapGesture {
             if NSEvent.modifierFlags.contains(.command) {
                 if selectedDocIds.contains(doc.id) {
@@ -216,11 +221,17 @@ public struct NppWindowsDialogView: View {
                 } else {
                     selectedDocIds.insert(doc.id)
                 }
-            } else if NSEvent.modifierFlags.contains(.shift) {
-                // Range selection
-                selectedDocIds.insert(doc.id)
+                lastClickedDocId = doc.id
+            } else if NSEvent.modifierFlags.contains(.shift), let lastId = lastClickedDocId,
+                      let startIdx = sortedDocuments.firstIndex(where: { $0.id == lastId }),
+                      let endIdx = sortedDocuments.firstIndex(where: { $0.id == doc.id }) {
+                let range = min(startIdx, endIdx)...max(startIdx, endIdx)
+                for i in range {
+                    selectedDocIds.insert(sortedDocuments[i].id)
+                }
             } else {
                 selectedDocIds = [doc.id]
+                lastClickedDocId = doc.id
             }
         }
         .contextMenu {
@@ -235,7 +246,13 @@ public struct NppWindowsDialogView: View {
 
     private func activateSelected() {
         guard let firstId = selectedDocIds.first else { return }
-        workspace.activeDocumentId = firstId
+        if workspace.secondaryDocumentIds.contains(firstId) {
+            workspace.secondaryActiveDocumentId = firstId
+            workspace.activeView = 1
+        } else {
+            workspace.activeDocumentId = firstId
+            workspace.activeView = 0
+        }
         onClose()
     }
 

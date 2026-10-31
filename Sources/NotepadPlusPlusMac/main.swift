@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var window: NSWindow!
     let workspace = NppWorkspace()
     private var cancellables = Set<AnyCancellable>()
@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
+        window.delegate = self
         window.center()
         updateWindowTitle()
         window.contentView = NSHostingView(rootView: contentView)
@@ -148,6 +149,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ws.documents.first?.isPinned = true
                 ws.documents.last?.title = "Document 2"
             }, filename: "screenshot_pinned_tab.png")
+        } else if CommandLine.arguments.contains("--screenshot-dual-view") {
+            NppAutomatedTestSuite.captureCustomScreenshot(appDelegate: self, setup: { ws in
+                ws.documents.first?.title = "File A"
+                ws.documents.first?.content = "// File A in Primary View\nfunction main() {\n    console.log(\"Hello from Primary View\");\n}\n"
+                ws.newDocument()
+                if let docB = ws.documents.last {
+                    docB.title = "File B"
+                    docB.content = "// File B in Secondary View (view-rotate-4.png parity)\nfunction helper() {\n    return 42;\n}\n"
+                    ws.moveToOtherView(id: docB.id)
+                }
+                ws.splitDirection = .horizontal // Horizontal split per view-rotate-4.png
+                ws.splitRatio = 0.5
+            }, filename: "screenshot_dual_view.png")
         } else if CommandLine.arguments.contains("--screenshot-style-config") {
             NppAutomatedTestSuite.captureCustomScreenshot(appDelegate: self, setup: { ws in
                 ws.showStyleConfigurator = true
@@ -223,6 +237,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return true
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        return workspace.closeAll(force: false)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if workspace.closeAll(force: false) {
+            return .terminateNow
+        } else {
+            return .terminateCancel
+        }
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
@@ -490,6 +516,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         eolMenuItem.submenu = eolMenu
         editMenu.addItem(eolMenuItem)
 
+        let completionMenu = NSMenu(title: tr("Auto-Completion"))
+        completionMenu.addItem(withTitle: tr("Function Completion"), action: #selector(menuFunctionCompletion), keyEquivalent: "")
+        completionMenu.addItem(withTitle: tr("Word Completion"), action: #selector(menuWordCompletion), keyEquivalent: "")
+        completionMenu.addItem(withTitle: tr("Path Completion"), action: #selector(menuPathCompletion), keyEquivalent: "")
+        completionMenu.addItem(withTitle: tr("Function Parameters Hint"), action: #selector(menuFunctionParametersHint), keyEquivalent: "")
+        let completionItem = NSMenuItem(title: tr("Auto-Completion"), action: nil, keyEquivalent: "")
+        completionItem.submenu = completionMenu
+        editMenu.addItem(completionItem)
+
         editMenu.addItem(NSMenuItem.separator())
 
         // On Selection Submenu (Notepad_plus.rc L606-615)
@@ -509,6 +544,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let colEditItem = NSMenuItem(title: tr("Column Editor..."), action: #selector(menuColumnEditor), keyEquivalent: "c")
         colEditItem.keyEquivalentModifierMask = [.option]
         editMenu.addItem(colEditItem)
+        let colModeSelectItem = NSMenuItem(title: tr("Begin/End Select in Column Mode"), action: #selector(menuBeginEndSelectColumnMode), keyEquivalent: "b")
+        colModeSelectItem.keyEquivalentModifierMask = [.option, .shift]
+        editMenu.addItem(colModeSelectItem)
+        let colModeTipItem = NSMenuItem(title: tr("Column Mode..."), action: #selector(menuColumnModeTip), keyEquivalent: "")
+        editMenu.addItem(colModeTipItem)
 
         // Side Panels in Edit Menu (Notepad_plus.rc L636-637)
         editMenu.addItem(withTitle: tr("Character Panel"), action: #selector(menuToggleCharacterPanel), keyEquivalent: "")
@@ -736,6 +776,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tabSubItem.submenu = tabSubMenu
         viewMenu.addItem(tabSubItem)
 
+        viewMenu.addItem(withTitle: tr("Move to Other View"), action: #selector(menuMoveToOtherView), keyEquivalent: "")
+        viewMenu.addItem(withTitle: tr("Clone to Other View"), action: #selector(menuCloneToOtherView), keyEquivalent: "")
+
         viewMenu.addItem(withTitle: tr("Toggle Word Wrap"), action: #selector(menuToggleWordWrap), keyEquivalent: "")
         viewMenu.addItem(NSMenuItem.separator())
         viewMenu.addItem(withTitle: tr("Document List"), action: #selector(menuToggleDocumentList), keyEquivalent: "")
@@ -957,7 +1000,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 11. Run Menu (Notepad++ Windows parity)
         let runMenuItem = NSMenuItem()
         let runMenu = NSMenu(title: tr("Run"))
-        runMenu.addItem(withTitle: tr("Run..."), action: #selector(menuRunPrompt), keyEquivalent: "")
+        let runPromptItem = NSMenuItem(title: tr("Run..."), action: #selector(menuRunPrompt), keyEquivalent: "")
+        configureRunShortcut("F5", for: runPromptItem)
+        runMenu.addItem(runPromptItem)
+        for saved in workspace.savedRunCommands {
+            let item = NSMenuItem(title: saved.name, action: #selector(menuRunSavedCommand(_:)), keyEquivalent: "")
+            item.representedObject = saved.id
+            configureRunShortcut(saved.shortcut, for: item)
+            runMenu.addItem(item)
+        }
+        runMenu.addItem(NSMenuItem.separator())
+        runMenu.addItem(withTitle: tr("Modify Shortcut / Delete Command..."),
+                        action: #selector(menuManageRunCommands), keyEquivalent: "")
         runMenu.addItem(NSMenuItem.separator())
         runMenu.addItem(withTitle: tr("Open in Terminal"), action: #selector(menuOpenFolderTerminal), keyEquivalent: "t")
         runMenu.addItem(withTitle: tr("Launch in Safari"), action: #selector(menuLaunchSafari), keyEquivalent: "")
@@ -1047,6 +1101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         helpMenu.addItem(withTitle: tr("Notepad++ Online User Manual"), action: #selector(menuNppManual), keyEquivalent: "")
         helpMenu.addItem(withTitle: tr("Notepad++ Community (Forum)"), action: #selector(menuNppForum), keyEquivalent: "")
         helpMenu.addItem(NSMenuItem.separator())
+        helpMenu.addItem(withTitle: tr("Download Latest Mac Release..."), action: #selector(menuOpenLatestMacRelease), keyEquivalent: "")
+        helpMenu.addItem(NSMenuItem.separator())
         helpMenu.addItem(withTitle: tr("Debug Info..."), action: #selector(menuDebugInfo), keyEquivalent: "")
         helpMenu.addItem(withTitle: tr("About Notepad++"), action: #selector(showAbout), keyEquivalent: "")
         helpMenuItem.submenu = helpMenu
@@ -1056,6 +1112,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Action Handlers
+    @objc func menuFunctionCompletion() {
+        (getActiveTextView() as? NppTextView)?.triggerCompletion(mode: 0)
+    }
+    @objc func menuWordCompletion() {
+        (getActiveTextView() as? NppTextView)?.triggerCompletion(mode: 1)
+    }
+    @objc func menuPathCompletion() {
+        (getActiveTextView() as? NppTextView)?.triggerCompletion(mode: 3)
+    }
+    @objc func menuFunctionParametersHint() {
+        (getActiveTextView() as? NppTextView)?.showParameterHint(force: true)
+    }
     @objc func menuNew() {
         workspace.newDocument()
         updateWindowTitle()
@@ -1104,24 +1172,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateWindowTitle()
     }
     @objc func menuCloseTab() {
-        if let doc = workspace.activeDocument { workspace.closeDocument(id: doc.id) }
+        if let doc = workspace.activeDocument { _ = workspace.closeDocument(id: doc.id, force: false) }
         updateWindowTitle()
     }
     @objc func menuCloseAll() {
-        workspace.closeAll()
+        _ = workspace.closeAll(force: false)
         updateWindowTitle()
     }
     @objc func menuCloseAllButActive() {
-        if let doc = workspace.activeDocument { workspace.closeAllBut(id: doc.id) }
+        if let doc = workspace.activeDocument { _ = workspace.closeAllBut(id: doc.id, force: false) }
     }
     @objc func menuCloseAllButPinned() {
-        workspace.closeAllButPinned()
+        _ = workspace.closeAllButPinned(force: false)
     }
     @objc func menuCloseAllToLeft() {
-        if let doc = workspace.activeDocument { workspace.closeAllToLeft(of: doc.id) }
+        if let doc = workspace.activeDocument { _ = workspace.closeAllToLeft(of: doc.id, force: false) }
     }
     @objc func menuCloseAllToRight() {
-        if let doc = workspace.activeDocument { workspace.closeAllToRight(of: doc.id) }
+        if let doc = workspace.activeDocument { _ = workspace.closeAllToRight(of: doc.id, force: false) }
+    }
+    @objc func menuMoveToOtherView() {
+        if let doc = workspace.activeDocument {
+            workspace.moveToOtherView(id: doc.id)
+            updateWindowTitle()
+        }
+    }
+    @objc func menuCloneToOtherView() {
+        if let doc = workspace.activeDocument {
+            workspace.cloneToOtherView(id: doc.id)
+            updateWindowTitle()
+        }
     }
     @objc func menuCloseAllUnchanged() { workspace.closeAllUnchanged() }
     @objc func menuLoadSession() { workspace.promptLoadSession() }
@@ -1160,11 +1240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NppTools.openTerminal(at: dir)
     }
     @objc func menuMoveToTrash() {
-        if let doc = workspace.activeDocument, let path = doc.filePath {
-            try? FileManager.default.trashItem(at: path, resultingItemURL: nil)
-            workspace.closeDocument(id: doc.id)
-            updateWindowTitle()
-        }
+        if workspace.moveActiveFileToTrash() { updateWindowTitle() }
     }
     @objc func menuPrint() {
         if let tv = getActiveTextView() {
@@ -1178,6 +1254,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func menuFindInFiles() { workspace.openFindInFiles() }
     @objc func menuMark() { workspace.openMark() }
     @objc func menuColumnEditor() { workspace.showColumnEditor = true }
+    @objc func menuBeginEndSelectColumnMode() { workspace.toggleColumnModeSelection() }
+    @objc func menuColumnModeTip() {
+        let alert = NSAlert()
+        alert.messageText = workspace.tr("Column Mode Selection")
+        alert.informativeText = workspace.tr("To make a column selection:\n1. Hold Option (Alt) and drag with the mouse.\n2. Or hold Option+Shift and use the arrow keys.\n3. Or use 'Begin/End Select in Column Mode' (Option+Shift+B).")
+        alert.addButton(withTitle: workspace.tr("OK"))
+        alert.runModal()
+    }
     @objc func menuToggleDocumentList() { workspace.showDocumentList.toggle() }
     @objc func menuToggleFolderAsWorkspace() { workspace.showFolderAsWorkspace.toggle() }
     @objc func menuToggleFunctionList() { workspace.showFunctionList.toggle() }
@@ -1987,27 +2071,131 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Run actions
     @objc func menuRunPrompt() {
-        let alert = NSAlert()
-        alert.messageText = "Run..."
-        alert.informativeText = "The Program to Run:\n\nSpecial variables:\n  $(CURRENT_FILE) - Full path to active file\n  $(CURRENT_DIRECTORY) - Directory of active file\n  $(FILE_NAME) - File name with extension\n  $(NAME_PART) - File name without extension"
-        alert.addButton(withTitle: "Run in Terminal")
-        alert.addButton(withTitle: "Run in Background")
-        alert.addButton(withTitle: "Cancel")
-
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        input.placeholderString = "e.g. python3 $(CURRENT_FILE)"
-        input.stringValue = workspace.lastRunCommand.isEmpty ? "python3 $(CURRENT_FILE)" : workspace.lastRunCommand
-        alert.accessoryView = input
-
-        let response = alert.runModal()
-        let command = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else { return }
-
-        if response == .alertFirstButtonReturn {
-            workspace.executeRunCommand(command, inTerminal: true)
-        } else if response == .alertSecondButtonReturn {
-            workspace.executeRunCommand(command, inTerminal: false)
+        var command = workspace.lastRunCommand
+        while true {
+            let alert = NSAlert()
+            alert.messageText = workspace.tr("Run...")
+            alert.informativeText = workspace.tr("The Program to Run:")
+            ["Run in Terminal", "Run in Background", "Save...", "Browse...", "Insert Variable...", "Cancel"].forEach {
+                alert.addButton(withTitle: workspace.tr($0))
+            }
+            let input = NSComboBox(frame: NSRect(x: 0, y: 0, width: 440, height: 26))
+            input.placeholderString = "e.g. python3 \"$(FULL_CURRENT_PATH)\""
+            input.addItems(withObjectValues: workspace.runCommandHistory)
+            input.stringValue = command
+            alert.accessoryView = input
+            let choice = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            command = input.stringValue
+            let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch choice {
+            case 0, 1:
+                guard !trimmed.isEmpty else { NSSound.beep(); continue }
+                workspace.executeRunCommand(trimmed, inTerminal: choice == 0)
+                return
+            case 2:
+                guard !trimmed.isEmpty else { NSSound.beep(); continue }
+                promptSaveRunCommand(trimmed)
+                return
+            case 3:
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = false
+                if panel.runModal() == .OK, let url = panel.url {
+                    command += (command.isEmpty || command.hasSuffix(" ") ? "" : " ") + "\"\(url.path)\""
+                }
+            case 4:
+                if let variable = promptRunVariable() { command += variable }
+            default:
+                return
+            }
         }
+    }
+
+    private func promptRunVariable() -> String? {
+        let variables = ["FULL_CURRENT_PATH", "CURRENT_DIRECTORY", "FILE_NAME", "NAME_PART",
+                         "EXT_PART", "CURRENT_WORD", "CURRENT_LINE", "CURRENT_LINESTR",
+                         "CURRENT_COLUMN", "NPP_DIRECTORY", "NPP_FULL_FILE_PATH"]
+        let alert = NSAlert()
+        alert.messageText = workspace.tr("Insert Variable")
+        alert.addButton(withTitle: workspace.tr("Insert"))
+        alert.addButton(withTitle: workspace.tr("Cancel"))
+        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
+        picker.addItems(withTitles: variables)
+        alert.accessoryView = picker
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let variable = picker.titleOfSelectedItem else { return nil }
+        return "$(\(variable))"
+    }
+    @objc func menuRunSavedCommand(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID,
+              let saved = workspace.savedRunCommands.first(where: { $0.id == id }) else { return }
+        workspace.executeRunCommand(saved.command, inTerminal: saved.inTerminal)
+    }
+    @objc func menuManageRunCommands() {
+        workspace.requestedShortcutMapperTab = 2
+        workspace.showShortcutMapper = true
+    }
+
+    private func promptSaveRunCommand(_ command: String) {
+        let alert = NSAlert()
+        alert.messageText = workspace.tr("Save Run Command")
+        alert.addButton(withTitle: workspace.tr("Save"))
+        alert.addButton(withTitle: workspace.tr("Cancel"))
+        let nameField = NSTextField(string: "")
+        nameField.placeholderString = workspace.tr("Name")
+        let shortcutField = NSTextField(string: "")
+        shortcutField.placeholderString = "Cmd+Alt+R"
+        let terminalCheck = NSButton(checkboxWithTitle: workspace.tr("Run in Terminal"), target: nil, action: nil)
+        let fields = NSStackView(views: [nameField, shortcutField, terminalCheck])
+        fields.orientation = .vertical
+        fields.spacing = 8
+        fields.frame = NSRect(x: 0, y: 0, width: 300, height: 80)
+        alert.accessoryView = fields
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let shortcut = shortcutField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard configureRunShortcut(shortcut, for: NSMenuItem()) else {
+            NSSound.beep()
+            return
+        }
+        if workspace.saveRunCommand(name: nameField.stringValue, command: command,
+                                    shortcut: shortcut,
+                                    inTerminal: terminalCheck.state == .on) {
+            setupMenuBar()
+        } else {
+            NSSound.beep()
+        }
+    }
+
+    @discardableResult
+    private func configureRunShortcut(_ value: String, for item: NSMenuItem) -> Bool {
+        if value.isEmpty || value == "None" { return true }
+        let parts = value.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+        let key = value.hasSuffix("++") ? "+" : (parts.last ?? "")
+        let modifiersOnly = value.hasSuffix("++") ? Array(parts.dropLast(2)) : Array(parts.dropLast())
+        guard !key.isEmpty,
+              modifiersOnly.allSatisfy({ ["Cmd", "Ctrl", "Alt", "Opt", "Shift"].contains($0) })
+        else { return false }
+        var modifiers: NSEvent.ModifierFlags = []
+        if modifiersOnly.contains("Cmd") { modifiers.insert(.command) }
+        if modifiersOnly.contains("Ctrl") { modifiers.insert(.control) }
+        if modifiersOnly.contains("Alt") || modifiersOnly.contains("Opt") { modifiers.insert(.option) }
+        if modifiersOnly.contains("Shift") { modifiers.insert(.shift) }
+        let equivalent: String
+        if key == "Space" { equivalent = " " }
+        else if key == "Tab" { equivalent = "\t" }
+        else if key == "Enter" { equivalent = "\r" }
+        else if key == "Backspace" { equivalent = "\u{8}" }
+        else if key == "Delete" { equivalent = "\u{F728}" }
+        else if let arrow = ["Up": 0xF700, "Down": 0xF701,
+                             "Left": 0xF702, "Right": 0xF703][key],
+                let scalar = UnicodeScalar(arrow) { equivalent = String(scalar) }
+        else if key.hasPrefix("F"), let number = Int(key.dropFirst()), (1...12).contains(number),
+                let scalar = UnicodeScalar(0xF704 + number - 1) {
+            equivalent = String(scalar)
+        } else if key.count == 1 { equivalent = key.lowercased() }
+        else { return false }
+        item.keyEquivalent = equivalent
+        item.keyEquivalentModifierMask = modifiers
+        return true
     }
     @objc func menuLaunchSafari() {
         if let doc = workspace.activeDocument, let path = doc.filePath {
@@ -2143,6 +2331,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSWorkspace.shared.open(url)
         }
     }
+    @objc func menuOpenLatestMacRelease() {
+        if let url = URL(string: "https://github.com/slux78/notepadplusplus-mac/releases/latest") {
+            NSWorkspace.shared.open(url)
+        }
+    }
     @objc func menuDebugInfo() {
         let alert = NSAlert()
         alert.messageText = "Debug Info"
@@ -2199,6 +2392,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Pass 2: Edit Menu Validation
         if menuItem.action == #selector(menuBeginEndSelect) {
             menuItem.state = (workspace.beginSelectAnchor != nil) ? .on : .off
+            return workspace.activeDocument != nil
+        }
+        if menuItem.action == #selector(menuBeginEndSelectColumnMode) {
+            menuItem.state = workspace.isColumnModeSelecting ? .on : .off
             return workspace.activeDocument != nil
         }
         if menuItem.action == #selector(menuToggleReadOnlyCurrentDoc) {
@@ -2526,6 +2723,7 @@ public struct NppCommandLineParser {
         public var language: String?
         public var isReadOnly: Bool = false
         public var localization: String?
+        public var sessionPath: String?
         public var runTests: Bool = false
         public var files: [String] = []
     }
@@ -2542,6 +2740,11 @@ public struct NppCommandLineParser {
             let arg = args[i]
             if arg == "--run-tests" {
                 parsed.runTests = true
+            } else if arg == "-openSession" {
+                if i + 1 < args.count && !args[i + 1].hasPrefix("-") {
+                    i += 1
+                    parsed.sessionPath = args[i]
+                }
             } else if arg.hasPrefix("-n") {
                 let rest = String(arg.dropFirst(2))
                 if !rest.isEmpty {
@@ -2588,6 +2791,11 @@ public struct NppCommandLineParser {
             } else if loc == "en" {
                 workspace.localizationLanguage = "English"
             }
+        }
+
+        if let sessionPath = parsed.sessionPath {
+            let sessionURL = URL(fileURLWithPath: (sessionPath as NSString).expandingTildeInPath)
+            _ = workspace.loadSession(from: sessionURL)
         }
 
         for path in parsed.files {

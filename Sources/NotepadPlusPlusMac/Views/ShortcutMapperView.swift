@@ -73,8 +73,8 @@ public struct NppShortcutMapperView: View {
     let runDefaults: [(String, String, String)] = [
         ("Run", "Run...", "F5"),
         ("Run", "Open in Terminal", "Cmd+T"),
-        ("Run", "Launch in Safari", "Cmd+Alt+1"),
-        ("Run", "Launch in Chrome", "Cmd+Alt+2")
+        ("Run", "Launch in Safari", "None"),
+        ("Run", "Launch in Chrome", "None")
     ]
 
     let pluginDefaults: [(String, String, String)] = [
@@ -244,13 +244,22 @@ public struct NppShortcutMapperView: View {
                     .disabled(selectedEntry == nil)
 
                     Button(workspace.tr("Delete")) {
-                        if let entry = selectedEntry, selectedTab == 1 {
-                            workspace.savedMacros.removeAll { $0.name == entry.name }
-                            selectedEntryKey = nil
+                        if let entry = selectedEntry {
+                            if selectedTab == 1 {
+                                workspace.deleteSavedMacro(named: entry.name)
+                                selectedEntryKey = nil
+                            } else if selectedTab == 2,
+                                      let saved = workspace.savedRunCommands.first(where: { $0.name == entry.name }) {
+                                workspace.deleteRunCommand(id: saved.id)
+                                selectedEntryKey = nil
+                                (NSApp.delegate as? AppDelegate)?.setupMenuBar()
+                            }
                         }
                     }
                     .frame(minWidth: 72)
-                    .disabled(selectedTab != 1 || selectedEntry == nil)
+                    .disabled(selectedEntry == nil ||
+                              (selectedTab != 1 && !(selectedTab == 2 &&
+                                  workspace.savedRunCommands.contains { $0.name == selectedEntry?.name })))
 
                     Button(workspace.tr("Close")) {
                         isPresented = false
@@ -271,6 +280,7 @@ public struct NppShortcutMapperView: View {
         .sheet(isPresented: $showModifySheet) {
             modifyShortcutSubDialog(entry: selectedEntry)
         }
+        .onAppear { selectedTab = workspace.requestedShortcutMapperTab }
     }
 
     // MARK: - Sub-Dialog IDD_SHORTCUT_DLG (shortcut.rc lines 25-43)
@@ -287,7 +297,8 @@ public struct NppShortcutMapperView: View {
                 TextField("", text: $editingName)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .font(.system(size: 11))
-                    .disabled(selectedTab != 1)
+                    .disabled(selectedTab != 1 && !(selectedTab == 2 &&
+                        workspace.savedRunCommands.contains { $0.name == entry?.name }))
             }
 
             HStack(spacing: 10) {
@@ -364,12 +375,14 @@ public struct NppShortcutMapperView: View {
 
     private func applyShortcut(_ newShortcut: String, to entry: ShortcutEntry, newName: String? = nil) {
         if selectedTab == 1 {
-            if let idx = workspace.savedMacros.firstIndex(where: { $0.name == entry.name }) {
-                workspace.savedMacros[idx].shortcut = (newShortcut == "None") ? "" : newShortcut
-                if let nn = newName?.trimmingCharacters(in: .whitespacesAndNewlines), !nn.isEmpty {
-                    workspace.savedMacros[idx].name = nn
-                }
-            }
+            workspace.updateSavedMacro(named: entry.name,
+                                       newName: newName ?? entry.name,
+                                       newShortcut: newShortcut == "None" ? "" : newShortcut)
+        } else if selectedTab == 2,
+                  let saved = workspace.savedRunCommands.first(where: { $0.name == entry.name }) {
+            _ = workspace.updateRunCommand(id: saved.id, name: newName ?? entry.name,
+                                           shortcut: newShortcut == "None" ? "" : newShortcut)
+            (NSApp.delegate as? AppDelegate)?.setupMenuBar()
         } else {
             workspace.customShortcuts[entry.id] = newShortcut
         }
@@ -412,7 +425,17 @@ public struct NppShortcutMapperView: View {
             return workspace.savedMacros.map {
                 ShortcutEntry(category: "Macro", name: $0.name, shortcut: $0.shortcut.isEmpty ? "None" : $0.shortcut)
             }
-        case 2: baseTuples = runDefaults
+        case 2:
+            let defaults = runDefaults.map { cat, name, defSc in
+                let key = "\(cat)|\(name)"
+                return ShortcutEntry(category: cat, name: name,
+                                     shortcut: workspace.customShortcuts[key] ?? defSc)
+            }
+            let saved = workspace.savedRunCommands.map {
+                ShortcutEntry(category: "Run", name: $0.name,
+                              shortcut: $0.shortcut.isEmpty ? "None" : $0.shortcut)
+            }
+            return defaults + saved
         case 3: baseTuples = pluginDefaults
         case 4: baseTuples = scintillaDefaults
         default: baseTuples = mainMenuDefaults

@@ -65,7 +65,9 @@ public struct NppSyntaxRules {
 }
 
 public final class NppSyntaxHighlighter {
-    public static func highlight(textStorage: NSTextStorage, language: String, isDarkMode: Bool, baseFont: NSFont? = nil, theme: NppTheme? = nil, maxFileSizeMB: Int = 200) {
+    public static func highlight(textStorage: NSTextStorage, language: String, isDarkMode: Bool,
+                                 baseFont: NSFont? = nil, theme: NppTheme? = nil,
+                                 maxFileSizeMB: Int = 200, userDefinedLanguage: NppUserDefineLanguage? = nil) {
         let string = textStorage.string
         guard !string.isEmpty else { return }
         if maxFileSizeMB > 0 && (string as NSString).length > maxFileSizeMB * 1024 * 1024 {
@@ -95,6 +97,17 @@ public final class NppSyntaxHighlighter {
         let preprocColor = isDarkMode ? NSColor(calibratedRed: 0.77, green: 0.52, blue: 0.75, alpha: 1.0) : NSColor(calibratedRed: 0.50, green: 0.0, blue: 0.50, alpha: 1.0)
         let variableColor = isDarkMode ? NSColor(calibratedRed: 0.61, green: 0.86, blue: 0.99, alpha: 1.0) : NSColor(calibratedRed: 0.0, green: 0.10, blue: 0.60, alpha: 1.0) // Cyan #9CDCFE
         let operatorColor = isDarkMode ? NSColor(calibratedWhite: 0.83, alpha: 1.0) : NSColor(calibratedWhite: 0.20, alpha: 1.0)
+
+        if let udl = userDefinedLanguage {
+            applyUserDefinedLanguage(udl, to: textStorage, string: string,
+                                     keywordColors: [declarationColor, controlFlowColor, typeColor,
+                                                     constantColor, functionColor, preprocColor,
+                                                     variableColor, operatorColor],
+                                     numberColor: numberColor, operatorColor: operatorColor,
+                                     commentColor: commentColor)
+            textStorage.endEditing()
+            return
+        }
 
         // 0. Operators & Arrows
         if language != "Plain Text" && language != "JSON" {
@@ -234,6 +247,137 @@ public final class NppSyntaxHighlighter {
         for match in matches {
             textStorage.addAttribute(.foregroundColor, value: color, range: match.range)
         }
+    }
+
+    private static func applyUserDefinedLanguage(_ language: NppUserDefineLanguage,
+                                                 to storage: NSTextStorage, string: String,
+                                                 keywordColors: [NSColor], numberColor: NSColor,
+                                                 operatorColor: NSColor, commentColor: NSColor) {
+        let options: NSRegularExpression.Options = language.ignoreCase ? [.caseInsensitive] : []
+        for group in 1...8 {
+            let key = "Keywords\(group)"
+            let patterns = NppUDLCodec.keywordPatterns(from: language.keywordLists[key] ?? "",
+                                                        prefixMode: language.prefixModes[key] == true)
+            guard !patterns.isEmpty else { continue }
+            let pattern = patterns.joined(separator: "|")
+            let color = udlColor(named: "KEYWORDS\(group)", in: language) ?? keywordColors[group - 1]
+            applyPattern(pattern, in: string, color: color, textStorage: storage, options: options)
+        }
+        let numericColor = udlColor(named: "NUMBERS", in: language) ?? numberColor
+        for pattern in NppUDLCodec.numberPatterns(for: language) {
+            applyPattern(pattern, in: string, color: numericColor, textStorage: storage)
+        }
+        let operators = (language.keywordLists["Operators1"] ?? "")
+            .split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        if !operators.isEmpty {
+            let pattern = operators.sorted { $0.count > $1.count }
+                .map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+            applyPattern(pattern, in: string,
+                         color: udlColor(named: "OPERATORS", in: language) ?? operatorColor,
+                         textStorage: storage)
+        }
+        let backwardOperators = NppUDLCodec.keywordPatterns(
+            from: language.keywordLists["Operators2"] ?? "", prefixMode: false
+        )
+        if !backwardOperators.isEmpty,
+           let regex = try? NSRegularExpression(pattern: backwardOperators.joined(separator: "|"), options: options) {
+            let source = string as NSString
+            let color = udlColor(named: "OPERATORS", in: language) ?? operatorColor
+            for match in regex.matches(in: string, range: NSRange(location: 0, length: source.length)) {
+                let before = source.substring(to: match.range.location)
+                let after = source.substring(from: NSMaxRange(match.range))
+                let leftSeparated = before.isEmpty || before.last?.isWhitespace == true ||
+                    operators.contains { before.hasSuffix($0) }
+                let rightSeparated = after.isEmpty || after.first?.isWhitespace == true ||
+                    operators.contains { after.hasPrefix($0) }
+                if leftSeparated && rightSeparated {
+                    storage.addAttribute(.foregroundColor, value: color, range: match.range)
+                }
+            }
+        }
+        applyUserDefinedDelimiters(language, to: storage, string: string)
+        let comments = language.keywordLists["Comments"] ?? ""
+        let line = NppUDLCodec.commentToken(0, in: comments)
+        if !line.isEmpty {
+            let pattern = NSRegularExpression.escapedPattern(for: line) + ".*$"
+            applyPattern(pattern, in: string,
+                         color: udlColor(named: "LINE COMMENTS", in: language) ?? commentColor,
+                         textStorage: storage, options: [.anchorsMatchLines])
+        }
+        let blockOpen = NppUDLCodec.commentToken(3, in: comments)
+        let blockClose = NppUDLCodec.commentToken(4, in: comments)
+        if !blockOpen.isEmpty, !blockClose.isEmpty {
+            let pattern = NSRegularExpression.escapedPattern(for: blockOpen) + "[\\s\\S]*?" +
+                NSRegularExpression.escapedPattern(for: blockClose)
+            applyPattern(pattern, in: string,
+                         color: udlColor(named: "COMMENTS", in: language) ?? commentColor,
+                         textStorage: storage)
+        }
+    }
+
+    private static func applyUserDefinedDelimiters(_ language: NppUserDefineLanguage,
+                                                    to storage: NSTextStorage, string: String) {
+        let source = string as NSString
+        let rules = language.keywordLists["Delimiters"] ?? ""
+        for group in 1...8 {
+            let first = (group - 1) * 3
+            let opening = NppUDLCodec.commentToken(first, in: rules)
+            let escape = NppUDLCodec.commentToken(first + 1, in: rules)
+            let closing = NppUDLCodec.commentToken(first + 2, in: rules)
+            guard !opening.isEmpty, !closing.isEmpty else { continue }
+            let color = udlColor(named: "DELIMITERS\(group)", in: language) ?? NSColor.systemOrange
+            var position = 0
+            while position < source.length {
+                let openRange = source.range(of: opening, range: NSRange(location: position,
+                                                length: source.length - position))
+                guard openRange.location != NSNotFound else { break }
+                let contentStart = NSMaxRange(openRange)
+                var end = source.length
+                if closing == "((EOL))" {
+                    let newline = source.rangeOfCharacter(from: .newlines,
+                        range: NSRange(location: contentStart, length: source.length - contentStart))
+                    if newline.location != NSNotFound { end = newline.location }
+                } else {
+                    var search = contentStart
+                    while search < source.length {
+                        let closeRange = source.range(of: closing,
+                            range: NSRange(location: search, length: source.length - search))
+                        guard closeRange.location != NSNotFound else { break }
+                        if !escape.isEmpty, closeRange.location >= (escape as NSString).length {
+                            var escapeCount = 0
+                            var before = closeRange.location
+                            while before >= (escape as NSString).length {
+                                let candidate = NSRange(location: before - (escape as NSString).length,
+                                                        length: (escape as NSString).length)
+                                guard source.substring(with: candidate) == escape else { break }
+                                escapeCount += 1
+                                before -= (escape as NSString).length
+                            }
+                            if escapeCount % 2 == 1 {
+                                search = NSMaxRange(closeRange)
+                                continue
+                            }
+                        }
+                        end = NSMaxRange(closeRange)
+                        break
+                    }
+                }
+                if end > openRange.location {
+                    storage.addAttribute(.foregroundColor, value: color,
+                                         range: NSRange(location: openRange.location,
+                                                        length: end - openRange.location))
+                }
+                position = max(end, contentStart)
+            }
+        }
+    }
+
+    private static func udlColor(named name: String, in language: NppUserDefineLanguage) -> NSColor? {
+        guard let hex = language.styleForegrounds[name], hex.count == 6,
+              let value = Int(hex, radix: 16) else { return nil }
+        return NSColor(calibratedRed: CGFloat((value >> 16) & 0xFF) / 255,
+                       green: CGFloat((value >> 8) & 0xFF) / 255,
+                       blue: CGFloat(value & 0xFF) / 255, alpha: 1)
     }
 
     private static func collectRanges(_ pattern: String, in string: String, options: NSRegularExpression.Options, into ranges: inout [NSRange]) {

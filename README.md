@@ -2,7 +2,7 @@
 
 A high-performance, native macOS port of **Notepad++**, honoring the upstream feature set, UI paradigms, and keyboard shortcuts from the official C++ source code.
 
-> **Note**: This is an independent, unofficial native macOS port. Notepad++ is originally created by [Don HO](https://github.com/donho) and the Notepad++ team.
+> **Note**: This is an independent, unofficial native macOS port shared at [slux78/notepadplusplus-mac](https://github.com/slux78/notepadplusplus-mac). It is not an official Notepad++ release. Notepad++ is originally created by [Don HO](https://github.com/donho) and the Notepad++ team.
 
 ---
 
@@ -32,8 +32,8 @@ A high-performance, native macOS port of **Notepad++**, honoring the upstream fe
 ### Build App Bundle
 ```bash
 # Clone the repository
-git clone https://github.com/<your-username>/notepad-plus-plus-mac.git
-cd notepad-plus-plus-mac
+git clone https://github.com/slux78/notepadplusplus-mac.git
+cd notepadplusplus-mac
 
 # Build the release app bundle
 ./bundle.sh

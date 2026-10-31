@@ -13,6 +13,7 @@ public final class NppDocument: ObservableObject, Identifiable {
     @Published public var isDirty: Bool = false
     @Published public var isPinned: Bool = false
     @Published public var isReadOnly: Bool = false
+    @Published public var isSessionPlaceholder: Bool = false
     @Published public var tabColorId: Int = 0 // 0: None, 1..5: Color 1..5 (IDM_VIEW_TAB_COLOUR_1..5)
     @Published public var isMonitoring: Bool = false // Monitoring (tail -f) (IDM_VIEW_MONITORING)
     @Published public var styledTokenRanges: [Int: [NSRange]] = [:] // 1..5 -> styled NSRanges
@@ -38,6 +39,48 @@ public final class NppDocument: ObservableObject, Identifiable {
 
     public func clearBookmarks() {
         bookmarkedLines.removeAll()
+    }
+
+    /// Shifts and adjusts bookmarked lines when lines are inserted or deleted by text edits
+    public func adjustBookmarks(affectedRange: NSRange, replacementString: String, currentText: String) {
+        guard !bookmarkedLines.isEmpty else { return }
+        let ns = currentText as NSString
+        let safeLoc = min(affectedRange.location, ns.length)
+        let safeLen = min(affectedRange.length, ns.length - safeLoc)
+        let deletedSubstring = (safeLen > 0) ? ns.substring(with: NSRange(location: safeLoc, length: safeLen)) : ""
+
+        var deletedNewlines = 0
+        for b in deletedSubstring.utf8 {
+            if b == 10 { deletedNewlines += 1 }
+        }
+        var insertedNewlines = 0
+        for b in replacementString.utf8 {
+            if b == 10 { insertedNewlines += 1 }
+        }
+        guard deletedNewlines != 0 || insertedNewlines != 0 else { return }
+
+        // Calculate the 1-based start line of the edit
+        var editStartLine = 1
+        var idx = 0
+        while idx < safeLoc {
+            if ns.character(at: idx) == 10 {
+                editStartLine += 1
+            }
+            idx += 1
+        }
+
+        let lineDelta = insertedNewlines - deletedNewlines
+        var newBookmarks = Set<Int>()
+        for bLine in bookmarkedLines {
+            if bLine < editStartLine {
+                newBookmarks.insert(bLine)
+            } else if bLine > editStartLine + deletedNewlines {
+                newBookmarks.insert(max(1, bLine + lineDelta))
+            } else if bLine == editStartLine && deletedNewlines == 0 {
+                newBookmarks.insert(bLine)
+            }
+        }
+        bookmarkedLines = newBookmarks
     }
 
     /// Shifts and adjusts styled token ranges when text is edited (preventing highlight offset drift)
@@ -123,6 +166,30 @@ public final class NppDocument: ObservableObject, Identifiable {
     }
 
     public func save(to url: URL) -> Bool {
+        guard let data = encodedData() else { return false }
+        let previousPath = filePath?.standardizedFileURL
+
+        do {
+            try data.write(to: url, options: .atomic)
+            self.filePath = url
+            self.title = url.lastPathComponent
+            self.rawFileBytes = data
+            self.isDirty = false
+            if previousPath != url.standardizedFileURL {
+                self.language = NppDocument.detectLanguage(for: url, content: content)
+            }
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let modDate = attrs[.modificationDate] as? Date {
+                self.lastKnownModificationDate = modDate
+            }
+            return true
+        } catch {
+            print("Failed to save file: \(error)")
+            return false
+        }
+    }
+
+    public func encodedData() -> Data? {
         let utf8Bytes = Array(content.utf8)
         var outLen: Int = 0
         let addBomFlag: Int32 = hasBOM ? 1 : 0
@@ -134,28 +201,12 @@ public final class NppDocument: ObservableObject, Identifiable {
             addBomFlag,
             &outLen
         ) else {
-            return false
+            return nil
         }
 
         let data = Data(bytes: encodedPtr, count: outLen)
         npp_free_buffer(encodedPtr)
-
-        do {
-            try data.write(to: url, options: .atomic)
-            self.filePath = url
-            self.title = url.lastPathComponent
-            self.rawFileBytes = data
-            self.isDirty = false
-            self.language = NppDocument.detectLanguage(for: url, content: content)
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-               let modDate = attrs[.modificationDate] as? Date {
-                self.lastKnownModificationDate = modDate
-            }
-            return true
-        } catch {
-            print("Failed to save file: \(error)")
-            return false
-        }
+        return data
     }
 
     public var encodingDisplayName: String {
@@ -185,7 +236,8 @@ public final class NppDocument: ObservableObject, Identifiable {
 
     public static func normalizeCharset(_ name: String) -> String {
         let upper = name.uppercased()
-        if upper.contains("949") || upper == "EUC-KR" { return "CP949" }
+        if upper == "EUC-KR" { return "EUC-KR" }
+        if upper.contains("949") { return "CP949" }
         if upper.contains("932") || upper.contains("SHIFT") { return "CP932" }
         if upper.contains("18030") || upper.contains("2312") { return "GB18030" }
         if upper.contains("BIG5") { return "BIG5" }
@@ -200,25 +252,6 @@ public final class NppDocument: ObservableObject, Identifiable {
     public func convertEncoding(to targetCharset: String, addBOM: Bool = false) {
         objectWillChange.send()
         let norm = NppDocument.normalizeCharset(targetCharset)
-
-        // In Notepad++, Convert to UTF-8 converts the document format to UTF-8 without altering visible characters.
-        // If the document currently has mojibake (e.g. CP949 decoded as Latin1/Windows-1252),
-        // we automatically repair the text so it displays clean Korean!
-        if (norm == "UTF-8") && (self.encoding == "CP949" || self.encoding == "EUC-KR" || self.encoding == "WINDOWS-1252") {
-            if let latinData = content.data(using: .windowsCP1252) ?? content.data(using: .isoLatin1) {
-                latinData.withUnsafeBytes { rawPtr in
-                    guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
-                    var decodedLen: Int32 = 0
-                    if let decodedPtr = npp_decode_to_utf8(ptr, latinData.count, "CP949", &decodedLen) {
-                        if let repaired = String(bytes: Data(bytes: decodedPtr, count: Int(decodedLen)), encoding: .utf8), !repaired.isEmpty {
-                            self.content = repaired
-                        }
-                        npp_free_string(decodedPtr)
-                    }
-                }
-            }
-        }
-
         self.encoding = norm
         self.hasBOM = addBOM
         self.isDirty = true
@@ -230,13 +263,8 @@ public final class NppDocument: ObservableObject, Identifiable {
         let norm = NppDocument.normalizeCharset(targetCharset)
 
         var data: Data? = nil
-        if let url = filePath, let diskData = try? Data(contentsOf: url) {
-            data = diskData
-            self.rawFileBytes = diskData
-        } else if let cached = rawFileBytes {
-            data = cached
-        } else {
-            // For in-memory documents, re-encode current content to raw bytes using old encoding
+        if isDirty || rawFileBytes == nil {
+            // For in-memory documents or dirty buffers, re-encode current content to raw bytes using old encoding
             let oldEnc = self.encoding
             let utf8Bytes = Array(content.utf8)
             var outLen: Int = 0
@@ -244,6 +272,11 @@ public final class NppDocument: ObservableObject, Identifiable {
                 data = Data(bytes: ptr, count: outLen)
                 npp_free_buffer(ptr)
             }
+        } else if let url = filePath, let diskData = try? Data(contentsOf: url) {
+            data = diskData
+            self.rawFileBytes = diskData
+        } else if let cached = rawFileBytes {
+            data = cached
         }
 
         if let raw = data {
@@ -298,22 +331,7 @@ public final class NppDocument: ObservableObject, Identifiable {
     public static func detectLanguage(for url: URL, content: String? = nil) -> String {
         let filename = url.lastPathComponent.lowercased()
 
-        // Step 4: Special filenames (Notepad++ programing-languages.md:20-45)
-        switch filename {
-        case "makefile", "gnumakefile":
-            return "Makefile"
-        case "cmakelists.txt":
-            return "CMake"
-        case "dockerfile":
-            return "Dockerfile"
-        case "gemfile", "rakefile", "vagrantfile", "podfile":
-            return "Ruby"
-        case "crontab":
-            return "Shell"
-        default:
-            break
-        }
-
+        // Known extensions take priority over special filenames.
         let ext = url.pathExtension.lowercased()
         switch ext {
         case "c", "h": return "C"
@@ -339,6 +357,16 @@ public final class NppDocument: ObservableObject, Identifiable {
             break
         }
 
+        switch filename {
+        case "makefile", "gnumakefile": return "Makefile"
+        case "cmakelists.txt": return "CMake"
+        case "dockerfile": return "Dockerfile"
+        case "sconstruct", "sconscript", "wscript": return "Python"
+        case "gemfile", "rakefile", "vagrantfile", "podfile": return "Ruby"
+        case "crontab": return "Shell"
+        default: break
+        }
+
         // Step 5: First line hint (Shebang, XML Prolog, HTML Doctype)
         if let firstLine = content?.components(separatedBy: .newlines).first?.trimmingCharacters(in: .whitespaces), !firstLine.isEmpty {
             if let lang = detectLanguageFromFirstLine(firstLine) {
@@ -362,6 +390,9 @@ public final class NppDocument: ObservableObject, Identifiable {
         }
         if lower.hasPrefix("<?xml") {
             return "XML"
+        }
+        if lower.hasPrefix("<?php") || lower.hasPrefix("<?") {
+            return "PHP"
         }
         if lower.hasPrefix("<!doctype html") || lower.hasPrefix("<html") {
             return "HTML"

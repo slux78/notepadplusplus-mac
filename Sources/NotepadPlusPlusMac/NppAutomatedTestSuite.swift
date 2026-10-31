@@ -22,6 +22,8 @@ final class NppAutomatedTestSuite {
                 }
             }
 
+            ws.isTestRunning = true
+
             // TEST 1: Initial Document State
             assertTest("Initial workspace has 1 default document", ws.documents.count == 1)
             assertTest("Default title is 'new 1'", ws.activeDocument?.title == "new 1")
@@ -1395,10 +1397,22 @@ final class NppAutomatedTestSuite {
             // ---------------------------------------------------------
             runMilestone3SearchParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
-            // ---------------------------------------------------------
-            // 37. MILESTONE 4: ADVERSARIAL CHALLENGER STRESS SUITE (Pass 4)
-            // ---------------------------------------------------------
             runAdversarialM4ChallengeTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
+            // ---------------------------------------------------------
+            // 38. [AUDIT-027] COMPREHENSIVE INTERACTIVE SCENARIO TEST SUITES (Streams 1-5)
+            // ---------------------------------------------------------
+            runStream1EditorInteractiveTests(ws: ws, assertTest: assertTest)
+            runStream2SearchInteractiveTests(ws: ws, assertTest: assertTest)
+            runStream3LifecycleInteractiveTests(ws: ws, assertTest: assertTest)
+            runStream4EncodingInteractiveTests(ws: ws, assertTest: assertTest)
+            runStream5DialogsInteractiveTests(ws: ws, assertTest: assertTest)
+            runManualAutoCompletionTests(assertTest: assertTest)
+            runManualUDLTests(assertTest: assertTest)
+            runManualFileMenuTests(assertTest: assertTest)
+            runManualSessionTests(assertTest: assertTest)
+            runManualRunMenuTests(assertTest: assertTest)
+            runManualLanguageDetectionTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -3423,10 +3437,14 @@ final class NppAutomatedTestSuite {
                        parts[1] == "/Users/npp/Projects/MyApp/Sources" &&
                        parts[2] == "MainController.swift" &&
                        parts[3] == "MainController" &&
-                       parts[4] == "swift" &&
+                       parts[4] == ".swift" &&
                        parts[5] == "totalSum" &&
                        parts[6] == "1" &&
                        parts[7] == "7")
+            runDoc.cursorPos = 4
+            runDoc.selectionLength = 8
+            assertTest("Manual Run: CURRENT_WORD uses selected text before caret word",
+                       ws.expandRunCommand("$(CURRENT_WORD)") == "totalSum")
 
             let lineStrExpanded = ws.expandRunCommand("$(CURRENT_LINESTR)")
             assertTest("Sprint 1.7.B: expandRunCommand expands $(CURRENT_LINESTR) to current line text",
@@ -3460,6 +3478,9 @@ final class NppAutomatedTestSuite {
         let cliTestArgs = ["--run-tests"]
         let parsedTests = NppCommandLineParser.parseArgs(cliTestArgs)
         assertTest("Sprint 1.8.B: CLI parser recognizes --run-tests flag", parsedTests.runTests == true)
+        let parsedSession = NppCommandLineParser.parseArgs(["-openSession", "/tmp/my.session", "-n7"])
+        assertTest("Sprint 1.8.C: CLI parser separates -openSession path from file arguments",
+                   parsedSession.sessionPath == "/tmp/my.session" && parsedSession.files.isEmpty && parsedSession.line == 7)
 
         // -------------------------------------------------------------
         // TASK 9: Find in Files Exclusion Filters (!*.ext, !\dir, !/dir)
@@ -4592,7 +4613,723 @@ final class NppAutomatedTestSuite {
                    !ws.documents.contains(where: { $0.id == monTestDoc.id }))
 
         try? FileManager.default.removeItem(at: tempMonFile)
-        ws.closeAll()
+        ws.closeAll(force: true)
+
+        // ========================================================
+        // ADVANCED SUITE: Dirty Save Confirmation & Dual View
+        // ========================================================
+        // 1. Dirty Save Confirmation: .cancel rejects close
+        ws.newDocument()
+        let dirtyDoc1 = ws.documents.last!
+        dirtyDoc1.content = "Dirty content"
+        dirtyDoc1.isDirty = true
+        var promptCalled = false
+        ws.confirmSaveHandler = { doc in
+            promptCalled = true
+            return .cancel
+        }
+        let closeCancelled = ws.closeDocument(id: dirtyDoc1.id, force: false)
+        assertTest("Dirty Save Confirm: .cancel leaves document open", !closeCancelled && ws.documents.contains(where: { $0.id == dirtyDoc1.id }) && promptCalled)
+
+        // 2. Dirty Save Confirmation: .dontSave closes document without saving
+        promptCalled = false
+        ws.confirmSaveHandler = { doc in
+            promptCalled = true
+            return .dontSave
+        }
+        let closeDontSave = ws.closeDocument(id: dirtyDoc1.id, force: false)
+        assertTest("Dirty Save Confirm: .dontSave closes document without save", closeDontSave && !ws.documents.contains(where: { $0.id == dirtyDoc1.id }) && promptCalled)
+
+        // 3. Dirty Save Confirmation: .save writes changes and closes
+        let tempSaveURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_save_confirm_\(UUID().uuidString).txt")
+        try? "original".write(to: tempSaveURL, atomically: true, encoding: .utf8)
+        ws.openFile(url: tempSaveURL)
+        let dirtyDoc2 = ws.documents.last!
+        dirtyDoc2.content = "modified content to save"
+        dirtyDoc2.isDirty = true
+        promptCalled = false
+        ws.confirmSaveHandler = { doc in
+            promptCalled = true
+            return .save
+        }
+        let closeSaved = ws.closeDocument(id: dirtyDoc2.id, force: false)
+        let savedContent = (try? String(contentsOf: tempSaveURL, encoding: .utf8)) ?? ""
+        assertTest("Dirty Save Confirm: .save writes changes and closes document", closeSaved && !ws.documents.contains(where: { $0.id == dirtyDoc2.id }) && promptCalled && savedContent == "modified content to save")
+        try? FileManager.default.removeItem(at: tempSaveURL)
+
+        // 4. Dirty Save Confirmation: force=true skips confirmation
+        ws.newDocument()
+        let dirtyDoc3 = ws.documents.last!
+        dirtyDoc3.content = "force close"
+        dirtyDoc3.isDirty = true
+        promptCalled = false
+        let forceClosed = ws.closeDocument(id: dirtyDoc3.id, force: true)
+        assertTest("Dirty Save Confirm: force=true bypasses confirm dialog", forceClosed && !ws.documents.contains(where: { $0.id == dirtyDoc3.id }) && !promptCalled)
+        ws.confirmSaveHandler = nil
+
+        // 5. Dual View: Move to Other View
+        ws.closeAll(force: true)
+        let docA = ws.documents[0]
+        docA.title = "File A"
+        ws.newDocument() // Doc B
+        let docB = ws.documents[1]
+        docB.title = "File B"
+        assertTest("Dual View: Initially single view", !ws.isDualView && ws.primaryDocuments.count == 2)
+
+        ws.moveToOtherView(id: docB.id)
+        assertTest("Dual View: Move to Other View activates dual view", ws.isDualView && ws.secondaryDocuments.count == 1 && ws.secondaryDocuments.first?.id == docB.id)
+        assertTest("Dual View: Primary view retains Doc A only", ws.primaryDocuments.count == 1 && ws.primaryDocuments.first?.id == docA.id)
+
+        // 6. Dual View: Splitter rotation & drag ratio
+        assertTest("Dual View: Default splitDirection is vertical", ws.splitDirection == .vertical)
+        ws.rotateSplitter()
+        assertTest("Dual View: rotateSplitter toggles to horizontal", ws.splitDirection == .horizontal)
+        ws.rotateSplitterLeft()
+        assertTest("Dual View: rotateSplitterLeft toggles to vertical", ws.splitDirection == .vertical)
+
+        ws.splitRatio = 0.6
+        assertTest("Dual View: splitRatio updated", ws.splitRatio == 0.6)
+
+        // 7. Dual View: Clone to Other View
+        ws.cloneToOtherView(id: docA.id)
+        assertTest("Dual View: Clone adds Doc A to both views", ws.clonedDocumentIds.contains(docA.id) && ws.primaryDocuments.contains(where: { $0.id == docA.id }) && ws.secondaryDocuments.contains(where: { $0.id == docA.id }))
+
+        // 8. Dual View: Automatic return to single view when secondary empty
+        ws.closeDocument(id: docA.id, force: true)
+        ws.closeDocument(id: docB.id, force: true)
+        assertTest("Dual View: Automatically returns to single view when secondary closes", !ws.isDualView)
+
+        ws.closeAll(force: true)
+    }
+
+    // =========================================================================
+    // SECTION 33: [AUDIT-027] COMPREHENSIVE INTERACTIVE SCENARIO TEST SUITES
+    // =========================================================================
+
+    // Stream 1: Editor & Text Manipulation Scenarios
+    static func runStream1EditorInteractiveTests(ws: NppWorkspace, assertTest: (String, Bool) -> Void) {
+        ws.closeAll(force: true)
+        ws.newDocument()
+        guard let doc = ws.activeDocument else { return }
+
+        // Test 1: Bookmark adjustment on text insertion
+        doc.content = "Line 1\nLine 2\nLine 3\nLine 4\n"
+        doc.bookmarkedLines = [2, 4]
+        let insertStr = "New Line\n"
+        doc.adjustBookmarks(affectedRange: NSRange(location: 0, length: 0), replacementString: insertStr, currentText: doc.content)
+        doc.content = insertStr + doc.content
+        assertTest("Stream 1: Inserting line shifts bookmarks down", doc.bookmarkedLines.contains(3) && doc.bookmarkedLines.contains(5) && !doc.bookmarkedLines.contains(2))
+
+        // Test 2: Bookmark adjustment on line deletion
+        let delRange = NSRange(location: 0, length: 9)
+        doc.adjustBookmarks(affectedRange: delRange, replacementString: "", currentText: doc.content)
+        doc.content = (doc.content as NSString).replacingCharacters(in: delRange, with: "")
+        assertTest("Stream 1: Deleting line shifts bookmarks up", doc.bookmarkedLines.contains(2) && doc.bookmarkedLines.contains(4) && !doc.bookmarkedLines.contains(3))
+
+        // Test 3: Line operations on selected range preserves outside lines
+        doc.content = "Header\nCharlie\nAlice\nBob\nFooter"
+        let full = doc.content as NSString
+        let charlieRange = full.range(of: "Charlie")
+        let bobRange = full.range(of: "Bob")
+        let midRange = NSRange(location: charlieRange.location, length: NSMaxRange(bobRange) - charlieRange.location)
+        NppEditOperations.sortLines(in: doc, selectedRange: midRange, ascending: true)
+        assertTest("Stream 1: Line sort on selection only affects selected lines", doc.content == "Header\nAlice\nBob\nCharlie\nFooter")
+
+        // Test 4: Decimal sort with commas on selected range
+        doc.content = "Unsorted\n3,14\n1,41\n2,71\nEnd"
+        let start314 = (doc.content as NSString).range(of: "3,14").location
+        let end271 = NSMaxRange((doc.content as NSString).range(of: "2,71"))
+        NppEditOperations.sortLinesAsDecimals(in: doc, selectedRange: NSRange(location: start314, length: end271 - start314), ascending: true, usesComma: true)
+        assertTest("Stream 1: Decimal sort with commas orders correctly in range", doc.content == "Unsorted\n1,41\n2,71\n3,14\nEnd")
+
+        // Test 5: Column mode toggle & anchor
+        if let tv = ws.activeTextView {
+            tv.string = doc.content
+            tv.setSelectedRange(NSRange(location: 0, length: 0))
+            assertTest("Stream 1: Column mode initial state is false", !ws.isColumnModeSelecting && ws.columnModeStartAnchor == nil)
+            ws.toggleColumnModeSelection()
+            assertTest("Stream 1: Column mode toggle activates and sets anchor", ws.isColumnModeSelecting && ws.columnModeStartAnchor != nil)
+            ws.toggleColumnModeSelection()
+            assertTest("Stream 1: Column mode second toggle finalizes selection and resets flag", !ws.isColumnModeSelecting && ws.columnModeStartAnchor == nil)
+        }
+
+        // Test 6: Column Editor with caret insertion down to EOF
+        doc.content = "alpha\nbeta\ngamma"
+        if let tv = ws.activeTextView {
+            tv.string = doc.content
+            tv.setSelectedRange(NSRange(location: 0, length: 0))
+            ws.executeColumnEditor(isText: true, text: "PREFIX_", initialNumber: 0, increaseBy: 1, repeatCount: 1, format: "Dec", leadingZeros: false)
+            assertTest("Stream 1: Column editor inserts prefix at column across all lines", tv.string == "PREFIX_alpha\nPREFIX_beta\nPREFIX_gamma")
+        }
+
+        // Test 7: Jump to line on mixed CRLF/LF does not drift
+        doc.content = "Line1\r\nLine2\nLine3\r\nLine4"
+        ws.jumpToLine(3)
+        assertTest("Stream 1: Jump to line 3 sets cursorLine to 3 accurately", doc.cursorLine == 3)
+
+        ws.closeAll(force: true)
+    }
+
+    // Stream 2: Searching, Replacing & Incremental Workflows
+    static func runStream2SearchInteractiveTests(ws: NppWorkspace, assertTest: (String, Bool) -> Void) {
+        ws.closeAll(force: true)
+        ws.newDocument()
+        guard let doc = ws.activeDocument, let tv = ws.activeTextView else { return }
+        tv.allowsUndo = true
+
+        // Test 1: Regex replacement backreference conversion (\1 -> $1)
+        let convertedTmpl = NppWorkspace.normalizeRegexReplacementTemplate("\\1-\\2_\\0")
+        assertTest("Stream 2: Regex backreference normalization converts \\1 to $1", convertedTmpl == "$1-$2_$0")
+
+        // Test 2: Regex search with line anchors (^ and $)
+        doc.content = "apple 1\napple 2\nbanana\napple 3"
+        tv.string = doc.content
+        ws.findAllInCurrentDoc(query: "^apple \\d$", matchCase: true, wholeWord: false, useRegex: true)
+        let hitCount = ws.searchFileGroups.first?.matches.count ?? 0
+        assertTest("Stream 2: Regex line anchors ^ and $ match line boundaries correctly", hitCount == 3)
+
+        // Test 3: Incremental search updates match index and selection
+        ws.updateIncrementalSearch(query: "apple", matchCase: true, wholeWord: false, useRegex: false)
+        assertTest("Stream 2: Incremental search discovers all matches", ws.incrementalSearchMatches.count == 3)
+        assertTest("Stream 2: Incremental search current match index is 1", ws.incrementalCurrentMatchIndex == 1)
+
+        // Test 4: Replace All with regex template expansion
+        let regex = try? NSRegularExpression(pattern: "apple (\\d)", options: [.anchorsMatchLines])
+        let replaced = regex?.stringByReplacingMatches(in: doc.content, range: NSRange(location: 0, length: (doc.content as NSString).length), withTemplate: "fruit_$1")
+        assertTest("Stream 2: Regex stringByReplacingMatches expands $1 properly", replaced == "fruit_1\nfruit_2\nbanana\nfruit_3")
+
+        // Test 5: Replace All undo grouping preservation. A detached NSTextView
+        // has no undo manager, so exercise the same window-backed editor setup.
+        let undoWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let undoView = NSTextView(frame: undoWindow.contentView?.bounds ?? .zero)
+        undoView.allowsUndo = true
+        undoWindow.contentView?.addSubview(undoView)
+        undoView.string = tv.string
+        let textBeforeReplacement = undoView.string
+        ws.applyTextToTextViewPreservingUndo(tv: undoView, newText: replaced ?? "")
+        assertTest("Stream 2: applyTextToTextViewPreservingUndo updates tv.string", undoView.string == replaced)
+        undoView.undoManager?.undo()
+        assertTest("Stream 2: Undo restores original text in a single step", undoView.string == textBeforeReplacement)
+
+        // Test 6: Modeless Find/Replace Window Controller properties
+        ws.openFind()
+        assertTest("Stream 2: openFind displays modeless floating panel", ws.showFindReplaceDialog && NppFindReplaceWindowController.shared.panel != nil)
+        NppFindReplaceWindowController.shared.close()
+        assertTest("Stream 2: close restores focus and clears panel", !ws.showFindReplaceDialog && NppFindReplaceWindowController.shared.panel == nil)
+
+        // Test 7: Jump to search match synchronizes cursorCol
+        let sampleMatch = NppSearchMatch(
+            documentId: doc.id,
+            documentTitle: doc.title,
+            filePath: doc.filePath,
+            lineNumber: 2,
+            lineContent: "apple 2",
+            matchRangeInLine: NSRange(location: 3, length: 4),
+            charPosition: 11,
+            matchLength: 5
+        )
+        ws.jumpToMatch(sampleMatch)
+        assertTest("Stream 2: jumpToMatch synchronizes doc.cursorCol accurately", doc.cursorCol == 4)
+
+        ws.closeAll(force: true)
+    }
+
+    // Stream 3: Document Lifecycle & Session Workflows
+    static func runStream3LifecycleInteractiveTests(ws: NppWorkspace, assertTest: (String, Bool) -> Void) {
+        ws.closeAll(force: true)
+        // closeAll keeps one untitled document open, as the app does in normal use.
+        // Use that document as Doc 1 so this scenario has exactly three tabs.
+        ws.newDocument() // Doc 2
+        ws.newDocument() // Doc 3
+        let id1 = ws.documents[0].id
+        let id2 = ws.documents[1].id
+        let id3 = ws.documents[2].id
+        ws.documents[0].title = "Doc 1"
+        ws.documents[1].title = "Doc 2"
+        ws.documents[2].title = "Doc 3"
+
+        // Test 1: Reorder tabs (drag Doc 1 to target Doc 3)
+        ws.reorderTab(draggedId: id1, targetId: id3, viewIndex: 0)
+        assertTest("Stream 3: reorderTab moves dragged tab to target index", ws.documents.map { $0.id } == [id2, id3, id1])
+
+        // Test 2: Move tab to start
+        ws.moveTabToStart(id: id1, viewIndex: 0)
+        assertTest("Stream 3: moveTabToStart restores tab to index 0", ws.documents.first?.id == id1)
+
+        // Test 3: Move tab to end
+        ws.moveTabToEnd(id: id1, viewIndex: 0)
+        assertTest("Stream 3: moveTabToEnd places tab at last index", ws.documents.last?.id == id1)
+
+        // Test 4: XML Session save and load with carets
+        let docA = ws.documents[0]
+        docA.bookmarkedLines = [1, 5]
+        docA.cursorPos = 42
+        docA.selectionLength = 10
+        let tempSessionURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_session_\(UUID().uuidString).xml")
+        let saveResult = ws.saveSession(to: tempSessionURL)
+        assertTest("Stream 3: saveSession writes session file", saveResult)
+        let sessionContent = (try? String(contentsOf: tempSessionURL, encoding: .utf8)) ?? ""
+        assertTest("Stream 3: Session file is valid NotepadPlus XML", sessionContent.contains("<NotepadPlus>") && sessionContent.contains("<Session activeView="))
+        try? FileManager.default.removeItem(at: tempSessionURL)
+
+        // Saved sessions must round-trip XML-special file names and editor state.
+        let sessionFolder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("npp_session_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: sessionFolder, withIntermediateDirectories: true)
+        let firstFile = sessionFolder.appendingPathComponent("one & two.txt")
+        let secondFile = sessionFolder.appendingPathComponent("other.txt")
+        try? "alpha\nbeta".write(to: firstFile, atomically: true, encoding: .utf8)
+        try? "first\nsecond".write(to: secondFile, atomically: true, encoding: .utf8)
+        let savedWorkspace = NppWorkspace()
+        savedWorkspace.openFile(url: firstFile)
+        savedWorkspace.openFile(url: secondFile)
+        if let firstDoc = savedWorkspace.documents.first(where: { $0.filePath == firstFile }),
+           let secondDoc = savedWorkspace.documents.first(where: { $0.filePath == secondFile }) {
+            firstDoc.language = "Swift"
+            firstDoc.cursorPos = 6
+            firstDoc.selectionLength = 2
+            firstDoc.bookmarkedLines = [2]
+            savedWorkspace.moveToOtherView(id: secondDoc.id)
+            savedWorkspace.secondaryActiveDocumentId = secondDoc.id
+            savedWorkspace.activeView = 1
+        }
+        let savedSession = sessionFolder.appendingPathComponent("state.session")
+        assertTest("Stream 3: Session with XML-special filename saves", savedWorkspace.saveSession(to: savedSession))
+        let loadedWorkspace = NppWorkspace()
+        let didLoad = loadedWorkspace.loadSession(from: savedSession)
+        let restoredFirst = loadedWorkspace.documents.first(where: { $0.filePath == firstFile })
+        let restoredSecond = loadedWorkspace.documents.first(where: { $0.filePath == secondFile })
+        assertTest("Stream 3: Session XML-special filename loads", didLoad && restoredFirst != nil && restoredSecond != nil)
+        assertTest("Stream 3: Session restores caret, selection, bookmarks and language",
+                   restoredFirst?.cursorPos == 6 && restoredFirst?.selectionLength == 2 &&
+                   restoredFirst?.bookmarkedLines == [2] && restoredFirst?.language == "Swift")
+        assertTest("Stream 3: Session restores secondary view and active file",
+                   loadedWorkspace.activeView == 1 && loadedWorkspace.secondaryActiveDocumentId == restoredSecond?.id)
+        try? FileManager.default.removeItem(at: sessionFolder)
+
+        // Test 5: File Status auto-detection handles deleted file
+        let tempFile = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_file_delete_\(UUID().uuidString).txt")
+        try? "test data".write(to: tempFile, atomically: true, encoding: .utf8)
+        ws.openFile(url: tempFile)
+        guard let openedDoc = ws.documents.first(where: { $0.filePath == tempFile }) else { return }
+        try? FileManager.default.removeItem(at: tempFile)
+        let reloadStatus = ws.checkFileStatus(for: openedDoc, prompt: false)
+        assertTest("Stream 3: checkFileStatus detects deleted external file", reloadStatus == false && openedDoc.content == "test data")
+
+        // Test 6: Function list parser handles qualifiers without premature stop
+        let codeWithQualifiers = "private func calculateScore(a: Int, b: Int) -> Int {\n    return a + b;\n}"
+        let funcs = NppWorkspace.parseFunctions(content: codeWithQualifiers)
+        assertTest("Stream 3: parseFunctions extracts function name past multi-word qualifiers", funcs.contains(where: { $0.name == "calculateScore" }))
+
+        ws.closeAll(force: true)
+    }
+
+    // Stream 4: Encodings, Charsets & Localization
+    static func runStream4EncodingInteractiveTests(ws: NppWorkspace, assertTest: (String, Bool) -> Void) {
+        ws.closeAll(force: true)
+        ws.newDocument()
+        guard let doc = ws.activeDocument else { return }
+
+        // Test 1: EUC-KR and CP949 are distinct
+        let normEuckr = NppDocument.normalizeCharset("EUC-KR")
+        let normCp949 = NppDocument.normalizeCharset("CP949")
+        assertTest("Stream 4: normalizeCharset preserves EUC-KR as EUC-KR", normEuckr == "EUC-KR")
+        assertTest("Stream 4: normalizeCharset preserves CP949 as CP949", normCp949 == "CP949")
+        assertTest("Stream 4: EUC-KR and CP949 are distinct strings", normEuckr != normCp949)
+
+        // Test 2: reencodeAs on dirty buffer preserves edits
+        doc.content = "Initial clean text"
+        doc.encoding = "UTF-8"
+        doc.isDirty = true
+        doc.content = "Dirty edited text with 한글"
+        doc.reencodeAs(targetCharset: "UTF-8")
+        assertTest("Stream 4: reencodeAs does not wipe dirty buffer", doc.content.contains("Dirty edited text with 한글"))
+
+        // Test 3: convertEncoding updates encoding without corrupting text
+        doc.convertEncoding(to: "CP949")
+        assertTest("Stream 4: convertEncoding sets encoding to CP949 without corruption", doc.encoding == "CP949" && doc.content.contains("한글"))
+        doc.convertEncoding(to: "EUC-KR")
+        assertTest("Stream 4: convertEncoding sets encoding to EUC-KR", doc.encoding == "EUC-KR" && doc.content.contains("한글"))
+
+        // Test 4: Status bar line count is accurate and non-allocating
+        var bigString = ""
+        for i in 1...5000 {
+            bigString += "Line \(i)\n"
+        }
+        var counted = 1
+        for u in bigString.utf8 {
+            if u == 10 { counted += 1 }
+        }
+        assertTest("Stream 4: Non-allocating line count accurately counts 5001 lines", counted == 5001)
+
+        // Test 5: Missing Korean translations
+        ws.localizationLanguage = "한국어"
+        let normalTextTr = ws.tr("Normal text file")
+        let noDocTr = ws.tr("No document")
+        assertTest("Stream 4: Korean localization translates 'Normal text file'", normalTextTr == "일반 텍스트 파일")
+        assertTest("Stream 4: Korean localization translates 'No document'", noDocTr == "문서 없음")
+        ws.localizationLanguage = "English"
+
+        ws.closeAll(force: true)
+    }
+
+    // Stream 5: Preferences, Modeless Windows & Secondary Panels
+    static func runStream5DialogsInteractiveTests(ws: NppWorkspace, assertTest: (String, Bool) -> Void) {
+        ws.closeAll(force: true)
+
+        // Test 1: User Defined Language creation and XML export
+        let initialUdlCount = ws.userDefinedLanguages.count
+        let testLang = NppUserDefineLanguage(name: "MyCustomLang", extensions: "mcl custom", ignoreCase: false)
+        ws.userDefinedLanguages.append(testLang)
+        assertTest("Stream 5: UDL language added to userDefinedLanguages", ws.userDefinedLanguages.count == initialUdlCount + 1)
+
+        // Test 2: Character Panel Windows-1252 character mapping for 128..255
+        let euroData = Data([128])
+        let euroStr = String(data: euroData, encoding: .windowsCP1252)
+        assertTest("Stream 5: Byte 128 maps to Euro symbol in Windows-1252", euroStr == "€")
+
+        // Test 3: Transparency slider scale mapping (20...200 -> 0.1...1.0)
+        let sliderVal: Double = 130.0
+        ws.findTransparencyValue = sliderVal / 200.0
+        assertTest("Stream 5: Transparency slider 130 maps to 0.65 (65%)", abs(ws.findTransparencyValue - 0.65) < 0.001)
+
+        // Test 4: Dual view document activation in secondary view
+        ws.newDocument() // Doc 1
+        ws.newDocument() // Doc 2
+        let doc2 = ws.documents[1]
+        ws.moveToOtherView(id: doc2.id)
+        assertTest("Stream 5: Dual view active with doc2 in secondary view", ws.isDualView && ws.secondaryDocuments.first?.id == doc2.id)
+
+        // Test 5: Tab reduce and max label length settings
+        ws.tabReduce = true
+        assertTest("Stream 5: tabReduce toggle updates preference", ws.tabReduce == true)
+        ws.tabReduce = false
+
+        let truncated = NppTabItemView.formattedTitle(title: "VeryLongDocumentNameToTruncate.swift", maxLen: 10)
+        assertTest("Stream 5: Tab label truncates with ellipsis according to maxLen", truncated == "VeryLongDo…" && truncated.count <= 11)
+
+        ws.closeAll(force: true)
+    }
+
+    static func runManualAutoCompletionTests(assertTest: (String, Bool) -> Void) {
+        let engine = NppCompletionEngine.shared
+        let buffer = "alpha alphabet alphanumeric\nalp"
+        let words = engine.candidates(text: buffer, caret: (buffer as NSString).length,
+                                      language: "Swift", mode: 1, minimumLength: 3,
+                                      ignoreNumbers: true, manual: false)
+        assertTest("Manual Auto-Completion: word candidates come from current buffer", words == ["alpha", "alphabet", "alphanumeric"])
+        let belowThreshold = engine.candidates(text: buffer, caret: (buffer as NSString).length,
+                                               language: "Swift", mode: 1, minimumLength: 4,
+                                               ignoreNumbers: true, manual: false)
+        assertTest("Manual Auto-Completion: automatic trigger obeys From nth character", belowThreshold.isEmpty)
+        let manual = engine.candidates(text: buffer, caret: (buffer as NSString).length,
+                                       language: "Swift", mode: 1, minimumLength: 9,
+                                       ignoreNumbers: true, manual: true)
+        assertTest("Manual Auto-Completion: manual word completion bypasses threshold", manual == words)
+        let numberBuffer = "1234 123"
+        let ignored = engine.candidates(text: numberBuffer, caret: (numberBuffer as NSString).length,
+                                        language: "Swift", mode: 1, minimumLength: 1,
+                                        ignoreNumbers: true, manual: false)
+        assertTest("Manual Auto-Completion: Ignore numbers suppresses numeric prefix", ignored.isEmpty)
+        let functions = engine.candidates(text: "ass", caret: 3,
+                                          language: "Python", mode: 0, minimumLength: 1,
+                                          ignoreNumbers: true, manual: false)
+        assertTest("Manual Auto-Completion: Python candidates load upstream API XML", functions.contains("assert"))
+        assertTest("Manual Auto-Completion: upstream API overload supplies parameter hint",
+                   engine.parameterHint(for: "abs", language: "Python")?.contains("abs(number)") == true)
+        assertTest("Manual Auto-Completion: hint resolves active function call",
+                   engine.parameterHint(in: "abs(42)", caret: 6, language: "Python")?.contains("abs(number)") == true)
+        assertTest("Manual Auto-Completion: hint stops after closing parenthesis",
+                   engine.parameterHint(in: "abs(42)", caret: 7, language: "Python") == nil)
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("npp-path-completion-\(UUID().uuidString)", isDirectory: true)
+        if (try? FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)) != nil {
+            defer { try? FileManager.default.removeItem(at: fixture) }
+            let directory = fixture.appendingPathComponent("project-data", isDirectory: true)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let file = fixture.appendingPathComponent("project-notes.txt")
+            try? Data().write(to: file)
+            let query = "./project-"
+            let paths = engine.pathCandidates(text: query, caret: (query as NSString).length,
+                                              documentURL: fixture.appendingPathComponent("document.txt"))
+            assertTest("Manual Auto-Completion: relative paths include files and directories",
+                       paths == ["project-data/", "project-notes.txt"])
+            let range = NppCompletionEngine.pathNameRange(in: query as NSString, before: (query as NSString).length)
+            assertTest("Manual Auto-Completion: path replacement includes punctuation",
+                       (query as NSString).substring(with: range) == "project-")
+        } else {
+            assertTest("Manual Auto-Completion: temporary path fixture created", false)
+        }
+    }
+
+    static func runManualUDLTests(assertTest: (String, Bool) -> Void) {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <NotepadPlus><UserLang name="Sample &amp; Tools" ext="demo dmo" udlVersion="2.1">
+        <Settings><Global caseIgnored="yes"/></Settings>
+        <KeywordLists><Keywords name="Keywords1">alpha beta</Keywords>
+        <Keywords name="Operators1">&lt; &gt;</Keywords>
+        <Keywords name="Comments">00// 03/* 04*/</Keywords></KeywordLists>
+        <Styles><WordsStyle name="KEYWORDS1" fgColor="123456"/></Styles>
+        </UserLang></NotepadPlus>
+        """
+        guard let parsed = try? NppUDLCodec.decode(Data(xml.utf8)), var language = parsed.first else {
+            assertTest("Manual UDL: parse standard UserLang XML", false)
+            return
+        }
+        assertTest("Manual UDL: parse name, extensions, case and keyword rules",
+                   language.name == "Sample & Tools" && language.extensions == "demo dmo" &&
+                   language.ignoreCase && language.keywordLists["Keywords1"] == "alpha beta" &&
+                   language.styleForegrounds["KEYWORDS1"] == "123456")
+        language.keywordLists["Keywords1"] = "alpha gamma"
+        guard let exported = try? NppUDLCodec.encode(language),
+              let reparsed = try? NppUDLCodec.decode(exported), let result = reparsed.first else {
+            assertTest("Manual UDL: export and reimport language", false)
+            return
+        }
+        assertTest("Manual UDL: edited keywords survive XML round trip",
+                   result.keywordLists["Keywords1"] == "alpha gamma")
+        assertTest("Manual UDL: untouched style XML survives export",
+                   String(data: exported, encoding: .utf8)?.contains("fgColor=\"123456\"") == true)
+        let fresh = NppUserDefineLanguage(name: "Fresh", extensions: "fresh", keywordLists: ["Keywords1": "hello"])
+        let freshXML = try? NppUDLCodec.encode(fresh)
+        assertTest("Manual UDL: new language export includes styles and keyword lists",
+                   freshXML.flatMap { String(data: $0, encoding: .utf8) }.map {
+                       $0.contains("<Styles>") && $0.contains("name=\"KEYWORDS1\"") && $0.contains("hello")
+                   } == true)
+        let comments = NppUDLCodec.replacingCommentToken(0, value: "#", in: "00// 01 03/* 04*/")
+        assertTest("Manual UDL: comment edit preserves other comment rules",
+                   comments == "00# 01 03/* 04*/")
+        assertTest("Manual UDL: quoted multiword keyword stays one item",
+                   NppUDLCodec.keywordItems(from: "alpha \"two words\" beta") ==
+                   ["alpha", "two words", "beta"])
+        let acrossLines = NppUDLCodec.keywordPatterns(from: "\"else if\"", prefixMode: false).first ?? ""
+        let sameLine = NppUDLCodec.keywordPatterns(from: "'else if'", prefixMode: false).first ?? ""
+        assertTest("Manual UDL: double-quoted phrase accepts newline and single-quoted phrase does not",
+                   "else\nif".range(of: acrossLines, options: .regularExpression) != nil &&
+                   "else\nif".range(of: sameLine, options: .regularExpression) == nil)
+        let prefixPattern = NppUDLCodec.keywordPatterns(from: "pre", prefixMode: true).first ?? ""
+        assertTest("Manual UDL: prefix mode extends keyword through following letters",
+                   "prefix".range(of: prefixPattern, options: .regularExpression) != nil)
+        let ws = NppWorkspace()
+        ws.userDefinedLanguages.append(language)
+        assertTest("Manual UDL: extension overrides built-in language detection",
+                   ws.userDefinedLanguage(for: URL(fileURLWithPath: "/tmp/file.DMO"))?.name == language.name)
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("npp-udl-\(UUID().uuidString)", isDirectory: true)
+        if (try? FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)) != nil {
+            defer { try? FileManager.default.removeItem(at: fixture) }
+            ws.saveUserDefinedLanguages(to: fixture)
+            let restored = NppWorkspace()
+            restored.loadUserDefinedLanguages(from: fixture)
+            assertTest("Manual UDL: saved language rules survive workspace restart",
+                       restored.userDefinedLanguages.first?.keywordLists["Keywords1"] == "alpha gamma")
+            let source = fixture.appendingPathComponent("example.DMO")
+            try? Data("alpha".utf8).write(to: source)
+            restored.openFile(url: source)
+            assertTest("Manual UDL: opening associated extension selects the UDL",
+                       restored.activeDocument?.language == language.name)
+        } else {
+            assertTest("Manual UDL: temporary persistence fixture created", false)
+        }
+        let storage = NSTextStorage(string: "ALPHA beta // comment")
+        NppSyntaxHighlighter.highlight(textStorage: storage, language: language.name,
+                                       isDarkMode: false, userDefinedLanguage: language)
+        let alphaColor = storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        let commentColor = storage.attribute(.foregroundColor, at: 12, effectiveRange: nil) as? NSColor
+        assertTest("Manual UDL: case-insensitive keywords and comments receive distinct styles",
+                   alphaColor != nil && commentColor != nil && alphaColor != commentColor)
+        assertTest("Manual UDL: imported keyword color is applied in editor",
+                   abs((alphaColor?.redComponent ?? 0) - CGFloat(0x12) / 255) < 0.01)
+        let operatorLanguage = NppUserDefineLanguage(name: "Operators", keywordLists:
+            ["Operators1": "+", "Operators2": "and"], styleForegrounds: ["OPERATORS": "FF0000"])
+        let operatorText = "and +and+ x-and x"
+        let operatorStorage = NSTextStorage(string: operatorText)
+        NppSyntaxHighlighter.highlight(textStorage: operatorStorage, language: operatorLanguage.name,
+                                       isDarkMode: false, userDefinedLanguage: operatorLanguage)
+        let source = operatorText as NSString
+        let glued = source.range(of: "x-and")
+        let separated = source.range(of: "+and+")
+        let gluedColor = operatorStorage.attribute(.foregroundColor, at: glued.location + 2, effectiveRange: nil) as? NSColor
+        let separatedColor = operatorStorage.attribute(.foregroundColor, at: separated.location + 1, effectiveRange: nil) as? NSColor
+        let separatedRed = separatedColor?.usingColorSpace(.deviceRGB)?.redComponent ?? 0
+        let gluedRed = gluedColor?.usingColorSpace(.deviceRGB)?.redComponent ?? 1
+        assertTest("Manual UDL: Operators2 require whitespace or Operators1 separation",
+                   separatedRed > 0.9 && gluedRed < 0.9)
+        let numberLanguage = NppUserDefineLanguage(name: "Numbers", keywordLists: [
+            "Numbers, prefix1": "B", "Numbers, prefix2": "0x",
+            "Numbers, extras1": "A B C D E F", "Numbers, extras2": "A B C",
+            "Numbers, suffix1": "'H", "Numbers, suffix2": "D",
+            "Numbers, range": "::"
+        ], decimalSeparator: 1)
+        let numberPatterns = NppUDLCodec.numberPatterns(for: numberLanguage)
+        func matchesWholeNumber(_ value: String) -> Bool {
+            numberPatterns.contains { pattern in
+                guard let regex = try? NSRegularExpression(pattern: pattern),
+                      let match = regex.firstMatch(in: value, range: NSRange(location: 0, length: (value as NSString).length))
+                else { return false }
+                return match.range.location == 0 && match.range.length == (value as NSString).length
+            }
+        }
+        assertTest("Manual UDL: number prefix1 accepts decimal digits only",
+                   matchesWholeNumber("B101") && !matchesWholeNumber("B10A"))
+        assertTest("Manual UDL: number prefix2 accepts configured extra digits",
+                   matchesWholeNumber("0xA5"))
+        assertTest("Manual UDL: number suffixes and range symbols are recognized",
+                   matchesWholeNumber("ABC'H") && matchesWholeNumber("101D") && matchesWholeNumber("10::20"))
+        assertTest("Manual UDL: comma decimal mode rejects dot decimal tokens",
+                   matchesWholeNumber("1,2") && !matchesWholeNumber("1.2"))
+        let delimiterLanguage = NppUserDefineLanguage(name: "Delimiters", keywordLists: [
+            "Delimiters": #"00" 01\ 02" 03# 04 05((EOL))"#
+        ], styleForegrounds: ["DELIMITERS1": "FF0000", "DELIMITERS2": "00FF00"])
+        let delimiterText = "say \"a\\\"b\" tail\n# note\nplain"
+        let delimiterStorage = NSTextStorage(string: delimiterText)
+        NppSyntaxHighlighter.highlight(textStorage: delimiterStorage, language: delimiterLanguage.name,
+                                       isDarkMode: false, userDefinedLanguage: delimiterLanguage)
+        let delimiterSource = delimiterText as NSString
+        let insideQuote = delimiterSource.range(of: "b\"").location
+        let insideEOL = delimiterSource.range(of: "note").location
+        let outsideEOL = delimiterSource.range(of: "plain").location
+        let quoteRed = (delimiterStorage.attribute(.foregroundColor, at: insideQuote, effectiveRange: nil) as? NSColor)?
+            .usingColorSpace(.deviceRGB)?.redComponent ?? 0
+        let lineGreen = (delimiterStorage.attribute(.foregroundColor, at: insideEOL, effectiveRange: nil) as? NSColor)?
+            .usingColorSpace(.deviceRGB)?.greenComponent ?? 0
+        let outsideGreen = (delimiterStorage.attribute(.foregroundColor, at: outsideEOL, effectiveRange: nil) as? NSColor)?
+            .usingColorSpace(.deviceRGB)?.greenComponent ?? 1
+        assertTest("Manual UDL: delimiter escape keeps quoted content styled", quoteRed > 0.9)
+        assertTest("Manual UDL: EOL delimiter stops styling at next line", lineGreen > 0.9 && outsideGreen < 0.9)
+    }
+
+    static func runManualFileMenuTests(assertTest: (String, Bool) -> Void) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("npp-manual-files-\(UUID().uuidString)", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)) != nil else {
+            assertTest("Manual File: temporary fixture created", false)
+            return
+        }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let original = directory.appendingPathComponent("original.txt")
+        let copy = directory.appendingPathComponent("copy.py")
+        try? Data("before".utf8).write(to: original)
+        let ws = NppWorkspace()
+        ws.openFile(url: original)
+        guard let doc = ws.activeDocument else {
+            assertTest("Manual File: opened fixture", false)
+            return
+        }
+        doc.content = "after"
+        doc.isDirty = true
+        let raw = doc.rawFileBytes
+        let modificationDate = doc.lastKnownModificationDate
+        let language = doc.language
+        let copied = ws.saveCopyAs(for: doc, to: copy)
+        assertTest("Manual File: Save a Copy writes edited content",
+                   copied && (try? String(contentsOf: copy, encoding: .utf8)) == "after")
+        assertTest("Manual File: Save a Copy preserves source document metadata",
+                   doc.filePath == original && doc.title == original.lastPathComponent &&
+                   doc.isDirty && doc.language == language && doc.rawFileBytes == raw &&
+                   doc.lastKnownModificationDate == modificationDate)
+
+        let conflict = directory.appendingPathComponent("conflict.txt")
+        try? Data("existing".utf8).write(to: conflict)
+        let renamed = ws.renameDocument(id: doc.id, to: conflict)
+        assertTest("Manual File: Rename collision preserves source and destination",
+                   !renamed && doc.filePath == original &&
+                   (try? String(contentsOf: conflict, encoding: .utf8)) == "existing" &&
+                   FileManager.default.fileExists(atPath: original.path))
+        ws.confirmSaveHandler = { _ in .cancel }
+        let trashed = ws.moveActiveFileToTrash()
+        assertTest("Manual File: canceled Trash keeps file and open document",
+                   !trashed && FileManager.default.fileExists(atPath: original.path) &&
+                   ws.documents.contains { $0.id == doc.id })
+        doc.language = "Python"
+        assertTest("Manual Language: saving existing file preserves selected language",
+                   doc.save() && doc.language == "Python")
+        doc.isDirty = true
+
+        let unchanged = directory.appendingPathComponent("unchanged.txt")
+        try? Data("stable".utf8).write(to: unchanged)
+        ws.openFile(url: unchanged)
+        ws.closeAllUnchanged()
+        assertTest("Manual File: Close All Unchanged updates closed history",
+                   ws.closedFilePaths.contains(unchanged) &&
+                   !ws.documents.contains { $0.filePath == unchanged } &&
+                   ws.documents.contains { $0.id == doc.id })
+    }
+
+    static func runManualSessionTests(assertTest: (String, Bool) -> Void) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("npp-manual-session-\(UUID().uuidString)", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)) != nil else {
+            assertTest("Manual Session: temporary fixture created", false)
+            return
+        }
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let missing = directory.appendingPathComponent("offline.txt")
+        let sessionFile = directory.appendingPathComponent("saved.nps")
+        let xml = "<NotepadPlus><Session activeView=\"0\"><mainView activeIndex=\"0\"><File filename=\"\(missing.path)\" startPos=\"0\" endPos=\"0\" lang=\"Python\"/></mainView><subView activeIndex=\"0\"/></Session></NotepadPlus>"
+        try? Data(xml.utf8).write(to: sessionFile)
+        let workspace = NppWorkspace()
+        workspace.sessionPlaceholderDecisionHandler = { paths in paths == [missing] }
+        let loaded = workspace.loadSession(from: sessionFile)
+        let placeholder = workspace.documents.first { $0.filePath == missing }
+        assertTest("Manual Session: unavailable file becomes read-only placeholder",
+                   loaded && placeholder?.isReadOnly == true && placeholder?.isSessionPlaceholder == true &&
+                   placeholder?.language == "Python")
+        let savedAgain = directory.appendingPathComponent("resaved.nps")
+        let resaved = workspace.saveSession(to: savedAgain)
+        assertTest("Manual Session: placeholder survives session save",
+                   resaved && (try? String(contentsOf: savedAgain, encoding: .utf8))?.contains(missing.path) == true)
+        try? Data("back online".utf8).write(to: missing)
+        workspace.openFile(url: missing)
+        assertTest("Manual Session: reopening restored file fills placeholder",
+                   placeholder?.content == "back online" && placeholder?.isReadOnly == false &&
+                   placeholder?.isSessionPlaceholder == false)
+        let byExtension = NppWorkspace()
+        byExtension.sessionFileExt = "nps"
+        byExtension.openFile(url: sessionFile)
+        assertTest("Manual Session: configured extension opens session instead of XML text",
+                   byExtension.documents.contains { $0.filePath == missing } &&
+                   !byExtension.documents.contains { $0.filePath == sessionFile })
+    }
+
+    static func runManualRunMenuTests(assertTest: (String, Bool) -> Void) {
+        let suiteName = "npp.run.tests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            assertTest("Manual Run: isolated preferences available", false)
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let workspace = NppWorkspace(runCommandDefaults: defaults)
+        assertTest("Manual Run: save named command with shortcut",
+                   workspace.saveRunCommand(name: "Build", command: "make $(CURRENT_DIRECTORY)",
+                                            shortcut: "Cmd+Shift+B", inTerminal: true))
+        assertTest("Manual Run: duplicate command name rejected",
+                   !workspace.saveRunCommand(name: "Build", command: "echo duplicate"))
+        guard let saved = workspace.savedRunCommands.first else {
+            assertTest("Manual Run: saved command exists", false)
+            return
+        }
+        assertTest("Manual Run: rename and clear shortcut",
+                   workspace.updateRunCommand(id: saved.id, name: "Compile", shortcut: "") &&
+                   workspace.savedRunCommands.first?.shortcut == "")
+        let reloaded = NppWorkspace(runCommandDefaults: defaults)
+        assertTest("Manual Run: saved command survives workspace restart",
+                   reloaded.savedRunCommands.first?.name == "Compile" &&
+                   reloaded.savedRunCommands.first?.command == "make $(CURRENT_DIRECTORY)" &&
+                   reloaded.savedRunCommands.first?.inTerminal == true)
+        workspace.deleteRunCommand(id: saved.id)
+        assertTest("Manual Run: deleting command persists",
+                   NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runManualLanguageDetectionTests(assertTest: (String, Bool) -> Void) {
+        assertTest("Manual Language: known extension takes precedence over first line",
+                   NppDocument.detectLanguage(for: "sample.py", content: "<html>test") == "Python")
+        assertTest("Manual Language: special script filenames map to Python",
+                   ["SConstruct", "SConscript", "wscript"].allSatisfy {
+                       NppDocument.detectLanguage(for: $0) == "Python"
+                   })
+        assertTest("Manual Language: XML and PHP prologs are recognized",
+                   NppDocument.detectLanguage(for: "untitled", content: "<?xml version=\"1.0\"?>") == "XML" &&
+                   NppDocument.detectLanguage(for: "untitled", content: "<?php echo 1;") == "PHP")
+        assertTest("Manual Language: unknown extension falls back to first line",
+                   NppDocument.detectLanguage(for: "script.unknown", content: "#!/usr/bin/env python3") == "Python")
     }
 
     static func captureScreenshot(appDelegate: AppDelegate, openPrefs: Bool, prefTab: Int = 0, showInvisibles: Bool = false, searchMode: NppWorkspace.NppSearchBarMode? = nil, filename: String = "screenshot.png") {

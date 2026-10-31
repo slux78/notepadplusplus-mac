@@ -10,6 +10,7 @@ public struct NppSearchBarView: View {
     @State private var matchWholeWord: Bool = false
     @State private var useRegex: Bool = false
     @State private var statusMessage: String = ""
+    @FocusState private var isFieldFocused: Bool
 
     public init(workspace: NppWorkspace) {
         self.workspace = workspace
@@ -67,6 +68,9 @@ public struct NppSearchBarView: View {
                 Button(action: {
                     workspace.clearIncrementalHighlight()
                     workspace.showSearchBar = false
+                    if let tv = workspace.activeTextView {
+                        tv.window?.makeFirstResponder(tv)
+                    }
                 }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .bold))
@@ -86,6 +90,7 @@ public struct NppSearchBarView: View {
                         TextField(workspace.tr("Find what:"), text: $findText, onCommit: {
                             findNext()
                         })
+                        .focused($isFieldFocused)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
 
                         if !findText.isEmpty {
@@ -154,6 +159,7 @@ public struct NppSearchBarView: View {
                     TextField(workspace.tr("Find what:"), text: $findText, onCommit: {
                         findNext()
                     })
+                    .focused($isFieldFocused)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .frame(maxWidth: .infinity)
 
@@ -206,6 +212,10 @@ public struct NppSearchBarView: View {
                 findText = workspace.findQueryText
             } else if !workspace.lastSearchQuery.isEmpty {
                 findText = workspace.lastSearchQuery
+            }
+            isFieldFocused = true
+            if !findText.isEmpty {
+                findIncremental()
             }
         }
         .onExitCommand {
@@ -310,20 +320,38 @@ public struct NppSearchBarView: View {
         let content = doc.content as NSString
         let searchRange = NSRange(location: min(doc.cursorPos, content.length), length: max(0, content.length - min(doc.cursorPos, content.length)))
 
-        var options: NSString.CompareOptions = []
-        if !matchCase { options.insert(.caseInsensitive) }
-        if useRegex { options.insert(.regularExpression) }
+        var finalReplacement = replaceText
+        var foundRange: NSRange?
+        if useRegex {
+            var options: NSRegularExpression.Options = [.anchorsMatchLines]
+            if !matchCase { options.insert(.caseInsensitive) }
+            if let regex = try? NSRegularExpression(pattern: findText, options: options) {
+                if let match = regex.firstMatch(in: doc.content, options: [], range: searchRange) {
+                    foundRange = match.range
+                    let normTemplate = NppWorkspace.normalizeRegexReplacementTemplate(replaceText)
+                    finalReplacement = regex.replacementString(for: match, in: doc.content, offset: 0, template: normTemplate)
+                }
+            }
+        } else {
+            var options: NSString.CompareOptions = []
+            if !matchCase { options.insert(.caseInsensitive) }
+            let pattern = matchWholeWord ? "\\b\(NSRegularExpression.escapedPattern(for: findText))\\b" : findText
+            if matchWholeWord { options.insert(.regularExpression) }
+            let found = content.range(of: pattern, options: options, range: searchRange)
+            if found.location != NSNotFound {
+                foundRange = found
+            }
+        }
 
-        let found = content.range(of: findText, options: options, range: searchRange)
-        if found.location != NSNotFound {
-            let newStr = content.replacingCharacters(in: found, with: replaceText)
+        if let found = foundRange {
+            let newStr = content.replacingCharacters(in: found, with: finalReplacement)
             doc.content = newStr
             doc.isDirty = true
             if let tv = workspace.activeTextView {
-                tv.string = newStr
+                workspace.applyTextToTextViewPreservingUndo(tv: tv, newText: newStr)
             }
-            let replacedRange = NSRange(location: found.location, length: (replaceText as NSString).length)
-            workspace.selectRange(replacedRange)
+            let replacedRange = NSRange(location: found.location, length: (finalReplacement as NSString).length)
+            workspace.selectRange(replacedRange, makeFirstResponder: false)
             statusMessage = "1 occurrence replaced"
         } else {
             findNext()
@@ -334,15 +362,30 @@ public struct NppSearchBarView: View {
         guard !findText.isEmpty,
               let doc = workspace.activeDocument,
               !(doc.isReadOnly || workspace.isAllDocumentsReadOnly) else { return }
-        var options: NSString.CompareOptions = []
-        if !matchCase { options.insert(.caseInsensitive) }
-        if useRegex { options.insert(.regularExpression) }
-
-        let (newStr, count) = replaceAllOccurrences(in: doc.content, target: findText, with: replaceText, options: options)
+        var newStr = doc.content
+        var count = 0
+        if useRegex {
+            var options: NSRegularExpression.Options = [.anchorsMatchLines]
+            if !matchCase { options.insert(.caseInsensitive) }
+            if let regex = try? NSRegularExpression(pattern: findText, options: options) {
+                let fullRange = NSRange(location: 0, length: (doc.content as NSString).length)
+                count = regex.numberOfMatches(in: doc.content, range: fullRange)
+                let normTemplate = NppWorkspace.normalizeRegexReplacementTemplate(replaceText)
+                newStr = regex.stringByReplacingMatches(in: doc.content, range: fullRange, withTemplate: normTemplate)
+            }
+        } else {
+            var options: NSString.CompareOptions = []
+            if !matchCase { options.insert(.caseInsensitive) }
+            let pattern = matchWholeWord ? "\\b\(NSRegularExpression.escapedPattern(for: findText))\\b" : findText
+            if matchWholeWord { options.insert(.regularExpression) }
+            let res = replaceAllOccurrences(in: doc.content, target: pattern, with: replaceText, options: options)
+            newStr = res.0
+            count = res.1
+        }
         doc.content = newStr
         doc.isDirty = true
         if let tv = workspace.activeTextView {
-            tv.string = newStr
+            workspace.applyTextToTextViewPreservingUndo(tv: tv, newText: newStr)
         }
         statusMessage = "Replaced \(count) occurrence(s)"
     }

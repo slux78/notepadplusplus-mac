@@ -204,6 +204,17 @@ public struct NppSearchResultsView: View {
                         EmptyView()
                     }
                     .keyboardShortcut(.delete, modifiers: [])
+                    Button(action: {
+                        if let mId = selectedMatchId {
+                            let allMatches = workspace.searchFileGroups.flatMap { $0.matches }
+                            if let match = allMatches.first(where: { $0.id == mId }) {
+                                workspace.jumpToMatch(match)
+                            }
+                        }
+                    }) {
+                        EmptyView()
+                    }
+                    .keyboardShortcut(.return, modifiers: [])
 
                     Button(action: {
                         if let mId = selectedMatchId {

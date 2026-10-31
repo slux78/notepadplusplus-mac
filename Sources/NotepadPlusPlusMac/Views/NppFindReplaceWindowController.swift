@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+final class NppFindReplacePanel: NSPanel {
+    override func cancelOperation(_ sender: Any?) {
+        NppFindReplaceWindowController.shared.close()
+    }
+}
+
 public final class NppFindReplaceWindowController: NSObject, NSWindowDelegate {
     public static let shared = NppFindReplaceWindowController()
 
@@ -27,7 +33,7 @@ public final class NppFindReplaceWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        let newPanel = NSPanel(
+        let newPanel = NppFindReplacePanel(
             contentRect: NSRect(x: 150, y: 200, width: 730, height: 360),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
             backing: .buffered,
@@ -87,9 +93,15 @@ public final class NppFindReplaceWindowController: NSObject, NSWindowDelegate {
     }
 
     public func close() {
+        if let ws = workspace, let tv = ws.activeTextView {
+            tv.window?.makeFirstResponder(tv)
+        }
         panel?.orderOut(nil)
         panel = nil
         NotificationCenter.default.removeObserver(self)
+        if let ws = workspace, ws.showFindReplaceDialog {
+            ws.showFindReplaceDialog = false
+        }
     }
 
     public func updateTitle() {

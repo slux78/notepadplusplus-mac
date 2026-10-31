@@ -4,10 +4,17 @@ import AppKit
 final class TabMenuTarget: NSObject {
     static let shared = TabMenuTarget()
     weak var workspace: NppWorkspace?
+    var targetViewIndex: Int = 0
 
     @objc func selectDoc(_ sender: NSMenuItem) {
         if let docId = sender.representedObject as? UUID {
-            workspace?.activeDocumentId = docId
+            if targetViewIndex == 0 {
+                workspace?.activeDocumentId = docId
+                workspace?.activeView = 0
+            } else {
+                workspace?.secondaryActiveDocumentId = docId
+                workspace?.activeView = 1
+            }
         }
     }
 
@@ -16,7 +23,7 @@ final class TabMenuTarget: NSObject {
     }
 
     @objc func closeAll() {
-        workspace?.closeAll()
+        _ = workspace?.closeAll(force: false)
     }
 
     @objc func openWindowsDialog() {
@@ -24,19 +31,95 @@ final class TabMenuTarget: NSObject {
     }
 }
 
+// MARK: - Authentic Notepad++ Floppy Disk Tab Icon
+public struct FloppyIconView: View {
+    public let isDirty: Bool
+    public var size: CGFloat = 13
+
+    public init(isDirty: Bool, size: CGFloat = 13) {
+        self.isDirty = isDirty
+        self.size = size
+    }
+
+    public var body: some View {
+        let baseColor = isDirty ? Color(red: 0.88, green: 0.20, blue: 0.20) : Color(red: 0.18, green: 0.48, blue: 0.88)
+
+        ZStack {
+            // Outer 3.5" floppy disk body with notched upper corner
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(baseColor)
+                .frame(width: size, height: size)
+
+            VStack(spacing: 1.5) {
+                // Top metal shutter slider
+                ZStack {
+                    RoundedRectangle(cornerRadius: 0.8)
+                        .fill(Color(white: 0.88))
+                        .frame(width: size * 0.65, height: size * 0.35)
+
+                    // Shutter window rectangular cut
+                    Rectangle()
+                        .fill(baseColor)
+                        .frame(width: size * 0.16, height: size * 0.22)
+                        .offset(x: -size * 0.12)
+                }
+
+                // Bottom paper label
+                RoundedRectangle(cornerRadius: 0.5)
+                    .fill(Color(white: 0.95))
+                    .frame(width: size * 0.72, height: size * 0.40)
+                    .overlay(
+                        VStack(spacing: 1) {
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.4))
+                                .frame(height: 0.6)
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.4))
+                                .frame(height: 0.6)
+                        }
+                        .padding(.horizontal, 1.5)
+                    )
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 public struct NppTabBarView: View {
     @ObservedObject var workspace: NppWorkspace
+    public var viewIndex: Int = 0 // 0: Primary View, 1: Secondary View
 
-    public init(workspace: NppWorkspace) {
+    public init(workspace: NppWorkspace, viewIndex: Int = 0) {
         self.workspace = workspace
+        self.viewIndex = viewIndex
+    }
+
+    private var currentDocs: [NppDocument] {
+        if viewIndex == 1 {
+            return workspace.secondaryDocuments
+        } else {
+            return workspace.isDualView ? workspace.primaryDocuments : workspace.documents
+        }
+    }
+
+    private var currentActiveId: UUID? {
+        if viewIndex == 1 {
+            return workspace.secondaryActiveDocumentId
+        } else {
+            return workspace.activeDocumentId
+        }
     }
 
     private func showDocumentListMenu() {
         let menu = NSMenu()
         TabMenuTarget.shared.workspace = workspace
+        TabMenuTarget.shared.targetViewIndex = viewIndex
 
-        for (index, doc) in workspace.documents.enumerated() {
-            let check = (workspace.activeDocumentId == doc.id) ? "✓ " : "   "
+        let docs = currentDocs
+        let activeId = currentActiveId
+
+        for (index, doc) in docs.enumerated() {
+            let check = (activeId == doc.id) ? "✓ " : "   "
             let dirty = doc.isDirty ? "*" : ""
             let pinned = doc.isPinned ? "📌 " : ""
             let title = "\(check)\(index + 1): \(pinned)\(doc.title)\(dirty)"
@@ -71,26 +154,36 @@ public struct NppTabBarView: View {
                 // 1. Scrollable tab items on the left
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 2) {
-                        ForEach(workspace.documents) { doc in
+                        ForEach(currentDocs) { doc in
                             NppTabItemView(
                                 doc: doc,
                                 workspace: workspace,
-                                isActive: workspace.activeDocumentId == doc.id,
+                                isActive: currentActiveId == doc.id,
+                                viewIndex: viewIndex,
                                 onSelect: {
-                                    guard workspace.documents.contains(where: { $0.id == doc.id }) else { return }
-                                    workspace.activeDocumentId = doc.id
+                                    if viewIndex == 1 {
+                                        workspace.secondaryActiveDocumentId = doc.id
+                                        workspace.activeView = 1
+                                    } else {
+                                        workspace.activeDocumentId = doc.id
+                                        workspace.activeView = 0
+                                    }
                                 },
                                 onClose: {
-                                    workspace.closeDocument(id: doc.id)
+                                    _ = workspace.closeDocument(id: doc.id, force: false)
                                 }
                             )
                             .id(doc.id)
+                            .onDrag {
+                                NSItemProvider(object: doc.id.uuidString as NSString)
+                            }
+                            .onDrop(of: ["public.utf8-plain-text", "public.text"], delegate: TabDropDelegate(item: doc, workspace: workspace, viewIndex: viewIndex))
                         }
                     }
                     .padding(.horizontal, 4)
                     .padding(.vertical, workspace.tabReduce ? 1 : 3)
                 }
-                .onChange(of: workspace.activeDocumentId) { newId in
+                .onChange(of: currentActiveId) { newId in
                     if let id = newId {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             proxy.scrollTo(id, anchor: .center)
@@ -104,89 +197,66 @@ public struct NppTabBarView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .onTapGesture(count: 2) {
                         if workspace.doubleClickSpaceToNewTab {
-                            workspace.newDocument()
-                        }
-                    }
-
-                // 3. Right shortcuts cluster firmly anchored to the trailing edge
-                HStack(spacing: 2) {
-                    // Tab overflow navigation arrows ⏴ ⏵ (per user-interface.md:130)
-                    HStack(spacing: 1) {
-                        Button(action: {
-                            workspace.prevTab()
-                        }) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: workspace.tabReduce ? 8 : 10, weight: .bold))
-                                .foregroundColor(.secondary)
-                                .frame(width: workspace.tabReduce ? 16 : 18, height: workspace.tabReduce ? 20 : 24)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .help(workspace.tr("Previous Tab (⏴)"))
-
-                        Button(action: {
-                            workspace.nextTab()
-                        }) {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: workspace.tabReduce ? 8 : 10, weight: .bold))
-                                .foregroundColor(.secondary)
-                                .frame(width: workspace.tabReduce ? 16 : 18, height: workspace.tabReduce ? 20 : 24)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .help(workspace.tr("Next Tab (⏵)"))
-                    }
-                    .padding(.horizontal, 2)
-
-                    // Right shortcuts cluster: ＋ ▼ ✕ (Notepad_plus.rc:1366-1372, respects hideRightShortcuts)
-                    if !workspace.hideRightShortcuts {
-                        HStack(spacing: 2) {
-                            Divider().frame(height: 14)
-
-                            // 1. ＋ New Document (IDM_FILE_NEW)
-                            Button(action: {
+                            if viewIndex == 1 {
+                                workspace.newDocumentInSecondaryView()
+                            } else {
                                 workspace.newDocument()
-                            }) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: workspace.tabReduce ? 9 : 11, weight: .bold))
-                                    .foregroundColor(.secondary)
-                                    .frame(width: workspace.tabReduce ? 18 : 22, height: workspace.tabReduce ? 20 : 24)
-                                    .contentShape(Rectangle())
                             }
-                            .buttonStyle(PlainButtonStyle())
-                            .help(workspace.tr("New Document (＋)"))
-
-                            // 2. ▼ Document list popup menu (IDM_DROPLIST_LIST) - Single authentic dropdown
-                            Button(action: {
-                                showDocumentListMenu()
-                            }) {
-                                Image(systemName: "arrowtriangle.down.fill")
-                                    .font(.system(size: workspace.tabReduce ? 7 : 8, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                                    .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .help(workspace.tr("Open Documents List (▼)"))
-
-                            // 3. ✕ Close active tab (IDM_FILE_CLOSE)
-                            Button(action: {
-                                if let activeId = workspace.activeDocumentId {
-                                    workspace.closeDocument(id: activeId)
-                                }
-                            }) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: workspace.tabReduce ? 9 : 10, weight: .bold))
-                                    .foregroundColor(workspace.activeDocument == nil ? .secondary.opacity(0.3) : .secondary)
-                                    .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .disabled(workspace.activeDocument == nil)
-                            .help(workspace.tr("Close Current Tab (✕)"))
                         }
-                        .padding(.trailing, 4)
                     }
+
+                // 3. Right shortcuts cluster: ＋ ▼ ✕ (Notepad++ authentic layout, view-rotate-4.png)
+                if !workspace.hideRightShortcuts {
+                    HStack(spacing: 2) {
+                        Divider().frame(height: 14)
+
+                        // 1. ＋ New Document (IDM_FILE_NEW)
+                        Button(action: {
+                            if viewIndex == 1 {
+                                workspace.newDocumentInSecondaryView()
+                            } else {
+                                workspace.newDocument()
+                            }
+                        }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: workspace.tabReduce ? 9 : 11, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .frame(width: workspace.tabReduce ? 18 : 22, height: workspace.tabReduce ? 20 : 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(workspace.tr("New Document (＋)"))
+
+                        // 2. ▼ Document list popup menu (IDM_DROPLIST_LIST)
+                        Button(action: {
+                            showDocumentListMenu()
+                        }) {
+                            Image(systemName: "arrowtriangle.down.fill")
+                                .font(.system(size: workspace.tabReduce ? 7 : 8, weight: .semibold))
+                                .foregroundColor(.secondary)
+                                .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(workspace.tr("Open Documents List (▼)"))
+
+                        // 3. ✕ Close active tab (IDM_FILE_CLOSE)
+                        Button(action: {
+                            if let activeId = currentActiveId {
+                                _ = workspace.closeDocument(id: activeId, force: false)
+                            }
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: workspace.tabReduce ? 9 : 10, weight: .bold))
+                                .foregroundColor(currentActiveId == nil ? .secondary.opacity(0.3) : .secondary)
+                                .frame(width: workspace.tabReduce ? 18 : 20, height: workspace.tabReduce ? 20 : 24)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .disabled(currentActiveId == nil)
+                        .help(workspace.tr("Close Current Tab (✕)"))
+                    }
+                    .padding(.trailing, 4)
                 }
             }
         }
@@ -198,10 +268,30 @@ public struct NppTabBarView: View {
                 .foregroundColor(Color(NSColor.separatorColor)),
             alignment: .bottom
         )
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            workspace.newDocument()
+    }
+}
+
+struct TabDropDelegate: DropDelegate {
+    let item: NppDocument
+    let workspace: NppWorkspace
+    let viewIndex: Int
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let itemProvider = info.itemProviders(for: ["public.utf8-plain-text", "public.text"]).first else { return false }
+        itemProvider.loadItem(forTypeIdentifier: "public.utf8-plain-text", options: nil) { (data, error) in
+            var uuidStr: String?
+            if let data = data as? Data {
+                uuidStr = String(data: data, encoding: .utf8)
+            } else if let str = data as? String {
+                uuidStr = str
+            }
+            if let uuidStr = uuidStr, let draggedId = UUID(uuidString: uuidStr) {
+                DispatchQueue.main.async {
+                    workspace.reorderTab(draggedId: draggedId, targetId: item.id, viewIndex: viewIndex)
+                }
+            }
         }
+        return true
     }
 }
 
@@ -209,6 +299,7 @@ public struct NppTabItemView: View {
     @ObservedObject var doc: NppDocument
     @ObservedObject var workspace: NppWorkspace
     let isActive: Bool
+    var viewIndex: Int = 0
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -224,35 +315,6 @@ public struct NppTabItemView: View {
 
     private var displayedTitle: String {
         Self.formattedTitle(title: doc.title, maxLen: workspace.tabMaxLabelLen)
-    }
-
-    private var tabIconName: String {
-        if doc.isMonitoring {
-            return "eye.fill"
-        }
-        if doc.isReadOnly {
-            return "lock.fill"
-        }
-        if doc.isDirty {
-            return "circle.fill"
-        }
-        if workspace.tabAltIcons {
-            return isActive ? "doc.fill" : "doc.plaintext"
-        }
-        return isActive ? "pencil.line" : "doc.text"
-    }
-
-    private var tabIconColor: Color {
-        if doc.isMonitoring {
-            return Color(red: 0.12, green: 0.53, blue: 0.90) // Dodger Blue
-        }
-        if doc.isReadOnly {
-            return .secondary
-        }
-        if doc.isDirty {
-            return .red
-        }
-        return isActive ? .accentColor : .secondary
     }
 
     private var verticalPadding: CGFloat {
@@ -273,9 +335,18 @@ public struct NppTabItemView: View {
                         .foregroundColor(.orange)
                 }
 
-                Image(systemName: tabIconName)
-                    .font(.system(size: workspace.tabReduce ? 9 : 10))
-                    .foregroundColor(tabIconColor)
+                // Authentic Floppy Disk / Monitoring / Lock Icon
+                if doc.isMonitoring {
+                    Image(systemName: "eye.fill")
+                        .font(.system(size: workspace.tabReduce ? 9 : 10))
+                        .foregroundColor(Color(red: 0.12, green: 0.53, blue: 0.90))
+                } else if doc.isReadOnly {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: workspace.tabReduce ? 9 : 10))
+                        .foregroundColor(.secondary)
+                } else {
+                    FloppyIconView(isDirty: doc.isDirty, size: workspace.tabReduce ? 11 : 12.5)
+                }
 
                 Text(displayedTitle)
                     .font(.system(size: titleFontSize, weight: isActive ? .semibold : .regular))
@@ -319,15 +390,16 @@ public struct NppTabItemView: View {
                 .stroke(isActive ? Color(NSColor.separatorColor) : (workspace.tabChangeInactiveColor ? Color(NSColor.separatorColor).opacity(0.3) : Color.clear), lineWidth: 1)
         )
         .overlay(
+            // Top highlight bar (Authentic Notepad++ Orange Bar, view-rotate-4.png)
             VStack {
                 if doc.tabColorId >= 1 && doc.tabColorId <= 5 {
                     Rectangle()
                         .fill(Self.tabAccentColor(for: doc.tabColorId))
                         .frame(height: 3.0)
                         .cornerRadius(1)
-                } else if isActive && workspace.tabColorIndicator {
+                } else if isActive {
                     Rectangle()
-                        .fill(Color.orange)
+                        .fill(Color(red: 0.98, green: 0.48, blue: 0.12)) // Authentic Notepad++ Orange highlight
                         .frame(height: 2.5)
                         .cornerRadius(1)
                 }
@@ -347,6 +419,18 @@ public struct NppTabItemView: View {
                 workspace.togglePin(id: doc.id)
             }
 
+            Divider()
+
+            // Authentic Dual View Commands
+            Button(workspace.tr("Move to Other View")) {
+                workspace.moveToOtherView(id: doc.id)
+            }
+            Button(workspace.tr("Clone to Other View")) {
+                workspace.cloneToOtherView(id: doc.id)
+            }
+
+            Divider()
+
             Menu(workspace.tr("Apply Color to Tab")) {
                 ForEach(1...5, id: \.self) { colorIdx in
                     Button(workspace.tr("Apply Color \(colorIdx)")) {
@@ -364,26 +448,26 @@ public struct NppTabItemView: View {
             Divider()
 
             Button(workspace.tr("Move to Start")) {
-                workspace.moveTabToStart()
+                workspace.moveTabToStart(id: doc.id, viewIndex: viewIndex)
             }
             Button(workspace.tr("Move to End")) {
-                workspace.moveTabToEnd()
+                workspace.moveTabToEnd(id: doc.id, viewIndex: viewIndex)
             }
 
             Divider()
 
             Menu(workspace.tr("Close Multiple Documents")) {
                 Button(workspace.tr("Close All but Active Document")) {
-                    workspace.closeAllBut(id: doc.id)
+                    _ = workspace.closeAllBut(id: doc.id, force: false)
                 }
                 Button(workspace.tr("Close All but Pinned Documents")) {
-                    workspace.closeAllButPinned()
+                    _ = workspace.closeAllButPinned(force: false)
                 }
                 Button(workspace.tr("Close All to the Left")) {
-                    workspace.closeAllToLeft(of: doc.id)
+                    _ = workspace.closeAllToLeft(of: doc.id, force: false)
                 }
                 Button(workspace.tr("Close All to the Right")) {
-                    workspace.closeAllToRight(of: doc.id)
+                    _ = workspace.closeAllToRight(of: doc.id, force: false)
                 }
                 Button(workspace.tr("Close All Unchanged")) {
                     workspace.closeAllUnchanged()

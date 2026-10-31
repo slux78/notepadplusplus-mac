@@ -132,10 +132,125 @@ public struct NppUserDefineDialogView: View {
         }
         .padding(14)
         .frame(minWidth: 560, minHeight: 380)
+        .onAppear {
+            syncFieldsFromSelectedLanguage()
+        }
+        .onChange(of: selectedLanguageIndex) { _ in
+            syncFieldsFromSelectedLanguage()
+        }
+        .onChange(of: currentExtensions) { val in
+            if selectedLanguageIndex > 0 && selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count {
+                workspace.userDefinedLanguages[selectedLanguageIndex - 1].extensions = val
+                workspace.saveUserDefinedLanguages()
+            }
+        }
+        .onChange(of: ignoreCase) { val in
+            if selectedLanguageIndex > 0 && selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count {
+                workspace.userDefinedLanguages[selectedLanguageIndex - 1].ignoreCase = val
+                workspace.saveUserDefinedLanguages()
+            }
+        }
+        .onChange(of: folderOpenKeyword) { updateKeyword("Folders in code1, open", value: $0) }
+        .onChange(of: folderCloseKeyword) { updateKeyword("Folders in code1, close", value: $0) }
+        .onChange(of: group1Keywords) { updateKeyword("Keywords1", value: $0) }
+        .onChange(of: group2Keywords) { updateKeyword("Keywords2", value: $0) }
+        .onChange(of: operatorsString) { updateKeyword("Operators1", value: $0) }
+        .onChange(of: lineCommentPrefix) { updateCommentToken(0, value: $0) }
+        .onChange(of: blockCommentOpen) { updateCommentToken(3, value: $0) }
+        .onChange(of: blockCommentClose) { updateCommentToken(4, value: $0) }
+    }
+
+    private func updateKeyword(_ name: String, value: String) {
+        guard selectedLanguageIndex > 0, selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return }
+        workspace.userDefinedLanguages[selectedLanguageIndex - 1].keywordLists[name] = value
+        workspace.saveUserDefinedLanguages()
+    }
+
+    private func keywordBinding(_ name: String) -> Binding<String> {
+        Binding(
+            get: {
+                guard selectedLanguageIndex > 0,
+                      selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return "" }
+                return workspace.userDefinedLanguages[selectedLanguageIndex - 1].keywordLists[name] ?? ""
+            },
+            set: { updateKeyword(name, value: $0) }
+        )
+    }
+
+    private func prefixBinding(_ name: String) -> Binding<Bool> {
+        Binding(
+            get: {
+                guard selectedLanguageIndex > 0,
+                      selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return false }
+                return workspace.userDefinedLanguages[selectedLanguageIndex - 1].prefixModes[name] == true
+            },
+            set: { value in
+                guard selectedLanguageIndex > 0,
+                      selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return }
+                workspace.userDefinedLanguages[selectedLanguageIndex - 1].prefixModes[name] = value
+                workspace.saveUserDefinedLanguages()
+            }
+        )
+    }
+
+    private var decimalSeparatorBinding: Binding<Int> {
+        Binding(
+            get: {
+                guard selectedLanguageIndex > 0,
+                      selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return 0 }
+                return workspace.userDefinedLanguages[selectedLanguageIndex - 1].decimalSeparator
+            },
+            set: { value in
+                guard selectedLanguageIndex > 0,
+                      selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return }
+                workspace.userDefinedLanguages[selectedLanguageIndex - 1].decimalSeparator = value
+                workspace.saveUserDefinedLanguages()
+            }
+        )
+    }
+
+    private func updateCommentToken(_ number: Int, value: String) {
+        guard selectedLanguageIndex > 0, selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return }
+        let index = selectedLanguageIndex - 1
+        let existing = workspace.userDefinedLanguages[index].keywordLists["Comments"] ?? ""
+        workspace.userDefinedLanguages[index].keywordLists["Comments"] =
+            NppUDLCodec.replacingCommentToken(number, value: value, in: existing)
+        workspace.saveUserDefinedLanguages()
+    }
+
+    private func syncFieldsFromSelectedLanguage() {
+        if selectedLanguageIndex > 0 && selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count {
+            let lang = workspace.userDefinedLanguages[selectedLanguageIndex - 1]
+            currentLanguageName = lang.name
+            currentExtensions = lang.extensions
+            ignoreCase = lang.ignoreCase
+            folderOpenKeyword = lang.keywordLists["Folders in code1, open"] ?? ""
+            folderCloseKeyword = lang.keywordLists["Folders in code1, close"] ?? ""
+            group1Keywords = lang.keywordLists["Keywords1"] ?? ""
+            group2Keywords = lang.keywordLists["Keywords2"] ?? ""
+            operatorsString = lang.keywordLists["Operators1"] ?? ""
+            let comments = lang.keywordLists["Comments"] ?? ""
+            lineCommentPrefix = NppUDLCodec.commentToken(0, in: comments)
+            blockCommentOpen = NppUDLCodec.commentToken(3, in: comments)
+            blockCommentClose = NppUDLCodec.commentToken(4, in: comments)
+        } else {
+            currentLanguageName = "User-Defined"
+            currentExtensions = ""
+            ignoreCase = true
+            folderOpenKeyword = ""
+            folderCloseKeyword = ""
+            group1Keywords = ""
+            group2Keywords = ""
+            operatorsString = ""
+            lineCommentPrefix = "//"
+            blockCommentOpen = "/*"
+            blockCommentClose = "*/"
+        }
     }
 
     private var folderAndDefaultTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 8) {
             Text(workspace.tr("Folding in code:"))
                 .font(.system(size: 11, weight: .semibold))
             HStack(spacing: 12) {
@@ -150,25 +265,58 @@ public struct NppUserDefineDialogView: View {
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                 }
             }
-            Spacer()
+            ForEach(["Folders in code1, middle", "Folders in code2, open", "Folders in code2, middle",
+                     "Folders in code2, close", "Folders in comment, open", "Folders in comment, middle",
+                     "Folders in comment, close"], id: \.self) { name in
+                HStack {
+                    Text(name).frame(width: 190, alignment: .leading)
+                    TextField("", text: keywordBinding(name))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                }
+                .font(.system(size: 10))
+            }
+          }
         }
     }
 
     private var keywordsListTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 8) {
             Text(workspace.tr("1st Group Keywords:")).font(.system(size: 11, weight: .semibold))
             TextField("if else for while return func class", text: $group1Keywords)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
+            Toggle("Prefix Mode", isOn: prefixBinding("Keywords1"))
+                .disabled(selectedLanguageIndex == 0)
 
             Text(workspace.tr("2nd Group Keywords:")).font(.system(size: 11, weight: .semibold))
             TextField("true false nil null undefined", text: $group2Keywords)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
-            Spacer()
+            Toggle("Prefix Mode", isOn: prefixBinding("Keywords2"))
+                .disabled(selectedLanguageIndex == 0)
+            ForEach(3...8, id: \.self) { group in
+                Text("\(group)th Group Keywords:").font(.system(size: 11, weight: .semibold))
+                TextField("", text: keywordBinding("Keywords\(group)"))
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                Toggle("Prefix Mode", isOn: prefixBinding("Keywords\(group)"))
+                    .disabled(selectedLanguageIndex == 0)
+            }
+          }
         }
     }
 
     private var commentAndNumberTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Decimal separator:").font(.system(size: 10))
+                Picker("", selection: decimalSeparatorBinding) {
+                    Text("Dot").tag(0)
+                    Text("Comma").tag(1)
+                    Text("Both").tag(2)
+                }
+                .frame(width: 150)
+                .disabled(selectedLanguageIndex == 0)
+            }
             HStack(spacing: 12) {
                 VStack(alignment: .leading) {
                     Text(workspace.tr("Line comment:")).font(.system(size: 10))
@@ -186,14 +334,29 @@ public struct NppUserDefineDialogView: View {
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                 }
             }
-            Spacer()
+            ForEach(["Numbers, prefix1", "Numbers, prefix2", "Numbers, extras1", "Numbers, extras2",
+                     "Numbers, suffix1", "Numbers, suffix2", "Numbers, range"], id: \.self) { name in
+                HStack {
+                    Text(name).frame(width: 130, alignment: .leading)
+                    TextField("", text: keywordBinding(name))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                }
+                .font(.system(size: 10))
+            }
+          }
         }
     }
 
     private var operatorsTab: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(workspace.tr("Operators:")).font(.system(size: 11, weight: .semibold))
+            Text("Operators 1:").font(.system(size: 11, weight: .semibold))
             TextField("+ - * / = < > ! & | % ~ ^", text: $operatorsString)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+            Text("Operators 2:").font(.system(size: 11, weight: .semibold))
+            TextField("", text: keywordBinding("Operators2"))
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+            Text("Delimiters (UDL XML rule format):").font(.system(size: 11, weight: .semibold))
+            TextField("", text: keywordBinding("Delimiters"))
                 .textFieldStyle(RoundedBorderTextFieldStyle())
             Spacer()
         }
@@ -201,28 +364,72 @@ public struct NppUserDefineDialogView: View {
 
     private func createNewLanguage() {
         let count = workspace.userDefinedLanguages.count + 1
-        let newLang = NppUserDefineLanguage(name: "User Language \(count)", extensions: "udl\(count)", ignoreCase: true)
+        let newLang = NppUserDefineLanguage(name: "User Language \(count)", extensions: "udl\(count)",
+                                            ignoreCase: ignoreCase, keywordLists: currentKeywordLists())
         workspace.userDefinedLanguages.append(newLang)
+        workspace.includeSeparateUserDefinedLanguage(named: newLang.name)
         selectedLanguageIndex = workspace.userDefinedLanguages.count
+        workspace.saveUserDefinedLanguages()
+        (NSApp.delegate as? AppDelegate)?.setupMenuBar()
     }
 
     private func saveAsNewLanguage() {
         let name = "Copy of \(selectedLanguageIndex == 0 ? "User-Defined" : workspace.userDefinedLanguages[selectedLanguageIndex - 1].name)"
-        let newLang = NppUserDefineLanguage(name: name, extensions: currentExtensions, ignoreCase: ignoreCase)
+        var newLang = selectedLanguageIndex > 0 && selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count
+            ? workspace.userDefinedLanguages[selectedLanguageIndex - 1]
+            : NppUserDefineLanguage(name: name, extensions: currentExtensions,
+                                    ignoreCase: ignoreCase, keywordLists: currentKeywordLists())
+        newLang.id = UUID()
+        newLang.name = name
         workspace.userDefinedLanguages.append(newLang)
+        workspace.includeSeparateUserDefinedLanguage(named: newLang.name)
         selectedLanguageIndex = workspace.userDefinedLanguages.count
+        workspace.saveUserDefinedLanguages()
+        (NSApp.delegate as? AppDelegate)?.setupMenuBar()
+    }
+
+    private func currentKeywordLists() -> [String: String] {
+        var comments = ""
+        comments = NppUDLCodec.replacingCommentToken(0, value: lineCommentPrefix, in: comments)
+        comments = NppUDLCodec.replacingCommentToken(3, value: blockCommentOpen, in: comments)
+        comments = NppUDLCodec.replacingCommentToken(4, value: blockCommentClose, in: comments)
+        return [
+            "Folders in code1, open": folderOpenKeyword,
+            "Folders in code1, close": folderCloseKeyword,
+            "Keywords1": group1Keywords,
+            "Keywords2": group2Keywords,
+            "Operators1": operatorsString,
+            "Comments": comments
+        ]
     }
 
     private func renameLanguage() {
         guard selectedLanguageIndex > 0, selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return }
         let idx = selectedLanguageIndex - 1
-        workspace.userDefinedLanguages[idx].name += " (renamed)"
+        let alert = NSAlert()
+        alert.messageText = workspace.tr("Rename")
+        alert.addButton(withTitle: workspace.tr("OK"))
+        alert.addButton(withTitle: workspace.tr("Cancel"))
+        let field = NSTextField(string: workspace.userDefinedLanguages[idx].name)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let newName = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty else { return }
+        workspace.excludeSeparateUserDefinedLanguage(named: workspace.userDefinedLanguages[idx].name)
+        workspace.includeSeparateUserDefinedLanguage(named: newName)
+        workspace.userDefinedLanguages[idx].name = newName
+        workspace.saveUserDefinedLanguages()
+        (NSApp.delegate as? AppDelegate)?.setupMenuBar()
     }
 
     private func removeLanguage() {
         guard selectedLanguageIndex > 0, selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count else { return }
+        workspace.excludeSeparateUserDefinedLanguage(named: workspace.userDefinedLanguages[selectedLanguageIndex - 1].name)
         workspace.userDefinedLanguages.remove(at: selectedLanguageIndex - 1)
         selectedLanguageIndex = 0
+        workspace.saveUserDefinedLanguages()
+        (NSApp.delegate as? AppDelegate)?.setupMenuBar()
     }
 
     private func importLanguage() {
@@ -230,10 +437,17 @@ public struct NppUserDefineDialogView: View {
         openPanel.allowedContentTypes = []
         openPanel.allowsMultipleSelection = false
         if openPanel.runModal() == .OK, let url = openPanel.url {
-            let name = url.deletingPathExtension().lastPathComponent
-            let lang = NppUserDefineLanguage(name: name, extensions: url.pathExtension, ignoreCase: true)
-            workspace.userDefinedLanguages.append(lang)
-            selectedLanguageIndex = workspace.userDefinedLanguages.count
+            do {
+                let data = try Data(contentsOf: url)
+                let languages = try NppUDLCodec.decode(data)
+                for language in languages { workspace.includeSeparateUserDefinedLanguage(named: language.name) }
+                workspace.userDefinedLanguages.append(contentsOf: languages)
+                selectedLanguageIndex = workspace.userDefinedLanguages.count
+                workspace.saveUserDefinedLanguages()
+                (NSApp.delegate as? AppDelegate)?.setupMenuBar()
+            } catch {
+                showFileError(error)
+            }
         }
     }
 
@@ -241,9 +455,25 @@ public struct NppUserDefineDialogView: View {
         let savePanel = NSSavePanel()
         savePanel.nameFieldStringValue = "\(selectedLanguageIndex == 0 ? "UserDefined" : workspace.userDefinedLanguages[selectedLanguageIndex - 1].name).xml"
         if savePanel.runModal() == .OK, let url = savePanel.url {
-            let dummyXML = "<NotepadPlus><UserLang name=\"\(savePanel.nameFieldStringValue)\" ext=\"\(currentExtensions)\"/></NotepadPlus>"
-            try? dummyXML.write(to: url, atomically: true, encoding: .utf8)
+            let language = selectedLanguageIndex > 0 && selectedLanguageIndex - 1 < workspace.userDefinedLanguages.count
+                ? workspace.userDefinedLanguages[selectedLanguageIndex - 1]
+                : NppUserDefineLanguage(name: "User Defined Language", extensions: currentExtensions,
+                                        ignoreCase: ignoreCase, keywordLists: currentKeywordLists())
+            do {
+                let data = try NppUDLCodec.encode(language)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                showFileError(error)
+            }
         }
+    }
+
+    private func showFileError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = workspace.tr("User Defined Language")
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 }
 

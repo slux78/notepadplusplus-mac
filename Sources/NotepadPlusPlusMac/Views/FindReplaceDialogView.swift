@@ -59,7 +59,7 @@ public struct NppFindReplaceDialogView: View {
                         Text(workspace.tr("Find what :"))
                             .font(.system(size: 11))
                             .frame(width: 80, alignment: .trailing)
-                        TextField("", text: $findText)
+                        TextField("", text: $findText, onCommit: { runFindNext(backward: false) })
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .font(.system(size: 12, design: .monospaced))
                             .onChange(of: findText) { newVal in
@@ -74,7 +74,7 @@ public struct NppFindReplaceDialogView: View {
                             Text(workspace.tr("Replace with :"))
                                 .font(.system(size: 11))
                                 .frame(width: 80, alignment: .trailing)
-                            TextField("", text: $replaceText)
+                            TextField("", text: $replaceText, onCommit: { runFindNext(backward: false) })
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .font(.system(size: 12, design: .monospaced))
                             Menu {
@@ -223,7 +223,7 @@ public struct NppFindReplaceDialogView: View {
                         // Replace Tab Buttons
                         findNextButtonCluster
                         actionBtn(workspace.tr("Replace")) { runReplaceOne() }
-                        actionBtn(workspace.tr("Replace All"), isDefault: true) { runReplaceAll() }
+                        actionBtn(workspace.tr("Replace All")) { runReplaceAll() }
                         actionBtn(workspace.tr("Replace All in All Opened Docs")) {
                             runReplaceAllInOpenedDocs()
                         }
@@ -252,7 +252,7 @@ public struct NppFindReplaceDialogView: View {
                     } else if workspace.findReplaceTab == 3 {
                         // Mark Tab Buttons
                         findNextButtonCluster
-                        actionBtn(workspace.tr("Mark All"), isDefault: true) { runMarkAll() }
+                        actionBtn(workspace.tr("Mark All")) { runMarkAll() }
                         actionBtn(workspace.tr("Clear all marks")) {
                             workspace.clearAllBookmarks()
                             statusMessage = "All marks cleared."
@@ -306,6 +306,9 @@ public struct NppFindReplaceDialogView: View {
                 findText = newQuery
             }
         }
+        .onExitCommand {
+            closeDialog()
+        }
     }
 
     @ViewBuilder
@@ -333,10 +336,18 @@ public struct NppFindReplaceDialogView: View {
                         .padding(.vertical, 3)
                 }
                 .buttonStyle(DefaultButtonStyle())
+                .keyboardShortcut(.defaultAction)
                 .help(workspace.tr("Find Next"))
             } else {
                 actionBtn(workspace.tr("Find Next"), isDefault: true) { runFindNext() }
             }
+
+            Button("") {
+                runFindNext(backward: true)
+            }
+            .keyboardShortcut(.return, modifiers: [.shift])
+            .frame(width: 0, height: 0)
+            .opacity(0)
         }
     }
 
@@ -354,6 +365,9 @@ public struct NppFindReplaceDialogView: View {
     }
 
     private func closeDialog() {
+        if let tv = workspace.activeTextView {
+            tv.window?.makeFirstResponder(tv)
+        }
         isPresented = false
         workspace.showFindReplaceDialog = false
         NppFindReplaceWindowController.shared.close()
@@ -431,7 +445,14 @@ public struct NppFindReplaceDialogView: View {
                 .opacity(workspace.findTransparencyEnabled ? 1.0 : 0.45)
 
                 HStack(spacing: 4) {
-                    Slider(value: $workspace.findTransparencyValue, in: 0.20...0.95, step: 0.05) { _ in
+                    Slider(
+                        value: Binding<Double>(
+                            get: { workspace.findTransparencyValue * 200.0 },
+                            set: { workspace.findTransparencyValue = $0 / 200.0 }
+                        ),
+                        in: 20...200,
+                        step: 5
+                    ) { _ in
                         NppFindReplaceWindowController.shared.updateTransparency()
                     }
                     .frame(width: 80)
@@ -496,6 +517,7 @@ public struct NppFindReplaceDialogView: View {
         var options: NSRegularExpression.Options = []
         if !matchCase { options.insert(.caseInsensitive) }
         if searchMode == 2 && dotMatchesNewline { options.insert(.dotMatchesLineSeparators) }
+        if searchMode == 2 { options.insert(.anchorsMatchLines) }
         return try? NSRegularExpression(pattern: pattern, options: options)
     }
 
@@ -621,7 +643,15 @@ public struct NppFindReplaceDialogView: View {
         }
 
         if matches {
-            tv.insertText(replacement, replacementRange: selected)
+            var finalReplacement = replacement
+            if searchMode == 2 {
+                if let regex = buildSearchRegex(for: query),
+                   let fullMatch = regex.firstMatch(in: tv.string, options: [], range: selected) {
+                    let normalizedTemplate = NppWorkspace.normalizeRegexReplacementTemplate(replacement)
+                    finalReplacement = regex.replacementString(for: fullMatch, in: tv.string, offset: 0, template: normalizedTemplate)
+                }
+            }
+            tv.insertText(finalReplacement, replacementRange: selected)
             doc.content = tv.string
             doc.isDirty = true
             statusMessage = "Replaced 1 occurrence."
@@ -650,7 +680,7 @@ public struct NppFindReplaceDialogView: View {
         if searchMode == 2 || matchWholeWord {
             if let regex = buildSearchRegex(for: query) {
                 count = regex.numberOfMatches(in: content, range: targetRange)
-                let template = (searchMode == 2) ? replacement : NSRegularExpression.escapedTemplate(for: replacement)
+                let template = (searchMode == 2) ? NppWorkspace.normalizeRegexReplacementTemplate(replacement) : NSRegularExpression.escapedTemplate(for: replacement)
                 content = regex.stringByReplacingMatches(in: content, range: targetRange, withTemplate: template)
             }
         } else {
@@ -675,9 +705,19 @@ public struct NppFindReplaceDialogView: View {
             }
         }
 
-        tv.string = content
-        doc.content = content
-        doc.isDirty = true
+        let fullRange = NSRange(location: 0, length: (tv.string as NSString).length)
+        if tv.shouldChangeText(in: fullRange, replacementString: content) {
+            tv.undoManager?.beginUndoGrouping()
+            tv.replaceCharacters(in: fullRange, with: content)
+            tv.didChangeText()
+            tv.undoManager?.endUndoGrouping()
+            doc.content = tv.string
+            doc.isDirty = true
+        } else {
+            tv.string = content
+            doc.content = content
+            doc.isDirty = true
+        }
         statusMessage = "Replace All: \(count) occurrence\(count == 1 ? "" : "s") were replaced."
     }
 
@@ -693,7 +733,7 @@ public struct NppFindReplaceDialogView: View {
                 let count = regex.numberOfMatches(in: content, range: fullRange)
                 if count > 0 {
                     totalCount += count
-                    let template = (searchMode == 2) ? replacement : NSRegularExpression.escapedTemplate(for: replacement)
+                    let template = (searchMode == 2) ? NppWorkspace.normalizeRegexReplacementTemplate(replacement) : NSRegularExpression.escapedTemplate(for: replacement)
                     content = regex.stringByReplacingMatches(in: content, range: fullRange, withTemplate: template)
                     doc.content = content
                     doc.isDirty = true
