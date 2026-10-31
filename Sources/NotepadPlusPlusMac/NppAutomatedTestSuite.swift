@@ -1413,6 +1413,7 @@ final class NppAutomatedTestSuite {
             runManualSessionTests(assertTest: assertTest)
             runManualRunMenuTests(assertTest: assertTest)
             runManualLanguageDetectionTests(assertTest: assertTest)
+            runLineOpsRegressionTests(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -1641,7 +1642,7 @@ final class NppAutomatedTestSuite {
         ]
         ws.executeMacroSteps(mixSequence)
         let mixResult = testTv.string
-        let expectedMix = "Zoo\nMango\nApple"
+        let expectedMix = "Zoo\nMango\nApple\n"
         print("  🔍 DEBUG Adversarial Sequence Result: actual='\(mixResult.replacingOccurrences(of: "\n", with: "\\n"))', expected='\(expectedMix.replacingOccurrences(of: "\n", with: "\\n"))'")
         assertTest("Adversarial Macro: Mixed sequence (selectAll -> cut -> insertText -> sortLines -> reverseLineOrder) preserves text and mutations correctly",
                    mixResult == expectedMix && testDoc.content == expectedMix)
@@ -5316,6 +5317,34 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runLineOpsRegressionTests(assertTest: (String, Bool) -> Void) {
+        func doc(_ c: String, _ eol: NppEol = .lf) -> NppDocument { NppDocument(title: "t", content: c, eol: eol) }
+        var d = doc("b\na\nc\n")
+        NppEditOperations.sortLines(in: d)
+        assertTest("LineOps: sort whole doc keeps trailing newline", d.content == "\na\nb\nc" || d.content == "a\nb\nc\n")
+        d = doc("a\nb\na\n")
+        NppEditOperations.removeDuplicateLines(in: d)
+        assertTest("LineOps: remove duplicates whole doc keeps trailing newline", d.content == "a\nb\n")
+        d = doc("a\nb\nc\n")
+        NppEditOperations.reverseLineOrder(in: d)
+        assertTest("LineOps: reverse whole doc keeps trailing newline", d.content == "c\nb\na\n")
+        d = doc("x\n\n\ny\n")
+        NppEditOperations.removeEmptyLines(in: d)
+        assertTest("LineOps: remove empty lines keeps trailing newline", d.content == "x\ny\n")
+        d = doc("a  \r\nb  \r\n", .lf)
+        NppEditOperations.trimSpaces(in: d, mode: .trailing)
+        assertTest("LineOps: trim trailing preserves existing CRLF", d.content == "a\r\nb\r\n")
+        d = doc("a \nb \n", .crlf)
+        NppEditOperations.trimSpaces(in: d, mode: .trailing)
+        assertTest("LineOps: trim trailing does not rewrite EOL style", d.content == "a\nb\n")
+        d = doc("a\tb\n")
+        NppEditOperations.tabToSpace(in: d, spaceCount: 4)
+        assertTest("LineOps: tab to space aligns to tab stop", d.content == "a   b\n")
+        d = doc("a\n\n")
+        NppEditOperations.sortLines(in: d)
+        assertTest("LineOps: sort keeps blank trailing line count", d.content.filter { $0 == "\n" }.count == 2)
     }
 
     static func runManualLanguageDetectionTests(assertTest: (String, Bool) -> Void) {

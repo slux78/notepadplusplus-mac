@@ -396,7 +396,11 @@ public final class NppEditOperations {
         } else {
             let lines = (fullText as String).nppLines()
             let transformed = transform(lines)
-            let newContent = transformed.joined(separator: lineSeparator(in: fullText as String))
+            var newContent = transformed.joined(separator: lineSeparator(in: fullText as String))
+            let whole = fullText as String
+            if whole.hasSuffix("\r\n") { newContent += "\r\n" }
+            else if whole.hasSuffix("\n") { newContent += "\n" }
+            else if whole.hasSuffix("\r") { newContent += "\r" }
 
             if let tv = textView {
                 let fullRange = NSRange(location: 0, length: fullText.length)
@@ -584,6 +588,31 @@ public final class NppEditOperations {
     }
 
     // MARK: - Blank Operations
+    /// Splits text into (content, terminator) pairs, keeping each line's original EOL.
+    static func splitKeepingTerminators(_ text: String) -> [(String, String)] {
+        var result: [(String, String)] = []
+        let ns = text as NSString
+        var lineStart = 0
+        var i = 0
+        let n = ns.length
+        while i < n {
+            let c = ns.character(at: i)
+            if c == 10 || c == 13 {
+                let termLen = (c == 13 && i + 1 < n && ns.character(at: i + 1) == 10) ? 2 : 1
+                result.append((ns.substring(with: NSRange(location: lineStart, length: i - lineStart)),
+                               ns.substring(with: NSRange(location: i, length: termLen))))
+                i += termLen
+                lineStart = i
+            } else {
+                i += 1
+            }
+        }
+        if lineStart < n {
+            result.append((ns.substring(from: lineStart), ""))
+        }
+        return result
+    }
+
     private static func applyLineTransform(
         in doc: NppDocument,
         selectedRange: NSRange? = nil,
@@ -591,19 +620,16 @@ public final class NppEditOperations {
     ) {
         guard !doc.isReadOnly else { return }
         let nsContent = doc.content as NSString
-        let separator = doc.eolFormat.characters
+
+        func run(_ text: String) -> String {
+            splitKeepingTerminators(text).map { transform($0.0) + $0.1 }.joined()
+        }
 
         if let sel = selectedRange, sel.length > 0 && sel.location + sel.length <= nsContent.length {
             let targetRange = nsContent.lineRange(for: sel)
-            let subText = nsContent.substring(with: targetRange)
-            let hasEndingNewline = subText.hasSuffix("\r\n") || subText.hasSuffix("\n") || subText.hasSuffix("\r")
-            let lines = subText.nppLines()
-            let transformed = lines.map(transform).joined(separator: separator) + (hasEndingNewline ? separator : "")
-            doc.content = nsContent.replacingCharacters(in: targetRange, with: transformed)
+            doc.content = nsContent.replacingCharacters(in: targetRange, with: run(nsContent.substring(with: targetRange)))
         } else {
-            let lines = doc.content.nppLines()
-            let hasEndingNewline = doc.content.hasSuffix("\r\n") || doc.content.hasSuffix("\n") || doc.content.hasSuffix("\r")
-            doc.content = lines.map(transform).joined(separator: separator) + (hasEndingNewline ? separator : "")
+            doc.content = run(doc.content)
         }
         doc.isDirty = true
     }
@@ -628,15 +654,21 @@ public final class NppEditOperations {
     }
 
     public static func tabToSpace(in doc: NppDocument, spaceCount: Int = 4, selectedRange: NSRange? = nil) {
-        let spaces = String(repeating: " ", count: spaceCount)
-        if let sel = selectedRange, sel.length > 0 {
-            applyLineTransform(in: doc, selectedRange: selectedRange) { line in
-                line.replacingOccurrences(of: "\t", with: spaces)
+        guard spaceCount > 0 else { return }
+        applyLineTransform(in: doc, selectedRange: selectedRange) { line in
+            var out = ""
+            var col = 0
+            for ch in line {
+                if ch == "\t" {
+                    let n = spaceCount - (col % spaceCount)
+                    out += String(repeating: " ", count: n)
+                    col += n
+                } else {
+                    out.append(ch)
+                    col += 1
+                }
             }
-        } else {
-            guard !doc.isReadOnly else { return }
-            doc.content = doc.content.replacingOccurrences(of: "\t", with: spaces)
-            doc.isDirty = true
+            return out
         }
     }
 
