@@ -7,23 +7,60 @@ public struct NppFindReplaceDialogView: View {
 
     @State private var findText: String = ""
     @State private var replaceText: String = ""
-    @State private var filterText: String = "*.*"
-    @State private var directoryText: String = ""
-    @State private var inSubfolders: Bool = true
-    @State private var inHiddenFolders: Bool = false
 
-    @State private var matchCase: Bool = false
-    @State private var matchWholeWord: Bool = false
-    @State private var wrapAround: Bool = true
-    @State private var backwardDirection: Bool = false
-    @State private var inSelection: Bool = false
+    private var filterText: String {
+        get { workspace.filterText }
+        nonmutating set { workspace.filterText = newValue }
+    }
+    private var directoryText: String {
+        get { workspace.directoryText }
+        nonmutating set { workspace.directoryText = newValue }
+    }
+    private var inSubfolders: Bool {
+        get { workspace.inSubfolders }
+        nonmutating set { workspace.inSubfolders = newValue }
+    }
+    private var inHiddenFolders: Bool {
+        get { workspace.inHiddenFolders }
+        nonmutating set { workspace.inHiddenFolders = newValue }
+    }
+    private var matchCase: Bool {
+        get { workspace.matchCase }
+        nonmutating set { workspace.matchCase = newValue }
+    }
+    private var matchWholeWord: Bool {
+        get { workspace.matchWholeWord }
+        nonmutating set { workspace.matchWholeWord = newValue }
+    }
+    private var wrapAround: Bool {
+        get { workspace.wrapAround }
+        nonmutating set { workspace.wrapAround = newValue }
+    }
+    private var backwardDirection: Bool {
+        get { workspace.searchBackward }
+        nonmutating set { workspace.searchBackward = newValue }
+    }
+    private var inSelection: Bool {
+        get { workspace.searchInSelection }
+        nonmutating set { workspace.searchInSelection = newValue }
+    }
+    private var searchMode: Int {
+        get { workspace.searchMode }
+        nonmutating set { workspace.searchMode = newValue }
+    }
+    private var dotMatchesNewline: Bool {
+        get { workspace.dotMatchesNewline }
+        nonmutating set { workspace.dotMatchesNewline = newValue }
+    }
+    private var bookmarkLine: Bool {
+        get { workspace.bookmarkLine }
+        nonmutating set { workspace.bookmarkLine = newValue }
+    }
+    private var purgeEachSearch: Bool {
+        get { workspace.purgeEachSearch }
+        nonmutating set { workspace.purgeEachSearch = newValue }
+    }
 
-    @State private var searchMode: Int = 0 // 0: Normal, 1: Extended, 2: RegEx
-    @State private var dotMatchesNewline: Bool = false
-
-    // Mark tab options
-    @State private var bookmarkLine: Bool = true
-    @State private var purgeEachSearch: Bool = false
 
     @AppStorage("npp_two_find_buttons_mode") private var twoFindButtonsMode: Bool = false
 
@@ -112,7 +149,7 @@ public struct NppFindReplaceDialogView: View {
                             Text(workspace.tr("Filters :"))
                                 .font(.system(size: 11))
                                 .frame(width: 80, alignment: .trailing)
-                            TextField("", text: $filterText)
+                            TextField("", text: $workspace.filterText)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .font(.system(size: 12, design: .monospaced))
                         }
@@ -121,7 +158,7 @@ public struct NppFindReplaceDialogView: View {
                             Text(workspace.tr("Directory :"))
                                 .font(.system(size: 11))
                                 .frame(width: 80, alignment: .trailing)
-                            TextField("", text: $directoryText)
+                            TextField("", text: $workspace.directoryText)
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
                                 .font(.system(size: 12))
                             Button("...") {
@@ -145,10 +182,10 @@ public struct NppFindReplaceDialogView: View {
 
                         HStack(spacing: 12) {
                             Spacer().frame(width: 80)
-                            Toggle(workspace.tr("In all sub-folders"), isOn: $inSubfolders)
+                            Toggle(workspace.tr("In all sub-folders"), isOn: $workspace.inSubfolders)
                                 .font(.system(size: 10))
                                 .toggleStyle(CheckboxToggleStyle())
-                            Toggle(workspace.tr("In hidden folders"), isOn: $inHiddenFolders)
+                            Toggle(workspace.tr("In hidden folders"), isOn: $workspace.inHiddenFolders)
                                 .font(.system(size: 10))
                                 .toggleStyle(CheckboxToggleStyle())
                         }
@@ -158,10 +195,10 @@ public struct NppFindReplaceDialogView: View {
                     if workspace.findReplaceTab == 3 {
                         HStack(spacing: 16) {
                             Spacer().frame(width: 80)
-                            Toggle(workspace.tr("Bookmark line"), isOn: $bookmarkLine)
+                            Toggle(workspace.tr("Bookmark line"), isOn: $workspace.bookmarkLine)
                                 .font(.system(size: 11))
                                 .toggleStyle(CheckboxToggleStyle())
-                            Toggle(workspace.tr("Purge for each search"), isOn: $purgeEachSearch)
+                            Toggle(workspace.tr("Purge for each search"), isOn: $workspace.purgeEachSearch)
                                 .font(.system(size: 11))
                                 .toggleStyle(CheckboxToggleStyle())
                         }
@@ -170,14 +207,14 @@ public struct NppFindReplaceDialogView: View {
                     // Checkboxes Row: Match case, Whole word, Wrap around
                     HStack(alignment: .top, spacing: 20) {
                         VStack(alignment: .leading, spacing: workspace.findReplaceTab == 2 ? 4 : 6) {
-                            Toggle(workspace.tr("Match whole word only"), isOn: $matchWholeWord)
+                            Toggle(workspace.tr("Match whole word only"), isOn: $workspace.matchWholeWord)
                                 .font(.system(size: 11))
                                 .toggleStyle(CheckboxToggleStyle())
-                            Toggle(workspace.tr("Match case"), isOn: $matchCase)
+                            Toggle(workspace.tr("Match case"), isOn: $workspace.matchCase)
                                 .font(.system(size: 11))
                                 .toggleStyle(CheckboxToggleStyle())
                             if workspace.findReplaceTab != 2 {
-                                Toggle(workspace.tr("Wrap around"), isOn: $wrapAround)
+                                Toggle(workspace.tr("Wrap around"), isOn: $workspace.wrapAround)
                                     .font(.system(size: 11))
                                     .toggleStyle(CheckboxToggleStyle())
                             }
@@ -185,10 +222,10 @@ public struct NppFindReplaceDialogView: View {
 
                         VStack(alignment: .leading, spacing: workspace.findReplaceTab == 2 ? 4 : 6) {
                             if workspace.findReplaceTab != 2 {
-                                Toggle(workspace.tr("Backward direction"), isOn: $backwardDirection)
+                                Toggle(workspace.tr("Backward direction"), isOn: $workspace.searchBackward)
                                     .font(.system(size: 11))
                                     .toggleStyle(CheckboxToggleStyle())
-                                Toggle(workspace.tr("In selection"), isOn: $inSelection)
+                                Toggle(workspace.tr("In selection"), isOn: $workspace.searchInSelection)
                                     .font(.system(size: 11))
                                     .toggleStyle(CheckboxToggleStyle())
                             }
@@ -390,13 +427,13 @@ public struct NppFindReplaceDialogView: View {
         GroupBox(label: Text(workspace.tr("Search Mode")).font(.system(size: 11, weight: .semibold))) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    RadioButton(tag: 0, selection: $searchMode, label: workspace.tr("Normal"))
-                    RadioButton(tag: 1, selection: $searchMode, label: "Extended (\\n, \\r...)")
+                    RadioButton(tag: 0, selection: $workspace.searchMode, label: workspace.tr("Normal"))
+                    RadioButton(tag: 1, selection: $workspace.searchMode, label: "Extended (\\n, \\r...)")
                 }
                 HStack(spacing: 6) {
-                    RadioButton(tag: 2, selection: $searchMode, label: workspace.tr("Regular expression"))
-                    if searchMode == 2 {
-                        Toggle(workspace.tr(". matches newline"), isOn: $dotMatchesNewline)
+                    RadioButton(tag: 2, selection: $workspace.searchMode, label: workspace.tr("Regular expression"))
+                    if workspace.searchMode == 2 {
+                        Toggle(workspace.tr(". matches newline"), isOn: $workspace.dotMatchesNewline)
                             .font(.system(size: 10))
                             .toggleStyle(CheckboxToggleStyle())
                     }
@@ -509,16 +546,7 @@ public struct NppFindReplaceDialogView: View {
     }
 
     private func buildSearchRegex(for query: String) -> NSRegularExpression? {
-        guard !query.isEmpty else { return nil }
-        var pattern = (searchMode == 2) ? query : NSRegularExpression.escapedPattern(for: query)
-        if matchWholeWord {
-            pattern = NppWorkspace.wholeWordPattern(pattern, query: query)
-        }
-        var options: NSRegularExpression.Options = []
-        if !matchCase { options.insert(.caseInsensitive) }
-        if searchMode == 2 && dotMatchesNewline { options.insert(.dotMatchesLineSeparators) }
-        if searchMode == 2 { options.insert(.anchorsMatchLines) }
-        return try? NSRegularExpression(pattern: pattern, options: options)
+        return workspace.buildSearchRegex(for: query)
     }
 
     private func runFindNext(backward: Bool? = nil) {
@@ -529,48 +557,7 @@ public struct NppFindReplaceDialogView: View {
         let currentRange = tv.selectedRange()
         let startLocation = effectiveBackward ? currentRange.location : NSMaxRange(currentRange)
 
-        var foundRange: NSRange?
-        if searchMode == 2 || matchWholeWord {
-            if let regex = buildSearchRegex(for: query) {
-                let matches = regex.matches(in: content, range: NSRange(location: 0, length: (content as NSString).length))
-                if effectiveBackward {
-                    foundRange = matches.last(where: { $0.range.location < startLocation })?.range
-                    if foundRange == nil && wrapAround {
-                        foundRange = matches.last?.range
-                    }
-                } else {
-                    foundRange = matches.first(where: { $0.range.location >= startLocation })?.range
-                    if foundRange == nil && wrapAround {
-                        foundRange = matches.first?.range
-                    }
-                }
-            }
-        } else { // Normal or Extended without wholeWord
-            var options: NSString.CompareOptions = []
-            if !matchCase { options.insert(.caseInsensitive) }
-            let searchLength = (content as NSString).length
-            if effectiveBackward {
-                let rangeToSearch = NSRange(location: 0, length: min(startLocation, searchLength))
-                let r = (content as NSString).range(of: query, options: options.union(.backwards), range: rangeToSearch)
-                if r.location != NSNotFound {
-                    foundRange = r
-                } else if wrapAround {
-                    let wrapRange = NSRange(location: 0, length: searchLength)
-                    let wr = (content as NSString).range(of: query, options: options.union(.backwards), range: wrapRange)
-                    if wr.location != NSNotFound { foundRange = wr }
-                }
-            } else {
-                let rangeToSearch = NSRange(location: min(startLocation, searchLength), length: max(0, searchLength - startLocation))
-                let r = (content as NSString).range(of: query, options: options, range: rangeToSearch)
-                if r.location != NSNotFound {
-                    foundRange = r
-                } else if wrapAround {
-                    let wrapRange = NSRange(location: 0, length: searchLength)
-                    let wr = (content as NSString).range(of: query, options: options, range: wrapRange)
-                    if wr.location != NSNotFound { foundRange = wr }
-                }
-            }
-        }
+        let foundRange = workspace.findRange(in: content, query: query, forward: !effectiveBackward, startLocation: startLocation)
 
         if let range = foundRange {
             tv.setSelectedRange(range)

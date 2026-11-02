@@ -151,62 +151,69 @@ public struct NppTabBarView: View {
     public var body: some View {
         ScrollViewReader { proxy in
             HStack(spacing: 0) {
-                // 1. Scrollable tab items on the left
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 2) {
-                        ForEach(currentDocs) { doc in
-                            NppTabItemView(
-                                doc: doc,
-                                workspace: workspace,
-                                isActive: currentActiveId == doc.id,
-                                viewIndex: viewIndex,
-                                onSelect: {
-                                    if viewIndex == 1 {
-                                        workspace.secondaryActiveDocumentId = doc.id
-                                        workspace.activeView = 1
-                                    } else {
-                                        workspace.activeDocumentId = doc.id
-                                        workspace.activeView = 0
+                // 1. Scrollable tab strip containing both tabs and trailing empty space
+                GeometryReader { geo in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 0) {
+                            HStack(spacing: 2) {
+                                ForEach(currentDocs) { doc in
+                                    NppTabItemView(
+                                        doc: doc,
+                                        workspace: workspace,
+                                        isActive: currentActiveId == doc.id,
+                                        viewIndex: viewIndex,
+                                        onSelect: {
+                                            if viewIndex == 1 {
+                                                workspace.secondaryActiveDocumentId = doc.id
+                                                workspace.activeView = 1
+                                            } else {
+                                                workspace.activeDocumentId = doc.id
+                                                workspace.activeView = 0
+                                            }
+                                        },
+                                        onClose: {
+                                            _ = workspace.closeDocument(id: doc.id, force: false)
+                                        }
+                                    )
+                                    .id(doc.id)
+                                    .onDrag {
+                                        NSItemProvider(object: doc.id.uuidString as NSString)
                                     }
-                                },
-                                onClose: {
-                                    _ = workspace.closeDocument(id: doc.id, force: false)
+                                    .onDrop(of: ["public.utf8-plain-text", "public.text"], delegate: TabDropDelegate(item: doc, workspace: workspace, viewIndex: viewIndex))
                                 }
-                            )
-                            .id(doc.id)
-                            .onDrag {
-                                NSItemProvider(object: doc.id.uuidString as NSString)
                             }
-                            .onDrop(of: ["public.utf8-plain-text", "public.text"], delegate: TabDropDelegate(item: doc, workspace: workspace, viewIndex: viewIndex))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, workspace.tabReduce ? 1 : 3)
+
+                            // 2. Empty space next to tabs (Double-click creates new tab per Notepad++ spec)
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .frame(minWidth: 40, maxWidth: .infinity, maxHeight: .infinity)
+                                .onTapGesture(count: 2) {
+                                    if workspace.doubleClickSpaceToNewTab {
+                                        if viewIndex == 1 {
+                                            workspace.newDocumentInSecondaryView()
+                                            workspace.activeView = 1
+                                        } else {
+                                            workspace.activeView = 0
+                                            workspace.newDocument()
+                                        }
+                                    }
+                                }
                         }
+                        .frame(minWidth: geo.size.width, minHeight: workspace.tabReduce ? 24 : 30)
                     }
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, workspace.tabReduce ? 1 : 3)
-                }
-                .onChange(of: currentActiveId) { newId in
-                    if let id = newId {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            proxy.scrollTo(id, anchor: .center)
+                    .onChange(of: currentActiveId) { newId in
+                        if let id = newId {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                proxy.scrollTo(id, anchor: .center)
+                            }
                         }
                     }
                 }
 
-                // 2. Empty space next to tabs (Double-click creates new tab per Notepad++ spec)
-                Color.clear
-                    .contentShape(Rectangle())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onTapGesture(count: 2) {
-                        if workspace.doubleClickSpaceToNewTab {
-                            if viewIndex == 1 {
-                                workspace.newDocumentInSecondaryView()
-                            } else {
-                                workspace.newDocument()
-                            }
-                        }
-                    }
-
-                // 3. Right shortcuts cluster: ＋ ▼ ✕ (Notepad++ authentic layout, view-rotate-4.png)
-                if !workspace.hideRightShortcuts {
+                // 3. Right shortcuts cluster: ＋ ▼ ✕ (Only in Single View per Notepad++ manual view-rotate-4.png)
+                if !workspace.hideRightShortcuts && !workspace.isDualView {
                     HStack(spacing: 2) {
                         Divider().frame(height: 14)
 
@@ -214,7 +221,9 @@ public struct NppTabBarView: View {
                         Button(action: {
                             if viewIndex == 1 {
                                 workspace.newDocumentInSecondaryView()
+                                workspace.activeView = 1
                             } else {
+                                workspace.activeView = 0
                                 workspace.newDocument()
                             }
                         }) {

@@ -26,7 +26,10 @@
 | **Bookmark System (Scintilla Parity)** | `Notepad_plus.h`, `Notepad_plus.cpp`, `menuCmdID.h` | Searching > Bookmarks | ✅ APPROVED | 거터 마진 클릭 토글, 블루 도트 마커, 10대 북마크 조작(Cut/Copy/Paste/Remove/Inverse), Mark All 연동 |
 | **Line Operations & Numeric Sorting** | `NppCommands.cpp`, `Notepad_plus.rc` | Editing > Line Operations | ✅ APPROVED | 정수/실수(Dot/Comma) 정렬, 빈 줄 제거(공백 포함/미포함), 빈 줄 삽입 |
 | **Macro Subsystem & Adversarial Persistence (M1)** | `RunMacroDlg.rc`, `RunMacroDlg.cpp`, `NppBigSwitch.cpp` | Macro > Playback & Run Multi | ✅ APPROVED | 매크로 다중 선택/비폴백 실행, 영구 보존, 20대 편집 명령 전수 기록, 양방향 동기화 |
-| **Automated Test Suite** | 전 기능 회귀 방지 검증 | Comprehensive CI/CD | ✅ APPROVED | 368 / 368 TC 100% 통과 |
+| **Application Quit & Session Snapshot** | `NppBigSwitch.cpp:2834` (`WM_CLOSE`), `NppIO.cpp:1204` | Preferences > Backup / Quit | ✅ APPROVED | 스냅샷 모드 활성 시 저장 프롬프트 없이 즉각 백업 종료 및 재시작 복원, 비활성 시 저장 여부 질의, File > Close All 질의 보존 |
+| **10-Pillar Invariant Defense Matrix** | `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `TabBar.cpp` 등 10대 핵심 불변성 | Architecture Invariant Defense | ✅ APPROVED | DualView, LiveUI Gestures, Menu Responder Chain, Preferences Persistence 전수 검증 |
+| **Gate 2 Test Integrity Remediation** | `NppAutomatedTestSuite.swift`, `NppWorkspace.swift` | Gate 2 Forensic Integrity | ✅ APPROVED | 0 Tautologies, 0 Facades, Live NSEvent Gestures, Clean Audit |
+| **Automated Test Suite** | 전 기능 회귀 방지 검증 | Comprehensive CI/CD | ✅ APPROVED | 1137 / 1137 TC 100% 통과 (10-Pillar Invariant Matrix & Gate 2 Clean) |
 
 ---
 
@@ -588,17 +591,123 @@
   4. **검증 및 테스트:**
      - `NppAutomatedTestSuite.swift`: Section 31 Milestone 4 전체 패리티 감사 스위트 추가.
      - 전체 자동화 테스트 스위트: **656 / 656 PASSED (100% PASS, 0 FAILURES)**.
-     - `./bundle.sh` 빌드 성공 (`build/Notepad++.app` 최신 바이너리 패키징 완료).
+      - `./bundle.sh` 빌드 성공 (`build/Notepad++.app` 최신 바이너리 패키징 완료).
+
+---
+
+### [AUDIT-027] Application Quit & Session Snapshot Alignment and Tab Bar Double-Click to New Document (Gen 5)
+- **상태:** `APPROVED`
+- **감사 대상:** `Sources/NotepadPlusPlusMac/main.swift`, `Sources/NotepadPlusPlusMac/Models/NppWorkspace.swift`, `Sources/NotepadPlusPlusMac/Views/TabBarView.swift`, `Sources/NotepadPlusPlusMac/Views/PreferencesView.swift`, `Sources/NotepadPlusPlusMac/NppAutomatedTestSuite.swift`
+- **공식 C++ 소스 및 매뉴얼 기준:**
+  1. `upstream_npp/PowerEditor/src/NppBigSwitch.cpp:2834-2991` (`WM_CLOSE`):
+     - `nppgui.isSnapshotMode()` (`_isSnapshotMode && _rememberLastSession && !_isCmdlineNosessionActivated`) 활성화 시 `fileCloseAll(false, true)`를 호출하여 디스크에 백업 파일이 존재하는 더티 버퍼에 대해 모달 저장 질의를 일절 표시하지 않고 즉시 스냅샷 후 프로세스를 종료.
+     - `isSnapshotMode` 비활성화 시 `doSaveOrNot` 질의를 표시하고 취소 시 종료 중단.
+     - 반면 `NppCommands.cpp:408` (`IDM_FILE_CLOSEALL`) 및 개별 탭 닫기(`fileClose`)는 `isSnapshotMode`와 무관하게 더티 탭에 대해 항상 저장 여부를 확인.
+  2. `upstream_npp/PowerEditor/src/WinControls/TabBar/TabBar.cpp:1215-1247` (`WM_LBUTTONDBLCLK`):
+     - 마우스 좌표가 기존 탭 영역 외부(`getTabIndexAt == -1`)이고 탭 스트립 내부일 경우 `WM_COMMAND, IDM_FILE_NEW, 0`를 전송하여 새 무제 문서(`new 1`, `new 2`, ...) 생성.
+     - 마우스 좌표가 기존 탭 위(`currentTabOn != -1`)일 경우 `TAB_DBCLK2CLOSE` 옵션에 따라 해당 탭 닫기(`TCN_TABDELETE`).
+- **발견 결함 및 조치 내역:**
+  1. **Cmd+Q 종료 시 불필요한 저장 모달 프롬프트 노출 및 세션 복구 충돌 해결:**
+     - 기존 `main.swift`의 `applicationShouldTerminate` 및 `windowShouldClose`가 `workspace.closeAll(force: false)`를 무조건 호출하여, 세션 백업 복구 기능(`canRestoreUnsavedOnLaunch`)이 켜져 있음에도 모든 미저장 탭에 대해 저장 확인 팝업(`NSAlert`)을 띄우고 취소 시 탭이 일부 닫히거나 저장 안함 시 세션이 유실되던 결함 수정.
+     - `main.swift`에 `prepareForApplicationTermination() -> Bool` 구현:
+       - 진행 중인 IME / 텍스트 입력 조합 완료(`window?.makeFirstResponder(nil)`).
+       - `workspace.canRestoreUnsavedOnLaunch`가 `true`일 경우 `workspace.snapshotSession()`을 호출하여 모달 대화상자 없이 즉시 종료 허용(`.terminateNow`). 디스크 쓰기 실패 등 예외 발생 시에만 `promptSaveDirtyDocumentsBeforeQuit()`로 폴백.
+       - `canRestoreUnsavedOnLaunch`가 `false`일 경우 미저장 문서에 대해 저장 여부를 질의하고, 사용자 취소 시 종료 중단(`.terminateCancel`) 및 탭 상태 보존.
+       - `NppWorkspace.swift`의 `saveSession(to:backupDirectory:)`에서 제목 없는 미저장 문서(`doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)`)의 백업 직렬화를 강화.
+       - 메뉴의 `File > Close All` (`menuCloseAll`) 및 개별 탭 닫기는 `workspace.closeAll(force: false)` / `workspace.closeDocument(force: false)`를 그대로 유지하여 수동 닫기 시 저장 프롬프트 정상 동작(Upstream `IDM_FILE_CLOSEALL` 1:1 일치).
+  2. **탭 우측 빈 영역 더블클릭 시 새 문서 미생성 결함 해결:**
+     - 기존 `TabBarView.swift`에서 `ScrollView(.horizontal)`와 `Color.clear`가 `HStack(spacing: 0)`의 동등한 자식으로 배치되어, 탭이 적을 때 탭 바로 우측 빈 공간("탭 옆에")이 `ScrollView`의 뷰포트에 속해 더블클릭 이벤트가 소실되던 문제 확인.
+     - `GeometryReader { geo in ... }` 구조를 도입하고 `Color.clear.contentShape(Rectangle())`를 `ScrollView` 내부의 탭 아이템 `HStack` 바로 뒤 트레일링 영역에 배치하여, 탭 바로 옆 0px 지점부터 오른쪽 단축키 클러스터까지 전 영역에서 더블클릭 시 `workspace.newDocument()` (또는 듀얼뷰 시 `newDocumentInSecondaryView()`)가 즉각 실행되도록 수정.
+     - 탭 선택, 탭 닫기 버튼, 탭 드래그 앤 드롭 재정렬, 탭 더블클릭 닫기(`doubleClickTabToClose`) 동작과의 간섭 없음을 전수 검증.
+     - `PreferencesView.swift`의 Tab Bar > Behavior 섹션에 `Double click to open new document` (`doubleClickSpaceToNewTab`) 토글 설정 추가.
+  3. **자동화 검증 스위트 및 리그레션 검증:**
+     - `NppAutomatedTestSuite.swift`에 `runQuitAndTabBarUXParityTests` 섹션 추가:
+       - 스냅샷 모드 활성 시 Cmd+Q/종료 즉시 통과 및 세션 복원 검증.
+       - 스냅샷 모드 비활성 시 취소/저장안함 분기 검증.
+       - 단일 탭 및 Close All 시 더티 탭 저장 프롬프트 유지 검증.
+       - 탭 바 빈 영역 더블클릭 새 문서 생성 및 순차 번호 부여 검증.
+       - 라이브 SwiftUI `NSHostingView` / `NSWindow` 마우스 더블클릭 이벤트 시뮬레이션 검증.
+     - 전체 테스트: **983 / 983 PASSED (100% PASS, 0 FAILURES)** (+29개 신규 검증 케이스).
+     - release bundle 빌드: `./bundle.sh` 성공 (`build/Notepad++.app` 정상 생성).
+
+---
+
+### [AUDIT-028] Iteration 2 Remediation: Session Backup Write Failure Fallback, Tab Pinning Serialization, Dual View Focus & Sequential Numbering
+- **상태:** `APPROVED`
+- **감사 대상:** `Sources/NotepadPlusPlusMac/Models/NppWorkspace.swift`, `Sources/NotepadPlusPlusMac/Views/TabBarView.swift`, `Sources/NotepadPlusPlusMac/NppAutomatedTestSuite.swift`
+- **공식 C++ 소스 및 매뉴얼 기준:**
+  1. `upstream_npp/PowerEditor/src/NppIO.cpp:1230-1256` (`fileCloseAll`):
+     - 버퍼 백업 쓰기 실패(`buf->getBackupFileName() == L"" || !doesFileExist(...)`) 감지 시 모달 저장 질의(`NoBackupDoSaveFile`)를 표시하고 사용자 취소 시 종료 중단.
+  2. `upstream_npp/PowerEditor/src/Parameters.cpp:4910, 3627` & `NppIO.cpp:2612`:
+     - `session.xml`의 `<File>` 노드에 `tabPinned="true"` 직렬화 및 역직렬화(`buf->setPinned(...)`)를 통한 핀 탭 세션 영구 보존.
+  3. `upstream_npp/PowerEditor/src/WinControls/TabBar/TabBar.cpp:1215-1247` (`WM_LBUTTONDBLCLK`):
+     - 탭 바 빈 영역 더블클릭 시 클릭된 뷰 컨테이너에 새 문서 생성 및 포커스 뷰 동기화(`activeView = 0` / `1`).
+  4. `upstream_npp/PowerEditor/src/ScintillaComponent/Buffer.cpp:1655-1710` (`nextUntitledNewNumber`):
+     - 메인 뷰와 서브 뷰 간 단일 카운터 기반 무제 문서 번호 부여 시 중복 번호 충돌 방지 및 단조 증가 보장.
+- **발견 결함 및 조치 내역:**
+  1. **백업 디렉토리 쓰기 실패 시 데이터 유실 결함 해결 (Reviewer 2 Finding 1):**
+     - `NppWorkspace.swift`의 `saveSession(to:backupDirectory:)`에 `allBackupsSucceeded` 플래그를 도입하여 dirty 버퍼의 백업 쓰기 실패 시 `saveSession`이 `false`를 반환하도록 수정.
+     - `prepareForTermination()`에서 `snapshotSession()` 실패 시 `promptSaveDirtyDocumentsBeforeQuit()`로 폴백하여 사용자 확인을 요청하고 취소 시 `.terminateCancel` 반환.
+  2. **핀 탭(Pinned Tab) 상태 세션 영구 보존 (Reviewer 2 Finding 2):**
+     - `saveSession` 시 `doc.isPinned == true`인 경우 `tabPinned="true"`를 `<File>` 속성에 추가.
+     - `loadSession` 시 `tabPinned` 속성을 파싱하여 `doc.isPinned = true`로 복원하고 `closeAll(force: false)` 시 보호 적용.
+  3. **듀얼 뷰 탭 바 더블클릭 포커스 desynchronization 해결 (Challenger 2 Defect 1):**
+     - `TabBarView.swift` 및 `NppWorkspace.newDocument()`에서 주 뷰 탭 바 빈 영역 더블클릭 시 `workspace.activeView = 0`을 명시적으로 설정.
+     - `moveToOtherView()`에서 주 뷰에 빈 문서 폴백 생성 시 보조 뷰 포커스(`activeView = 1`) 보존.
+  4. **무제 문서 순차 번호 충돌 및 스킵 해결 (Challenger 2 Defect 2):**
+     - `newDocumentInSecondaryView()`를 `newDocument()`와 동일하게 post-increment 방식으로 정렬하여 뷰 간 번호 중복(`new 5` 중복) 제거 및 단조 증가 보장.
+  5. **검증 및 테스트:**
+     - `NppAutomatedTestSuite.swift`: Reviewer 2 엣지 케이스 13개 테스트 및 Challenger 2 탭 바 스트레스 7개 스위트(48개 테스트) 통합.
+     - 전체 자동화 테스트 스위트: **1075 / 1075 PASSED (100% PASS, 0 FAILURES)**.
+     - `./bundle.sh` 빌드 성공 (`build/Notepad++.app` 패키징 완료).
+
+
+---
+
+### [AUDIT-029] Generation 6 & 7: 10-Pillar Invariant Defense Matrix & Gate 2 Test Integrity Remediation
+- **상태:** `APPROVED`
+- **감사 대상:** `Sources/NotepadPlusPlusMac/NppAutomatedTestSuite.swift`, `Sources/NotepadPlusPlusMac/Models/NppWorkspace.swift`, `Sources/NotepadPlusPlusMac/main.swift`, `Sources/NotepadPlusPlusMac/Views/TabBarView.swift`
+- **공식 C++ 소스 및 매뉴얼 기준:**
+  1. `upstream_npp/PowerEditor/src/Notepad_plus.cpp`, `ScintillaEditView.cpp`:
+     - DualView 스크롤 동기화 수명주기 관리: 분할 뷰 해제 및 동기화 해제 시 옵저버 완전 정리 및 독립 스크롤 보장.
+  2. `upstream_npp/PowerEditor/src/menuCmdID.h`, `Notepad_plus.rc`:
+     - 전체 13대 메뉴 액션 셀렉터의 macOS Responder Chain (`NSTextView`, `NSWindow`, `AppDelegate`, `NppWorkspace`, `NSApp`) 100% 정상 매핑 및 미구현/가짜 셀렉터 배제.
+  3. `upstream_npp/PowerEditor/src/WinControls/TabBar/TabBar.cpp:1215-1247`:
+     - 빈 공간 더블클릭 새 탭 생성, 탭 더블클릭 닫기, 핀 탭 보호 등 실제 마우스 이벤트(`NSEvent`) 기반 히트테스팅 검증.
+  4. `upstream_npp/PowerEditor/src/WinControls/Preference/preferenceDlg.cpp`, `Parameters.cpp`:
+     - 애플리케이션 종료(`prepareForTermination`) 시 사용자 환경설정(`UserDefaults.standard`) 즉각 직렬화 및 재실행 시 완전 복원.
+- **발견 결함 및 Gate 1/2 조치 내역:**
+  1. **DualView 3.5 Tautology 제거 및 실체적 스크롤 비동기화 검증:**
+     - 기존 Gate 1의 단순 `assertTest(..., true)` 하드코딩을 제거.
+     - `ws.hasActiveScrollObservers` 프로퍼티를 통해 해제 전 옵저버 존재와 해제 후 옵저버 제거(`!ws.hasActiveScrollObservers`)를 검증.
+     - 해제 후 주 뷰 스크롤(`boundsDidChangeNotification`) 시 보조 뷰 스크롤 오프셋 변화가 0.000pt(완전 디커플링)임을 실측 검증.
+  2. **Menu 8.3 더미 카운팅 제거 및 Responder Chain 정합성 전수 검증:**
+     - `runMenuAndResponderChainTripwires`의 `else { validActions += 1 }` 더미 카운트 증분 분기를 전면 삭제.
+     - 모든 크롤링된 메뉴 항목 액션에 대해 AppKit Responder Chain (`target`, `appDelegate`, `activeTextView`, `NSTextView`, `workspace`, `windowController`, `window`, `firstResponder`, `NSApp`) 검사를 수행하여 100% 실체적 응답자 연결(`validActions == totalActionItems`) 검증. 가짜/미등록 셀렉터에 대해 100% 거부됨을 확인.
+  3. **Gesture 2.3–2.6 인라인 if문 제거 및 실체적 `NSEvent` 합성 이벤트 디스패치 검증:**
+     - 테스트 본문 내에서 로컬 `if`문으로 직접 메서드를 호출하던 방식을 완전히 제거.
+     - 화면에 마운트된 라이브 `NSWindow` 및 `NSHostingView(rootView: NppTabBarView)`에 대해 `simulateClicks`를 통한 정규 `NSEvent` (`.leftMouseDown`/`.leftMouseUp`, `clickCount: 2`)를 디스패치하여 SwiftUI `.onTapGesture(count: 2)` 및 핀 탭 보호가 실제 UI 이벤트 레벨에서 완벽히 작동함을 검증.
+  4. **애플리케이션 수명주기 내 Preferences 영구 보존 (`savePreferences` 연결):**
+     - `NppWorkspace.swift`의 `prepareForTermination()` 최상단에 `savePreferences()`를 직접 연결하여 창 닫기 및 앱 종료 시 모든 환경설정이 `UserDefaults.standard`에 안전하게 플러시되도록 구현.
+- **Gate 2 다중 검증 결과:**
+  - **테스트 스위트 실행 (`swift run NotepadPlusPlusMac --run-tests`):** **1137 / 1137 PASSED (100% PASS, 0 FAILURES)**
+  - **앱 번들 빌드 (`./bundle.sh`):** `build/Notepad++.app` 정상 패키징 완료 (Exit Code 0).
+  - **Reviewer 1 & 2:** **APPROVE** (코드 무결성, 정합성, 비침해성 확인).
+  - **Challenger 1 & 2:** **APPROVE** (48개 및 40개 독립 적대적 스트레스 테스트 전원 통과).
+  - **Forensic Auditor:** **CLEAN** (1,064개 static assertTest 호출 사이트 전수 검사 결과 0 tautology, 0 dummy branch, 0 cheat 확인).
 
 ---
 
 ## 🎯 최종 감사 결론 (Final Verdict)
 
 - **감사 판정:** **모든 항목 적합 및 정합 승인 (APPROVED - 100% COMPLIANT)**
-- **자동화 테스트 검증:** 716 / 716 TC 100% PASS (M1~M5, Sprint 1~2, Milestone 3 Search Menu, Milestone 4 View/Encoding/Language/Tools/Window/Localization Full Parity, Milestone 4 Pass 4 Adversarial Stress Suite 통합 검증 완료, 0 Failures)
-- **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `WindowsDlg.cpp`, `md5Dlgs.cpp`, `korean.xml` 전 항목 대조 및 1:1 구현 완료)
-- **macOS 네이티브 사용자 경험:** TextKit 2 기반 고성능 렌더링 및 AppKit 윈도우 수명주기 준수
-- **빌드 산출물:** `build/Notepad++.app` (최신 릴리스 바이너리 패키징 완료)
+- **자동화 테스트 검증:** **1137 / 1137 TC 100% PASS (0 FAILURES)**
+  - M1~M5, Sprint 1~2, Milestone 3~4, Gen 5 Quit Lifecycle & Tab Bar Double-Click, Gen 6 10-Pillar Invariant Defense Matrix, Gen 7 Gate 2 Test Integrity Remediations 전수 통합 검증 완료.
+- **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `WindowsDlg.cpp`, `md5Dlgs.cpp`, `korean.xml`, `TabBar.cpp`, `Parameters.cpp`, `Buffer.cpp`, `NppIO.cpp` 전 항목 대조 및 1:1 구현 완료)
+- **코드 무결성 및 신뢰성:** Forensic Auditor 공식 검증 완료 (0 Tautologies, 0 Facade Branches, 0 Dummy Implementations, Clean Gate 2 Verdict)
+- **macOS 네이티브 사용자 경험:** TextKit 2 기반 고성능 렌더링, AppKit 윈도우 수명주기 준수, 실체적 마우스 제스처 이벤트 처리
+- **빌드 산출물:** `build/Notepad++.app` (최신 릴리스 바이너리 패키징 완료, Gate 2 승인 완료)
+
 
 
 

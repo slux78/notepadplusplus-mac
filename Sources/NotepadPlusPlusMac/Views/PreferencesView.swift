@@ -412,6 +412,7 @@ public struct NppPreferencesView: View {
                         Toggle("Multi-line", isOn: $workspace.tabMultiLine)
                         Toggle("Lock (no drag and drop)", isOn: $workspace.tabLock)
                         Toggle("Double click to close document", isOn: $workspace.doubleClickTabToClose)
+                        Toggle("Double click to open new document", isOn: $workspace.doubleClickSpaceToNewTab)
                         Toggle("Exit on close the last tab", isOn: $workspace.exitOnCloseLastTab)
 
                         Divider().padding(.vertical, 2)

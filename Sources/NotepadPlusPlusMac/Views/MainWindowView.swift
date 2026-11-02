@@ -49,32 +49,46 @@ public struct NppMainWindowView: View {
                     GeometryReader { geo in
                         if workspace.splitDirection == .vertical {
                             HStack(spacing: 0) {
-                                primaryEditorPane
-                                    .frame(width: max(100, geo.size.width * workspace.splitRatio - 4))
-
-                                NppSplitterBarView(workspace: workspace, totalSize: geo.size.width, isVertical: true)
-                                    .frame(width: 8)
-
-                                secondaryEditorPane
-                                    .frame(width: max(100, geo.size.width * (1.0 - workspace.splitRatio) - 4))
+                                if workspace.isViewSwapped {
+                                    secondaryEditorPane
+                                        .frame(width: max(100, geo.size.width * workspace.splitRatio - 3))
+                                    NppSplitterBarView(workspace: workspace, totalSize: geo.size.width, isVertical: true)
+                                        .frame(width: 6)
+                                    primaryEditorPane
+                                        .frame(width: max(100, geo.size.width * (1.0 - workspace.splitRatio) - 3))
+                                } else {
+                                    primaryEditorPane
+                                        .frame(width: max(100, geo.size.width * workspace.splitRatio - 3))
+                                    NppSplitterBarView(workspace: workspace, totalSize: geo.size.width, isVertical: true)
+                                        .frame(width: 6)
+                                    secondaryEditorPane
+                                        .frame(width: max(100, geo.size.width * (1.0 - workspace.splitRatio) - 3))
+                                }
                             }
                         } else {
                             VStack(spacing: 0) {
-                                primaryEditorPane
-                                    .frame(height: max(60, geo.size.height * workspace.splitRatio - 4))
-
-                                NppSplitterBarView(workspace: workspace, totalSize: geo.size.height, isVertical: false)
-                                    .frame(height: 8)
-
-                                secondaryEditorPane
-                                    .frame(height: max(60, geo.size.height * (1.0 - workspace.splitRatio) - 4))
+                                if workspace.isViewSwapped {
+                                    secondaryEditorPane
+                                        .frame(height: max(60, geo.size.height * workspace.splitRatio - 3))
+                                    NppSplitterBarView(workspace: workspace, totalSize: geo.size.height, isVertical: false)
+                                        .frame(height: 6)
+                                    primaryEditorPane
+                                        .frame(height: max(60, geo.size.height * (1.0 - workspace.splitRatio) - 3))
+                                } else {
+                                    primaryEditorPane
+                                        .frame(height: max(60, geo.size.height * workspace.splitRatio - 3))
+                                    NppSplitterBarView(workspace: workspace, totalSize: geo.size.height, isVertical: false)
+                                        .frame(height: 6)
+                                    secondaryEditorPane
+                                        .frame(height: max(60, geo.size.height * (1.0 - workspace.splitRatio) - 3))
+                                }
                             }
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     if let doc = workspace.activeDocument {
-                        NppEditorView(document: doc, workspace: workspace)
+                        NppEditorView(document: doc, workspace: workspace, viewIndex: 0)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         noDocPlaceholderView
@@ -181,7 +195,7 @@ public struct NppMainWindowView: View {
                 NppTabBarView(workspace: workspace, viewIndex: 0)
             }
             if let doc = workspace.activeDocument {
-                NppEditorView(document: doc, workspace: workspace)
+                NppEditorView(document: doc, workspace: workspace, viewIndex: 0)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 noDocPlaceholderView
@@ -195,7 +209,7 @@ public struct NppMainWindowView: View {
                 NppTabBarView(workspace: workspace, viewIndex: 1)
             }
             if let doc = workspace.secondaryActiveDocument {
-                NppEditorView(document: doc, workspace: workspace)
+                NppEditorView(document: doc, workspace: workspace, viewIndex: 1)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 noDocPlaceholderView
@@ -616,73 +630,97 @@ public struct NppSplitterBarView: View {
 
     public var body: some View {
         ZStack {
-            // Splitter Divider Bar
+            // 1. Splitter Background Bar
             Rectangle()
                 .fill(isHovering ? Color(NSColor.selectedControlColor).opacity(0.3) : Color(NSColor.separatorColor).opacity(0.6))
 
-            // Authentic Notepad++ Center rotation arrows handle
+            // 2. Stipple / Dotted Grip Pattern (Canvas)
+            Canvas { ctx, size in
+                let dotRadius: CGFloat = 0.8
+                let dotColor = Color.secondary.opacity(0.4)
+                if isVertical {
+                    let x = size.width / 2
+                    var y: CGFloat = 24
+                    while y < size.height - 24 {
+                        ctx.fill(Path(ellipseIn: CGRect(x: x - dotRadius, y: y, width: dotRadius * 2, height: dotRadius * 2)), with: .color(dotColor))
+                        y += 4
+                    }
+                } else {
+                    let y = size.height / 2
+                    var x: CGFloat = 16
+                    while x < size.width - 40 {
+                        ctx.fill(Path(ellipseIn: CGRect(x: x, y: y - dotRadius, width: dotRadius * 2, height: dotRadius * 2)), with: .color(dotColor))
+                        x += 4
+                    }
+                }
+            }
+
+            // 3. Authentic Notepad++ Rotation Arrows Handle
             if isVertical {
-                // Vertical split (Left / Right): Rotate Left (◀) / Rotate Right (▶)
-                HStack(spacing: 2) {
+                // Vertical split (Left / Right): Top (◀) and Bottom (▶)
+                VStack {
                     Button(action: {
                         workspace.rotateSplitterLeft()
                     }) {
                         Image(systemName: "arrowtriangle.left.fill")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 6, weight: .bold))
                             .foregroundColor(.secondary)
-                            .frame(width: 8, height: 14)
+                            .frame(width: 8, height: 12)
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help(workspace.tr("Rotate to left"))
+                    .padding(.top, 4)
+
+                    Spacer()
 
                     Button(action: {
                         workspace.rotateSplitterRight()
                     }) {
                         Image(systemName: "arrowtriangle.right.fill")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 6, weight: .bold))
                             .foregroundColor(.secondary)
-                            .frame(width: 8, height: 14)
+                            .frame(width: 8, height: 12)
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help(workspace.tr("Rotate to right"))
+                    .padding(.bottom, 4)
                 }
-                .padding(2)
-                .background(
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(NSColor.windowBackgroundColor))
-                        .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 1)
-                )
             } else {
-                // Horizontal split (Top / Bottom): Rotate Up (▲) / Rotate Down (▼)
-                VStack(spacing: 2) {
-                    Button(action: {
-                        workspace.rotateSplitterLeft()
-                    }) {
-                        Image(systemName: "arrowtriangle.up.fill")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .frame(width: 14, height: 8)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(workspace.tr("Rotate to left"))
+                // Horizontal split (Top / Bottom): Far Right (▲ / ▼) per view-rotate-4.png
+                HStack(spacing: 0) {
+                    Spacer()
+                    HStack(spacing: 2) {
+                        Button(action: {
+                            workspace.rotateSplitterLeft()
+                        }) {
+                            Image(systemName: "arrowtriangle.up.fill")
+                                .font(.system(size: 6, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .frame(width: 10, height: 6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(workspace.tr("Rotate to left"))
 
-                    Button(action: {
-                        workspace.rotateSplitterRight()
-                    }) {
-                        Image(systemName: "arrowtriangle.down.fill")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .frame(width: 14, height: 8)
+                        Button(action: {
+                            workspace.rotateSplitterRight()
+                        }) {
+                            Image(systemName: "arrowtriangle.down.fill")
+                                .font(.system(size: 6, weight: .bold))
+                                .foregroundColor(.secondary)
+                                .frame(width: 10, height: 6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .help(workspace.tr("Rotate to right"))
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(workspace.tr("Rotate to right"))
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 1)
+                    .background(
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color(NSColor.windowBackgroundColor))
+                            .shadow(color: Color.black.opacity(0.12), radius: 1, x: 0, y: 1)
+                    )
+                    .padding(.trailing, 8)
                 }
-                .padding(2)
-                .background(
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(NSColor.windowBackgroundColor))
-                        .shadow(color: Color.black.opacity(0.15), radius: 1, x: 0, y: 1)
-                )
             }
         }
         .contentShape(Rectangle())

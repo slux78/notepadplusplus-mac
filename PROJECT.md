@@ -37,7 +37,7 @@
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
 | M1 | UI Quality, Layout & Window Title Hardening | Fix status bar clipping, find dialog whitespace/bounds, window title sync, theme picker width, add tests & [AUDIT-011] | none | DONE |
-| M2 | Full Verification, Final Audit & Acceptance Sign-off | Re-verify all acceptance criteria (177+ test suite, upstream parity, visual standards), victory audit, Sentinel report | M1 | IN_PROGRESS |
+| M2 | Full Verification, Final Audit & Acceptance Sign-off | Re-verify all acceptance criteria (1137 test suite, upstream parity, visual standards), Gate 2 victory audit, Sentinel report | M1 | DONE |
 
 ## Interface Contracts
 ### `StatusBarView` ↔ `NppWorkspace`

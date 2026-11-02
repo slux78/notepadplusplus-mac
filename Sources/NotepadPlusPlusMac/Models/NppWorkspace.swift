@@ -174,8 +174,148 @@ public final class NppWorkspace: ObservableObject {
     }
     @Published public var showDocumentMap: Bool = false
     @Published public var showFunctionList: Bool = false
-    @Published public var syncScrollV: Bool = false
-    @Published public var syncScrollH: Bool = false
+    @Published public var syncScrollV: Bool = false {
+        didSet {
+            if syncScrollV {
+                recalculateSyncScrollDeltas()
+                performInitialScrollSync()
+            }
+        }
+    }
+    @Published public var syncScrollH: Bool = false {
+        didSet {
+            if syncScrollH {
+                recalculateSyncScrollDeltas()
+                performInitialScrollSync()
+            }
+        }
+    }
+
+    // Dual-View Scroll Synchronization State
+    public weak var primaryScrollView: NSScrollView? {
+        didSet { setupScrollSynchronization() }
+    }
+    public weak var secondaryScrollView: NSScrollView? {
+        didSet { setupScrollSynchronization() }
+    }
+    public var syncScrollVDelta: CGFloat = 0
+    public var syncScrollHDelta: CGFloat = 0
+    public var isSyncingScroll: Bool = false
+    private var primaryClipObserver: NSObjectProtocol?
+    private var secondaryClipObserver: NSObjectProtocol?
+    public var hasActiveScrollObservers: Bool {
+        return primaryClipObserver != nil || secondaryClipObserver != nil
+    }
+
+    public func recalculateSyncScrollDeltas() {
+        let pY = primaryScrollView?.contentView.bounds.origin.y ?? 0
+        let sY = secondaryScrollView?.contentView.bounds.origin.y ?? 0
+        syncScrollVDelta = pY - sY
+
+        let pX = primaryScrollView?.contentView.bounds.origin.x ?? 0
+        let sX = secondaryScrollView?.contentView.bounds.origin.x ?? 0
+        syncScrollHDelta = pX - sX
+    }
+
+    public func performInitialScrollSync() {
+        guard isDualView, let _ = primaryScrollView, let _ = secondaryScrollView else { return }
+        syncFromPrimaryToSecondary()
+    }
+
+    public func setupScrollSynchronization() {
+        if let obs = primaryClipObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = secondaryClipObserver { NotificationCenter.default.removeObserver(obs) }
+        primaryClipObserver = nil
+        secondaryClipObserver = nil
+
+        if let primaryClip = primaryScrollView?.contentView {
+            primaryClip.postsBoundsChangedNotifications = true
+            primaryClipObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: primaryClip,
+                queue: .main
+            ) { [weak self] _ in
+                self?.handlePrimaryScroll()
+            }
+        }
+
+        if let secondaryClip = secondaryScrollView?.contentView {
+            secondaryClip.postsBoundsChangedNotifications = true
+            secondaryClipObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: secondaryClip,
+                queue: .main
+            ) { [weak self] _ in
+                self?.handleSecondaryScroll()
+            }
+        }
+    }
+
+    public func teardownScrollSynchronization() {
+        if let obs = primaryClipObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = secondaryClipObserver { NotificationCenter.default.removeObserver(obs) }
+        primaryClipObserver = nil
+        secondaryClipObserver = nil
+    }
+
+    public func handlePrimaryScroll() {
+        guard isDualView, (syncScrollV || syncScrollH), !isSyncingScroll else { return }
+        syncFromPrimaryToSecondary()
+    }
+
+    public func handleSecondaryScroll() {
+        guard isDualView, (syncScrollV || syncScrollH), !isSyncingScroll else { return }
+        syncFromSecondaryToPrimary()
+    }
+
+    public func syncFromPrimaryToSecondary() {
+        guard let primary = primaryScrollView, let secondary = secondaryScrollView else { return }
+        guard !isSyncingScroll else { return }
+        isSyncingScroll = true
+        defer { isSyncingScroll = false }
+
+        let pOrigin = primary.contentView.bounds.origin
+        var sOrigin = secondary.contentView.bounds.origin
+        if syncScrollV {
+            sOrigin.y = pOrigin.y - syncScrollVDelta
+        }
+        if syncScrollH {
+            sOrigin.x = pOrigin.x - syncScrollHDelta
+        }
+        if let docView = secondary.documentView {
+            let maxX = max(0, docView.frame.width - secondary.contentView.bounds.width)
+            let maxY = max(0, docView.frame.height - secondary.contentView.bounds.height)
+            sOrigin.x = max(0, min(sOrigin.x, maxX))
+            sOrigin.y = max(0, min(sOrigin.y, maxY))
+        }
+        secondary.contentView.scroll(to: sOrigin)
+        secondary.reflectScrolledClipView(secondary.contentView)
+    }
+
+    public func syncFromSecondaryToPrimary() {
+        guard let primary = primaryScrollView, let secondary = secondaryScrollView else { return }
+        guard !isSyncingScroll else { return }
+        isSyncingScroll = true
+        defer { isSyncingScroll = false }
+
+        let sOrigin = secondary.contentView.bounds.origin
+        var pOrigin = primary.contentView.bounds.origin
+        if syncScrollV {
+            pOrigin.y = sOrigin.y + syncScrollVDelta
+        }
+        if syncScrollH {
+            pOrigin.x = sOrigin.x + syncScrollHDelta
+        }
+        if let docView = primary.documentView {
+            let maxX = max(0, docView.frame.width - primary.contentView.bounds.width)
+            let maxY = max(0, docView.frame.height - primary.contentView.bounds.height)
+            pOrigin.x = max(0, min(pOrigin.x, maxX))
+            pOrigin.y = max(0, min(pOrigin.y, maxY))
+        }
+        primary.contentView.scroll(to: pOrigin)
+        primary.reflectScrolledClipView(primary.contentView)
+    }
+
     @Published public var isAlwaysOnTop: Bool = false
     @Published public var isFullScreen: Bool = false
     @Published public var isPostItMode: Bool = false
@@ -1001,11 +1141,177 @@ public final class NppWorkspace: ObservableObject {
         showPreferencesSheet = true
     }
 
+    // Unified Search State (Single Source of Truth)
+    @Published public var searchMode: Int = 0 // 0: Normal, 1: Extended, 2: RegEx
+    @Published public var matchCase: Bool = false
+    @Published public var matchWholeWord: Bool = false
+    @Published public var wrapAround: Bool = true
+    @Published public var dotMatchesNewline: Bool = false
+    @Published public var searchBackward: Bool = false
+    @Published public var searchInSelection: Bool = false
+    @Published public var filterText: String = "*.*"
+    @Published public var directoryText: String = ""
+    @Published public var inSubfolders: Bool = true
+    @Published public var inHiddenFolders: Bool = false
+    @Published public var bookmarkLine: Bool = true
+    @Published public var purgeEachSearch: Bool = false
+
     // Notepad++ Find All Search Results State
     @Published public var searchFileGroups: [NppSearchFileGroup] = []
     @Published public var lastSearchQuery: String = ""
     @Published public var showSearchResultsPanel: Bool = false
     @Published public var targetJumpMatch: NppSearchMatch?
+
+    public func processedSearchQuery(for rawQuery: String? = nil) -> String {
+        let q = rawQuery ?? (!lastSearchQuery.isEmpty ? lastSearchQuery : findQueryText)
+        if searchMode == 1 {
+            return NppWorkspace.expandExtendedEscapes(q)
+        }
+        return q
+    }
+
+    public func buildSearchRegex(for query: String) -> NSRegularExpression? {
+        guard !query.isEmpty else { return nil }
+        var pattern = (searchMode == 2) ? query : NSRegularExpression.escapedPattern(for: query)
+        if matchWholeWord {
+            pattern = NppWorkspace.wholeWordPattern(pattern, query: query)
+        }
+        var options: NSRegularExpression.Options = []
+        if !matchCase { options.insert(.caseInsensitive) }
+        if searchMode == 2 && dotMatchesNewline { options.insert(.dotMatchesLineSeparators) }
+        if searchMode == 2 { options.insert(.anchorsMatchLines) }
+        return try? NSRegularExpression(pattern: pattern, options: options)
+    }
+
+    public func findRange(in content: String, query: String, forward: Bool, startLocation: Int) -> NSRange? {
+        let nsContent = content as NSString
+        let contentLength = nsContent.length
+        guard contentLength > 0 && !query.isEmpty else { return nil }
+
+        if searchMode == 2 || matchWholeWord {
+            guard let regex = buildSearchRegex(for: query) else { return nil }
+            let matches = regex.matches(in: content, range: NSRange(location: 0, length: contentLength))
+            if forward {
+                if let match = matches.first(where: { $0.range.location >= startLocation }) {
+                    return match.range
+                } else if wrapAround {
+                    return matches.first?.range
+                }
+            } else {
+                if let match = matches.last(where: { $0.range.location < startLocation }) {
+                    return match.range
+                } else if wrapAround {
+                    return matches.last?.range
+                }
+            }
+        } else {
+            var options: NSString.CompareOptions = []
+            if !matchCase { options.insert(.caseInsensitive) }
+            if !forward { options.insert(.backwards) }
+
+            if forward {
+                let clampedStart = min(max(0, startLocation), contentLength)
+                let searchRange = NSRange(location: clampedStart, length: contentLength - clampedStart)
+                var found = nsContent.range(of: query, options: options, range: searchRange)
+                if found.location == NSNotFound && wrapAround {
+                    found = nsContent.range(of: query, options: options)
+                }
+                if found.location != NSNotFound { return found }
+            } else {
+                let clampedEnd = min(max(0, startLocation), contentLength)
+                let searchRange = NSRange(location: 0, length: clampedEnd)
+                var found = nsContent.range(of: query, options: options, range: searchRange)
+                if found.location == NSNotFound && wrapAround {
+                    found = nsContent.range(of: query, options: options)
+                }
+                if found.location != NSNotFound { return found }
+            }
+        }
+        return nil
+    }
+
+    // Preferences Persistence Keys
+    public static let prefsRememberSessionKey = "npp.prefs.rememberSession"
+    public static let prefsPeriodicBackupKey = "npp.prefs.periodicBackupEnabled"
+    public static let prefsDoubleClickSpaceToNewTabKey = "npp.prefs.doubleClickSpaceToNewTab"
+    public static let prefsDoubleClickTabToCloseKey = "npp.prefs.doubleClickTabToClose"
+    public static let prefsFontFamilyKey = "npp.prefs.fontFamily"
+    public static let prefsFontSizeKey = "npp.prefs.fontSize"
+    public static let prefsDarkModeChoiceKey = "npp.prefs.darkModeChoice"
+    public static let prefsSelectedThemeKey = "npp.prefs.selectedTheme"
+    public static let prefsWordWrapKey = "npp.prefs.wordWrap"
+    public static let prefsShowLineNumbersKey = "npp.prefs.showLineNumbers"
+    public static let prefsTabSizeKey = "npp.prefs.tabSize"
+
+    public func savePreferences() {
+        let ud = UserDefaults.standard
+        ud.set(rememberSession, forKey: Self.prefsRememberSessionKey)
+        ud.set(periodicBackupEnabled, forKey: Self.prefsPeriodicBackupKey)
+        ud.set(doubleClickSpaceToNewTab, forKey: Self.prefsDoubleClickSpaceToNewTabKey)
+        ud.set(doubleClickTabToClose, forKey: Self.prefsDoubleClickTabToCloseKey)
+        ud.set(fontFamily, forKey: Self.prefsFontFamilyKey)
+        ud.set(Double(fontSize), forKey: Self.prefsFontSizeKey)
+        ud.set(darkModeChoice, forKey: Self.prefsDarkModeChoiceKey)
+        ud.set(themeMode, forKey: Self.prefsSelectedThemeKey)
+        ud.set(isWordWrapEnabled, forKey: Self.prefsWordWrapKey)
+        ud.set(showLineNumbers, forKey: Self.prefsShowLineNumbersKey)
+        ud.set(tabSize, forKey: Self.prefsTabSizeKey)
+    }
+
+    public func loadPreferences() {
+        let ud = UserDefaults.standard
+        if ud.object(forKey: Self.prefsRememberSessionKey) != nil {
+            rememberSession = ud.bool(forKey: Self.prefsRememberSessionKey)
+        }
+        if ud.object(forKey: Self.prefsPeriodicBackupKey) != nil {
+            periodicBackupEnabled = ud.bool(forKey: Self.prefsPeriodicBackupKey)
+        }
+        if ud.object(forKey: Self.prefsDoubleClickSpaceToNewTabKey) != nil {
+            doubleClickSpaceToNewTab = ud.bool(forKey: Self.prefsDoubleClickSpaceToNewTabKey)
+        }
+        if ud.object(forKey: Self.prefsDoubleClickTabToCloseKey) != nil {
+            doubleClickTabToClose = ud.bool(forKey: Self.prefsDoubleClickTabToCloseKey)
+        }
+        if let font = ud.string(forKey: Self.prefsFontFamilyKey) {
+            fontFamily = font
+        }
+        if ud.object(forKey: Self.prefsFontSizeKey) != nil {
+            fontSize = CGFloat(ud.double(forKey: Self.prefsFontSizeKey))
+        }
+        if ud.object(forKey: Self.prefsDarkModeChoiceKey) != nil {
+            darkModeChoice = ud.integer(forKey: Self.prefsDarkModeChoiceKey)
+        }
+        if let theme = ud.string(forKey: Self.prefsSelectedThemeKey) {
+            themeMode = theme
+        }
+        if ud.object(forKey: Self.prefsWordWrapKey) != nil {
+            isWordWrapEnabled = ud.bool(forKey: Self.prefsWordWrapKey)
+        }
+        if ud.object(forKey: Self.prefsShowLineNumbersKey) != nil {
+            showLineNumbers = ud.bool(forKey: Self.prefsShowLineNumbersKey)
+        }
+        if ud.object(forKey: Self.prefsTabSizeKey) != nil {
+            tabSize = ud.integer(forKey: Self.prefsTabSizeKey)
+        }
+    }
+
+    public func resetPreferencesToDefaults() {
+        let ud = UserDefaults.standard
+        let keys = [
+            Self.prefsRememberSessionKey,
+            Self.prefsPeriodicBackupKey,
+            Self.prefsDoubleClickSpaceToNewTabKey,
+            Self.prefsDoubleClickTabToCloseKey,
+            Self.prefsFontFamilyKey,
+            Self.prefsFontSizeKey,
+            Self.prefsDarkModeChoiceKey,
+            Self.prefsSelectedThemeKey,
+            Self.prefsWordWrapKey,
+            Self.prefsShowLineNumbersKey,
+            Self.prefsTabSizeKey
+        ]
+        for k in keys { ud.removeObject(forKey: k) }
+    }
 
     private var newDocCounter: Int = 1
 
@@ -1022,6 +1328,7 @@ public final class NppWorkspace: ObservableObject {
 
     public init(runCommandDefaults: UserDefaults = .standard) {
         self.runCommandDefaults = runCommandDefaults
+        loadPreferences()
         newDocument()
         loadSavedMacros()
         loadSavedRunCommands()
@@ -1159,6 +1466,7 @@ public final class NppWorkspace: ObservableObject {
         doc.language = defaultNewDocLanguage.isEmpty ? defaultLanguage : defaultNewDocLanguage
         documents.append(doc)
         activeDocumentId = doc.id
+        activeView = 0
     }
 
     public func openFile(url: URL) {
@@ -1206,6 +1514,62 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // MARK: - Save Confirmation & Dual View State
+    public protocol NppUserInteractionProvider: AnyObject {
+        func confirmSave(for document: NppDocument) -> SavePromptResult
+        func promptSaveSynchronously(for document: NppDocument) -> Bool
+        func confirmKeepMissingFiles(missingFiles: [URL]) -> Bool
+    }
+
+    public class NppDefaultInteractionProvider: NppUserInteractionProvider {
+        public init() {}
+
+        public func confirmSave(for document: NppDocument) -> SavePromptResult {
+            let alert = NSAlert()
+            alert.messageText = "Save"
+            alert.informativeText = "Save file \"\(document.title)\" ?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Don't Save")
+            alert.addButton(withTitle: "Cancel")
+
+            let res = alert.runModal()
+            switch res {
+            case .alertFirstButtonReturn:
+                return .save
+            case .alertSecondButtonReturn:
+                return .dontSave
+            default:
+                return .cancel
+            }
+        }
+
+        public func promptSaveSynchronously(for document: NppDocument) -> Bool {
+            if document.filePath != nil {
+                return document.save()
+            } else {
+                let panel = NSSavePanel()
+                panel.title = "Save"
+                panel.canCreateDirectories = true
+                panel.nameFieldStringValue = document.title
+                let res = panel.runModal()
+                if res == .OK, let url = panel.url {
+                    return document.save(to: url)
+                } else {
+                    return false
+                }
+            }
+        }
+
+        public func confirmKeepMissingFiles(missingFiles: [URL]) -> Bool {
+            let alert = NSAlert()
+            alert.messageText = "Remember inaccessible files from past session"
+            alert.informativeText = "Keep inaccessible files as read-only placeholders?"
+            alert.addButton(withTitle: "Yes")
+            alert.addButton(withTitle: "No")
+            return alert.runModal() == .alertFirstButtonReturn
+        }
+    }
+
     public enum SavePromptResult: String, Codable {
         case save
         case dontSave
@@ -1214,10 +1578,22 @@ public final class NppWorkspace: ObservableObject {
 
     public var isTestRunning: Bool = false
     public var confirmSaveHandler: ((NppDocument) -> SavePromptResult)? = nil
+    public var promptSaveHandler: ((NppDocument) -> Bool)? = nil
+    public static var defaultInteractionProvider: NppUserInteractionProvider = NppDefaultInteractionProvider()
+    public var interactionProvider: NppUserInteractionProvider = NppWorkspace.defaultInteractionProvider
 
     public enum SplitDirection: String, Codable {
         case vertical   // Left / Right
         case horizontal // Top / Bottom
+    }
+
+    @Published public var viewRotationStage: Int = 0 {
+        didSet {
+            splitDirection = (viewRotationStage % 2 == 0) ? .vertical : .horizontal
+        }
+    }
+    public var isViewSwapped: Bool {
+        return viewRotationStage >= 2
     }
 
     @Published public var secondaryDocumentIds: [UUID] = []
@@ -1252,50 +1628,25 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func confirmSaveIfNeeded(for doc: NppDocument) -> SavePromptResult {
-        guard doc.isDirty else { return .dontSave }
+        let needsConfirm = doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)
+        guard needsConfirm else { return .dontSave }
         if let handler = confirmSaveHandler {
             return handler(doc)
         }
-        if isTestRunning || CommandLine.arguments.contains("--run-tests") {
-            return .dontSave
-        }
-        let alert = NSAlert()
-        alert.messageText = "Save"
-        alert.informativeText = "Save file \"\(doc.title)\" ?"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: tr("Save"))
-        alert.addButton(withTitle: tr("Don't Save"))
-        alert.addButton(withTitle: tr("Cancel"))
-
-        let res = alert.runModal()
-        switch res {
-        case .alertFirstButtonReturn:
-            return .save
-        case .alertSecondButtonReturn:
-            return .dontSave
-        default:
-            return .cancel
-        }
+        return interactionProvider.confirmSave(for: doc)
     }
 
     public func promptSaveSynchronously(for doc: NppDocument) -> Bool {
+        if let handler = promptSaveHandler {
+            return handler(doc)
+        }
         if doc.filePath != nil {
             return doc.save()
         } else {
-            let panel = NSSavePanel()
-            panel.title = tr("Save")
-            panel.canCreateDirectories = true
-            panel.nameFieldStringValue = doc.title
-            let res = panel.runModal()
-            if res == .OK, let url = panel.url {
-                guard doc.save(to: url) else { return false }
-                if let language = userDefinedLanguage(for: url) { doc.language = language.name }
-                return true
-            } else {
-                return false
-            }
+            return interactionProvider.promptSaveSynchronously(for: doc)
         }
     }
+
 
     @discardableResult
     public func closeDocument(id: UUID, force: Bool = false) -> Bool {
@@ -1307,7 +1658,8 @@ public final class NppWorkspace: ObservableObject {
             return false
         }
 
-        if !force && doc.isDirty {
+        let needsConfirm = doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)
+        if !force && needsConfirm {
             let choice = confirmSaveIfNeeded(for: doc)
             switch choice {
             case .save:
@@ -1485,6 +1837,7 @@ public final class NppWorkspace: ObservableObject {
                 activeDocumentId = primaryDocuments.first?.id
                 if activeDocumentId == nil {
                     newDocument()
+                    activeView = 1
                 }
             }
         }
@@ -1505,22 +1858,36 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func rotateSplitter(direction: Int = 1) {
-        splitDirection = (splitDirection == .vertical ? .horizontal : .vertical)
-        objectWillChange.send()
+        if direction >= 0 {
+            rotateSplitterRight()
+        } else {
+            rotateSplitterLeft()
+        }
     }
 
     public func rotateSplitterLeft() {
-        rotateSplitter(direction: -1)
+        viewRotationStage = (viewRotationStage + 3) % 4
+        objectWillChange.send()
     }
 
     public func rotateSplitterRight() {
-        rotateSplitter(direction: 1)
+        viewRotationStage = (viewRotationStage + 1) % 4
+        objectWillChange.send()
     }
 
     public func newDocumentInSecondaryView() {
-        newDocCounter += 1
         let title = "new \(newDocCounter)"
-        let newDoc = NppDocument(title: title, content: "")
+        newDocCounter += 1
+        let enc = defaultNewDocEncoding.isEmpty ? defaultEncoding : defaultNewDocEncoding
+        let eol = defaultNewDocFormat
+        let newDoc = NppDocument(
+            title: title,
+            content: "",
+            encoding: enc,
+            hasBOM: enc == "UTF-8-BOM",
+            eol: eol
+        )
+        newDoc.language = defaultNewDocLanguage.isEmpty ? defaultLanguage : defaultNewDocLanguage
         documents.append(newDoc)
         secondaryDocumentIds.append(newDoc.id)
         secondaryActiveDocumentId = newDoc.id
@@ -1902,55 +2269,44 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
-    public func findNext(forward: Bool = true) {
-        guard !lastSearchQuery.isEmpty else { return }
+    @discardableResult
+    public func findNext(forward: Bool = true) -> Bool {
+        let rawQuery = !lastSearchQuery.isEmpty ? lastSearchQuery : findQueryText
+        guard !rawQuery.isEmpty else { return false }
+        let query = processedSearchQuery(for: rawQuery)
+
         if let tv = activeTextView, let doc = activeDocument {
             if tv.string != doc.content {
                 syncDocumentToTextView(doc: doc, tv: tv)
             }
-            let content = tv.string as NSString
+            let content = tv.string
             let sel = tv.selectedRange()
-            let options: NSString.CompareOptions = forward ? [] : [.backwards]
-            let searchRange: NSRange
-            if forward {
-                let start = NSMaxRange(sel)
-                searchRange = NSRange(location: min(start, content.length), length: max(0, content.length - min(start, content.length)))
-            } else {
-                searchRange = NSRange(location: 0, length: min(sel.location, content.length))
-            }
-            var found = content.range(of: lastSearchQuery, options: options, range: searchRange)
-            if found.location == NSNotFound {
-                found = content.range(of: lastSearchQuery, options: options)
-            }
-            if found.location != NSNotFound {
+            let startLocation = forward ? NSMaxRange(sel) : sel.location
+            if let found = findRange(in: content, query: query, forward: forward, startLocation: startLocation) {
                 tv.setSelectedRange(found)
                 tv.scrollRangeToVisible(found)
                 doc.cursorPos = found.location
                 doc.selectionLength = found.length
+                lastSearchQuery = rawQuery
+                findQueryText = rawQuery
+                return true
             }
         } else if let doc = activeDocument {
-            let content = doc.content as NSString
+            let content = doc.content
             let sel = NSRange(
-                location: min(doc.cursorPos, content.length),
-                length: min(doc.selectionLength, max(0, content.length - min(doc.cursorPos, content.length)))
+                location: min(doc.cursorPos, (content as NSString).length),
+                length: min(doc.selectionLength, max(0, (content as NSString).length - min(doc.cursorPos, (content as NSString).length)))
             )
-            let options: NSString.CompareOptions = forward ? [] : [.backwards]
-            let searchRange: NSRange
-            if forward {
-                let start = NSMaxRange(sel)
-                searchRange = NSRange(location: min(start, content.length), length: max(0, content.length - min(start, content.length)))
-            } else {
-                searchRange = NSRange(location: 0, length: min(sel.location, content.length))
-            }
-            var found = content.range(of: lastSearchQuery, options: options, range: searchRange)
-            if found.location == NSNotFound {
-                found = content.range(of: lastSearchQuery, options: options)
-            }
-            if found.location != NSNotFound {
+            let startLocation = forward ? NSMaxRange(sel) : sel.location
+            if let found = findRange(in: content, query: query, forward: forward, startLocation: startLocation) {
                 doc.cursorPos = found.location
                 doc.selectionLength = found.length
+                lastSearchQuery = rawQuery
+                findQueryText = rawQuery
+                return true
             }
         }
+        return false
     }
 
     public func clearSearchResults() {
@@ -2840,12 +3196,14 @@ public final class NppWorkspace: ObservableObject {
                 .replacingOccurrences(of: "\r", with: "&#13;")
         }
         var referencedBackups = Set<String>()
+        var allBackupsSucceeded = true
         if let dir = backupDirectory {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
         func includes(_ doc: NppDocument) -> Bool {
             if doc.filePath != nil { return true }
-            return backupDirectory != nil && doc.isDirty && !doc.isSessionPlaceholder
+            let isUnsaved = doc.isDirty || !doc.content.isEmpty
+            return backupDirectory != nil && isUnsaved && !doc.isSessionPlaceholder
         }
         func fileElement(_ doc: NppDocument) -> String? {
             let name: String
@@ -2853,11 +3211,16 @@ public final class NppWorkspace: ObservableObject {
             let start = doc.cursorPos
             let end = doc.cursorPos + doc.selectionLength
             var attrs = "firstVisibleLine=\"0\" xOffset=\"0\" scrollWidth=\"100\" startPos=\"\(start)\" endPos=\"\(end)\" selMode=\"0\" lang=\"\(escaped(doc.language))\" encoding=\"\(escaped(doc.encoding))\""
-            if let dir = backupDirectory, doc.isDirty, !doc.isSessionPlaceholder {
+            if doc.isPinned {
+                attrs += " tabPinned=\"true\""
+            }
+            let isUnsaved = doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)
+            if let dir = backupDirectory, isUnsaved, !doc.isSessionPlaceholder {
                 let safeTitle = doc.title.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
                 let backupName = "\(safeTitle)@\(doc.id.uuidString)"
                 let backupURL = dir.appendingPathComponent(backupName)
                 guard (try? Data(doc.content.utf8).write(to: backupURL, options: .atomic)) != nil else {
+                    allBackupsSucceeded = false
                     return doc.filePath == nil ? nil : "<File \(attrs) filename=\"\(escaped(name))\">"
                 }
                 referencedBackups.insert(backupName)
@@ -2886,7 +3249,12 @@ public final class NppWorkspace: ObservableObject {
         xml += "        </subView>\n"
         xml += "    </Session>\n</NotepadPlus>\n"
 
+        guard backupDirectory == nil || allBackupsSucceeded else {
+            return false
+        }
+
         do {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try xml.write(to: url, atomically: true, encoding: .utf8)
             if let dir = backupDirectory,
                let existing = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
@@ -2905,7 +3273,15 @@ public final class NppWorkspace: ObservableObject {
         if let override = supportDirectoryOverride { return override }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return base.appendingPathComponent("NotepadPlusPlusMac", isDirectory: true)
+        let primaryDir = base.appendingPathComponent("NotepadPlusPlusMac", isDirectory: true)
+        if (try? FileManager.default.createDirectory(at: primaryDir, withIntermediateDirectories: true)) != nil {
+            return primaryDir
+        }
+        let fallbackDir = base.appendingPathComponent("Notepad++", isDirectory: true)
+        if (try? FileManager.default.createDirectory(at: fallbackDir, withIntermediateDirectories: true)) != nil {
+            return fallbackDir
+        }
+        return FileManager.default.temporaryDirectory.appendingPathComponent("NotepadPlusPlusMac", isDirectory: true)
     }
     public var autoSessionURL: URL { sessionSupportDirectory.appendingPathComponent("session.xml") }
     public var backupDirectoryURL: URL {
@@ -2923,6 +3299,51 @@ public final class NppWorkspace: ObservableObject {
         guard rememberSession else { return false }
         try? FileManager.default.createDirectory(at: sessionSupportDirectory, withIntermediateDirectories: true)
         return saveSession(to: autoSessionURL, backupDirectory: periodicBackupEnabled ? backupDirectoryURL : nil)
+    }
+
+    /// Prepares the workspace documents and session for application termination or window close.
+    /// When session snapshot & periodic backup is active (`canRestoreUnsavedOnLaunch`),
+    /// dirty and untitled documents are saved to the backup directory without modal prompts,
+    /// matching upstream Notepad++ `WM_CLOSE` behavior.
+    @discardableResult
+    public func prepareForTermination() -> Bool {
+        savePreferences()
+        if canRestoreUnsavedOnLaunch {
+            if snapshotSession() {
+                return true
+            }
+            // Fallback if snapshot failed (e.g. disk write failure)
+            return promptSaveDirtyDocumentsBeforeQuit()
+        } else {
+            guard promptSaveDirtyDocumentsBeforeQuit() else { return false }
+            if rememberSession {
+                _ = saveSession(to: autoSessionURL, backupDirectory: nil)
+            } else {
+                try? FileManager.default.removeItem(at: autoSessionURL)
+            }
+            return true
+        }
+    }
+
+    /// Prompts the user to save dirty documents before exiting, matching upstream `fileCloseAll(false, false)`.
+    public func promptSaveDirtyDocumentsBeforeQuit() -> Bool {
+        let dirtyDocs = documents.filter { $0.isDirty || ($0.filePath == nil && !$0.content.isEmpty) }
+        guard !dirtyDocs.isEmpty else { return true }
+
+        for doc in dirtyDocs {
+            let choice = confirmSaveIfNeeded(for: doc)
+            switch choice {
+            case .save:
+                if !promptSaveSynchronously(for: doc) {
+                    return false
+                }
+            case .dontSave:
+                break
+            case .cancel:
+                return false
+            }
+        }
+        return true
     }
 
     /// Reopens the previous session, including unsaved documents, if one was snapshotted.
@@ -2962,15 +3383,8 @@ public final class NppWorkspace: ObservableObject {
                 keepMissing = false
             } else if let decision = sessionPlaceholderDecisionHandler {
                 keepMissing = decision(missingFiles)
-            } else if isTestRunning || CommandLine.arguments.contains("--run-tests") {
-                keepMissing = true
             } else {
-                let alert = NSAlert()
-                alert.messageText = tr("Remember inaccessible files from past session")
-                alert.informativeText = tr("Keep inaccessible files as read-only placeholders?")
-                alert.addButton(withTitle: tr("Yes"))
-                alert.addButton(withTitle: tr("No"))
-                keepMissing = alert.runModal() == .alertFirstButtonReturn
+                keepMissing = interactionProvider.confirmKeepMissingFiles(missingFiles: missingFiles)
             }
             var loadedPrimary: [UUID] = []
             var loadedSecondary: [UUID] = []
@@ -3046,6 +3460,8 @@ public final class NppWorkspace: ObservableObject {
                     doc.bookmarkedLines = Set(file.elements(forName: "Mark").compactMap {
                         Int(attribute($0, "line") ?? "")
                     }.filter { $0 > 0 })
+                    let pinnedAttr = attribute(file, "tabPinned")?.lowercased()
+                    doc.isPinned = (pinnedAttr == "true" || pinnedAttr == "yes" || pinnedAttr == "1")
                 }
             }
             let mainIndex = Int(attribute(session.elements(forName: "mainView").first ?? session, "activeIndex") ?? "") ?? 0

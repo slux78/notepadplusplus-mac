@@ -8,7 +8,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var activeDocCancellable: AnyCancellable?
 
+    private func checkRunningMediaEnvironment() {
+        let bundlePath = Bundle.main.bundlePath
+        if bundlePath.hasPrefix("/Volumes/") {
+            NSLog("⚠️ [Notepad++] Running directly from disk image / volume: %@", bundlePath)
+            print("⚠️ [Notepad++] Running directly from disk image / volume: \(bundlePath)")
+            print("💡 [Notepad++] For optimal performance and safety, please copy Notepad++.app to /Applications.")
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        checkRunningMediaEnvironment()
         let contentView = NppMainWindowView(workspace: workspace)
 
         window = NSWindow(
@@ -159,8 +169,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     docB.content = "// File B in Secondary View (view-rotate-4.png parity)\nfunction helper() {\n    return 42;\n}\n"
                     ws.moveToOtherView(id: docB.id)
                 }
-                ws.splitDirection = .horizontal // Horizontal split per view-rotate-4.png
+                // Stage 3: Horizontal Swapped (Top: File B, Bottom: File A) per view-rotate-4.png
+                ws.viewRotationStage = 3
                 ws.splitRatio = 0.5
+                if let docA = ws.documents.first {
+                    ws.activeDocumentId = docA.id
+                    ws.activeView = 0
+                }
             }, filename: "screenshot_dual_view.png")
         } else if CommandLine.arguments.contains("--screenshot-style-config") {
             NppAutomatedTestSuite.captureCustomScreenshot(appDelegate: self, setup: { ws in
@@ -254,17 +269,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    // MARK: - Application Termination Lifecycle (Upstream WM_CLOSE Parity)
+    public func prepareForApplicationTermination() -> Bool {
+        // Commit any in-flight text input / IME composition
+        window?.makeFirstResponder(nil)
+        return workspace.prepareForTermination()
+    }
+
+    public func promptSaveDirtyDocumentsBeforeQuit() -> Bool {
+        return workspace.promptSaveDirtyDocumentsBeforeQuit()
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        // Notepad++ behavior: with session snapshot enabled, unsaved work is backed up instead of prompting.
-        if workspace.canRestoreUnsavedOnLaunch { return workspace.snapshotSession() || workspace.closeAll(force: false) }
-        return workspace.closeAll(force: false)
+        guard sender === window else { return true }
+        return prepareForApplicationTermination()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if workspace.canRestoreUnsavedOnLaunch, workspace.snapshotSession() {
-            return .terminateNow
-        }
-        if workspace.closeAll(force: false) {
+        if prepareForApplicationTermination() {
             return .terminateNow
         } else {
             return .terminateCancel
@@ -286,8 +308,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             activeDoc = workspace.activeDocument
         }
 
+        let isAnyEdited = workspace.documents.contains(where: { $0.isDirty || ($0.filePath == nil && !$0.content.isEmpty) })
+        window?.isDocumentEdited = isAnyEdited
+
         if let doc = activeDoc {
-            let dirtyPrefix = doc.isDirty ? "*" : ""
+            let isDocDirty = doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)
+            let dirtyPrefix = isDocDirty ? "*" : ""
             let pathOrTitle = doc.filePath?.path ?? doc.title
             window?.title = "\(dirtyPrefix)\(pathOrTitle) - Notepad++"
         } else {
@@ -798,6 +824,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         viewMenu.addItem(withTitle: tr("Move to Other View"), action: #selector(menuMoveToOtherView), keyEquivalent: "")
         viewMenu.addItem(withTitle: tr("Clone to Other View"), action: #selector(menuCloneToOtherView), keyEquivalent: "")
+        viewMenu.addItem(withTitle: tr("Synchronize Vertical Scrolling"), action: #selector(menuToggleSyncScrollV), keyEquivalent: "")
+        viewMenu.addItem(withTitle: tr("Synchronize Horizontal Scrolling"), action: #selector(menuToggleSyncScrollH), keyEquivalent: "")
 
         viewMenu.addItem(withTitle: tr("Toggle Word Wrap"), action: #selector(menuToggleWordWrap), keyEquivalent: "")
         viewMenu.addItem(NSMenuItem.separator())
@@ -1222,6 +1250,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             workspace.cloneToOtherView(id: doc.id)
             updateWindowTitle()
         }
+    }
+    @objc func menuToggleSyncScrollV() {
+        workspace.syncScrollV.toggle()
+    }
+    @objc func menuToggleSyncScrollH() {
+        workspace.syncScrollH.toggle()
     }
     @objc func menuCloseAllUnchanged() { workspace.closeAllUnchanged() }
     @objc func menuLoadSession() { workspace.promptLoadSession() }
@@ -2381,6 +2415,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if menuItem.action == #selector(menuToggleWordWrap) {
             menuItem.state = workspace.isWordWrapEnabled ? .on : .off
             return true
+        }
+        if menuItem.action == #selector(menuToggleSyncScrollV) {
+            menuItem.state = workspace.syncScrollV ? .on : .off
+            return workspace.isDualView
+        }
+        if menuItem.action == #selector(menuToggleSyncScrollH) {
+            menuItem.state = workspace.syncScrollH ? .on : .off
+            return workspace.isDualView
         }
         if menuItem.action == #selector(menuOpenFolderFinder) || menuItem.action == #selector(menuOpenFolderTerminal) {
             return workspace.activeDocument?.filePath != nil

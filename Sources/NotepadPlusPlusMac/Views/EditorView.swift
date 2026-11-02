@@ -4,10 +4,12 @@ import AppKit
 public struct NppEditorView: NSViewRepresentable {
     @ObservedObject var document: NppDocument
     @ObservedObject var workspace: NppWorkspace
+    public var viewIndex: Int = 0
 
-    public init(document: NppDocument, workspace: NppWorkspace) {
+    public init(document: NppDocument, workspace: NppWorkspace, viewIndex: Int = 0) {
         self.document = document
         self.workspace = workspace
+        self.viewIndex = viewIndex
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -16,6 +18,12 @@ public struct NppEditorView: NSViewRepresentable {
 
     public func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        if viewIndex == 0 {
+            workspace.primaryScrollView = scrollView
+        } else {
+            workspace.secondaryScrollView = scrollView
+        }
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = !workspace.isWordWrapEnabled
         scrollView.autohidesScrollers = true
@@ -85,6 +93,12 @@ public struct NppEditorView: NSViewRepresentable {
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = context.coordinator.textView else { return }
+
+        if viewIndex == 0 {
+            workspace.primaryScrollView = scrollView
+        } else {
+            workspace.secondaryScrollView = scrollView
+        }
 
         if workspace.activeDocumentId == document.id {
             workspace.activeTextView = textView

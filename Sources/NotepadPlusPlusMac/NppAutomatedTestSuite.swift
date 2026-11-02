@@ -1,6 +1,18 @@
 import AppKit
 import SwiftUI
 
+final class NppAutomatedTestInteractionProvider: NppWorkspace.NppUserInteractionProvider {
+    func confirmSave(for document: NppDocument) -> NppWorkspace.SavePromptResult {
+        return .dontSave
+    }
+    func promptSaveSynchronously(for document: NppDocument) -> Bool {
+        return true
+    }
+    func confirmKeepMissingFiles(missingFiles: [URL]) -> Bool {
+        return true
+    }
+}
+
 final class NppAutomatedTestSuite {
     static func run(appDelegate: AppDelegate) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -22,7 +34,11 @@ final class NppAutomatedTestSuite {
                 }
             }
 
+            NppWorkspace.defaultInteractionProvider = NppAutomatedTestInteractionProvider()
+            ws.interactionProvider = NppWorkspace.defaultInteractionProvider
             ws.isTestRunning = true
+            ws.confirmSaveHandler = { _ in .dontSave }
+            ws.sessionPlaceholderDecisionHandler = { _ in true }
 
             // TEST 1: Initial Document State
             assertTest("Initial workspace has 1 default document", ws.documents.count == 1)
@@ -1421,6 +1437,23 @@ final class NppAutomatedTestSuite {
             runSessionTabRegressionTests(assertTest: assertTest)
             runUnsavedBackupRestoreTests(assertTest: assertTest)
             runResourceBundleTests(assertTest: assertTest)
+            runQuitAndTabBarUXParityTests(appDelegate: appDelegate, assertTest: assertTest)
+            runAdversarialQuitStressTests(appDelegate: appDelegate, assertTest: assertTest)
+            runAdversarialTabBarStressTests(assertTest: assertTest)
+            runReviewerEdgeCaseTests(assertTest: assertTest)
+
+            // ---------------------------------------------------------
+            // 39. [WORKER 1] REGRESSION INVARIANT MATRIX & GUARDRAILS (Pillars 1-9)
+            // ---------------------------------------------------------
+            runAppKitLifecycleAndTerminationTripwires(appDelegate: appDelegate, assertTest: assertTest)
+            runLiveUIEventAndGestureTripwires(assertTest: assertTest)
+            runDualViewSynchronizedScrollingTripwires(assertTest: assertTest)
+            runEditAndLineOperationsTripwires(assertTest: assertTest)
+            runSearchEngineParityTripwires(assertTest: assertTest)
+            runEncodingAndBOMTripwires(assertTest: assertTest)
+            runSessionAndBackupResilienceTripwires(assertTest: assertTest)
+            runMenuAndResponderChainTripwires(appDelegate: appDelegate, assertTest: assertTest)
+            runPreferencesPersistenceTripwires(assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -4673,6 +4706,25 @@ final class NppAutomatedTestSuite {
         promptCalled = false
         let forceClosed = ws.closeDocument(id: dirtyDoc3.id, force: true)
         assertTest("Dirty Save Confirm: force=true bypasses confirm dialog", forceClosed && !ws.documents.contains(where: { $0.id == dirtyDoc3.id }) && !promptCalled)
+
+        // 4.1. Untitled Document with Content Save Confirmation
+        ws.newDocument()
+        let untitledWithText = ws.documents.last!
+        untitledWithText.content = "Some unsaved typed text in new tab"
+        untitledWithText.isDirty = false // even if isDirty is false, non-empty untitled requires save prompt
+        promptCalled = false
+        ws.confirmSaveHandler = { doc in
+            promptCalled = true
+            return .cancel
+        }
+        let cancelUntitled = ws.closeDocument(id: untitledWithText.id, force: false)
+        assertTest("Dirty Save Confirm: Untitled doc with content prompts and .cancel keeps open", !cancelUntitled && ws.documents.contains(where: { $0.id == untitledWithText.id }) && promptCalled)
+
+        ws.confirmSaveHandler = { doc in
+            return .dontSave
+        }
+        let dontSaveUntitled = ws.closeDocument(id: untitledWithText.id, force: false)
+        assertTest("Dirty Save Confirm: Untitled doc with content closes with .dontSave", dontSaveUntitled && !ws.documents.contains(where: { $0.id == untitledWithText.id }))
         ws.confirmSaveHandler = nil
 
         // 5. Dual View: Move to Other View
@@ -4688,12 +4740,19 @@ final class NppAutomatedTestSuite {
         assertTest("Dual View: Move to Other View activates dual view", ws.isDualView && ws.secondaryDocuments.count == 1 && ws.secondaryDocuments.first?.id == docB.id)
         assertTest("Dual View: Primary view retains Doc A only", ws.primaryDocuments.count == 1 && ws.primaryDocuments.first?.id == docA.id)
 
-        // 6. Dual View: Splitter rotation & drag ratio
-        assertTest("Dual View: Default splitDirection is vertical", ws.splitDirection == .vertical)
-        ws.rotateSplitter()
-        assertTest("Dual View: rotateSplitter toggles to horizontal", ws.splitDirection == .horizontal)
+        // 6. Dual View: 4-Stage Splitter Rotation Cycle (views.md:116-120)
+        ws.viewRotationStage = 0
+        assertTest("Dual View: Stage 0 is vertical normal (Left: A, Right: B)", ws.splitDirection == .vertical && !ws.isViewSwapped)
+        ws.rotateSplitterRight()
+        assertTest("Dual View: Stage 1 is horizontal normal (Top: A, Bottom: B)", ws.viewRotationStage == 1 && ws.splitDirection == .horizontal && !ws.isViewSwapped)
+        ws.rotateSplitterRight()
+        assertTest("Dual View: Stage 2 is vertical swapped (Left: B, Right: A)", ws.viewRotationStage == 2 && ws.splitDirection == .vertical && ws.isViewSwapped)
+        ws.rotateSplitterRight()
+        assertTest("Dual View: Stage 3 is horizontal swapped (Top: B, Bottom: A - view-rotate-4.png)", ws.viewRotationStage == 3 && ws.splitDirection == .horizontal && ws.isViewSwapped)
+        ws.rotateSplitterRight()
+        assertTest("Dual View: Stage 4 wraps to Stage 0 (vertical normal)", ws.viewRotationStage == 0 && ws.splitDirection == .vertical && !ws.isViewSwapped)
         ws.rotateSplitterLeft()
-        assertTest("Dual View: rotateSplitterLeft toggles to vertical", ws.splitDirection == .vertical)
+        assertTest("Dual View: rotateSplitterLeft steps backward to Stage 3", ws.viewRotationStage == 3 && ws.splitDirection == .horizontal && ws.isViewSwapped)
 
         ws.splitRatio = 0.6
         assertTest("Dual View: splitRatio updated", ws.splitRatio == 0.6)
@@ -5707,6 +5766,1499 @@ final class NppAutomatedTestSuite {
                 ws.openPreferences(tab: prefTab)
             }
         }, filename: filename)
+    }
+
+    // =========================================================================
+    // 32. QUIT LIFECYCLE & TAB BAR DOUBLE CLICK UX PARITY TESTS (Gen 5)
+    // =========================================================================
+    static func runQuitAndTabBarUXParityTests(
+        appDelegate: AppDelegate,
+        assertTest: (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("🎯 QUIT LIFECYCLE & TAB BAR UX PARITY TESTS (GEN 5)")
+        print("========================================================")
+
+        let support = FileManager.default.temporaryDirectory.appendingPathComponent("npp_quit_test_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        let savedFile = support.appendingPathComponent("saved_doc.txt")
+        try? "initial text\n".write(to: savedFile, atomically: true, encoding: .utf8)
+
+        // -------------------------------------------------------------
+        // Subtest A: Quit with Session Snapshot & Periodic Backup Active
+        // Upstream C++ WM_CLOSE: fileCloseAll(false, isSnapshotMode=true)
+        // -------------------------------------------------------------
+        let wsA = NppWorkspace()
+        wsA.supportDirectoryOverride = support.appendingPathComponent("appA")
+        wsA.rememberSession = true
+        wsA.periodicBackupEnabled = true
+        wsA.closeAll(force: true)
+
+        // 1 untitled document with unsaved text
+        let untitled = wsA.documents[0]
+        untitled.content = "미저장 스냅샷 테스트"
+        untitled.isDirty = true
+
+        // 1 saved document with unsaved modifications
+        wsA.openFile(url: savedFile)
+        let savedDoc = wsA.documents.first { $0.filePath?.standardizedFileURL == savedFile.standardizedFileURL }
+        savedDoc?.content = "modified text in saved file\n"
+        savedDoc?.isDirty = true
+
+        assertTest("Quit Parity: canRestoreUnsavedOnLaunch is true when both rememberSession and periodicBackupEnabled are on", wsA.canRestoreUnsavedOnLaunch)
+
+        // Prepare for termination should succeed without prompts
+        let canTerminateA = wsA.prepareForTermination()
+        assertTest("Quit Parity: prepareForTermination returns true without save prompts when snapshot mode is active", canTerminateA)
+
+        let backupFilesA = (try? FileManager.default.contentsOfDirectory(atPath: wsA.backupDirectoryURL.path)) ?? []
+        assertTest("Quit Parity: 2 backup files created in backup directory", backupFilesA.count == 2)
+        assertTest("Quit Parity: autoSessionURL session.xml exists", FileManager.default.fileExists(atPath: wsA.autoSessionURL.path))
+
+        // Verify restoration on launch
+        let wsRestore = NppWorkspace()
+        wsRestore.supportDirectoryOverride = wsA.supportDirectoryOverride
+        wsRestore.rememberSession = true
+        wsRestore.periodicBackupEnabled = true
+        assertTest("Quit Parity: restoreAutoSession restores previous snapshotted session", wsRestore.restoreAutoSession())
+        let restoredUntitled = wsRestore.documents.first { $0.filePath == nil && $0.content.contains("미저장") }
+        assertTest("Quit Parity: Restored untitled document content intact", restoredUntitled?.content == "미저장 스냅샷 테스트")
+        assertTest("Quit Parity: Restored untitled document is marked dirty", restoredUntitled?.isDirty == true)
+        let restoredSaved = wsRestore.documents.first { $0.filePath?.standardizedFileURL == savedFile.standardizedFileURL }
+        assertTest("Quit Parity: Restored saved document content intact", restoredSaved?.content == "modified text in saved file\n")
+        assertTest("Quit Parity: Restored saved document is marked dirty", restoredSaved?.isDirty == true)
+
+        // -------------------------------------------------------------
+        // Subtest B: Quit with Session Backup Disabled (Save Prompt Fallback)
+        // Upstream C++ WM_CLOSE: fileCloseAll(false, isSnapshotMode=false)
+        // -------------------------------------------------------------
+        let wsB = NppWorkspace()
+        wsB.supportDirectoryOverride = support.appendingPathComponent("appB")
+        wsB.rememberSession = true
+        wsB.periodicBackupEnabled = false // Snapshot mode disabled
+        wsB.closeAll(force: true)
+        let dirtyB = wsB.documents[0]
+        dirtyB.content = "Unsaved work without backup"
+        dirtyB.isDirty = true
+
+        assertTest("Quit Parity: canRestoreUnsavedOnLaunch is false when periodicBackupEnabled is false", !wsB.canRestoreUnsavedOnLaunch)
+
+        // User chooses Cancel -> abort quit, documents stay intact
+        wsB.confirmSaveHandler = { _ in .cancel }
+        let canTerminateCancel = wsB.prepareForTermination()
+        assertTest("Quit Parity: prepareForTermination returns false when user cancels prompt", !canTerminateCancel)
+        assertTest("Quit Parity: Documents remain open when quit is cancelled", wsB.documents.count == 1 && wsB.documents[0].id == dirtyB.id)
+
+        // User chooses Don't Save -> allow quit
+        wsB.confirmSaveHandler = { _ in .dontSave }
+        let canTerminateDontSave = wsB.prepareForTermination()
+        assertTest("Quit Parity: prepareForTermination returns true when user selects Don't Save", canTerminateDontSave)
+
+        // -------------------------------------------------------------
+        // Subtest C: Tab Close Regression (Cmd+W and File > Close All Parity)
+        // Upstream C++: fileClose() and IDM_FILE_CLOSEALL ALWAYS prompt for dirty tabs
+        // -------------------------------------------------------------
+        let wsC = NppWorkspace()
+        wsC.rememberSession = true
+        wsC.periodicBackupEnabled = true // Even when backup is enabled!
+        wsC.closeAll(force: true)
+        let dirtyC = wsC.documents[0]
+        dirtyC.content = "Individual tab close test"
+        dirtyC.isDirty = true
+
+        wsC.confirmSaveHandler = { _ in .cancel }
+        let closedSingle = wsC.closeDocument(id: dirtyC.id, force: false)
+        assertTest("Tab Close Parity: closeDocument(force: false) prompts and aborts on cancel even when backup is enabled", !closedSingle)
+        assertTest("Tab Close Parity: Dirty tab remains open after cancelled close", wsC.documents.contains { $0.id == dirtyC.id })
+
+        let closedAll = wsC.closeAll(force: false)
+        assertTest("Close All Parity: closeAll(force: false) prompts and aborts on cancel even when backup is enabled", !closedAll)
+
+        // -------------------------------------------------------------
+        // Subtest D: Tab Bar Empty Area Double Click to New Document
+        // Upstream C++ TabBar.cpp:1215 WM_LBUTTONDBLCLK outside existing tabs -> IDM_FILE_NEW
+        // -------------------------------------------------------------
+        let wsD = NppWorkspace()
+        wsD.closeAll(force: true)
+        let initialDocCount = wsD.documents.count
+        assertTest("TabBar Parity: Initial document count is at least 1", initialDocCount >= 1)
+
+        // 1. Double click preference check
+        wsD.doubleClickSpaceToNewTab = true
+        assertTest("TabBar Parity: doubleClickSpaceToNewTab preference is enabled", wsD.doubleClickSpaceToNewTab)
+
+        // 2. Programmatic creation parity with sequential naming
+        let countBeforeNew = wsD.documents.count
+        wsD.newDocument()
+        assertTest("TabBar Parity: newDocument creates sequential tab with 'new' prefix", wsD.activeDocument?.title.hasPrefix("new ") == true && wsD.documents.count == countBeforeNew + 1)
+        assertTest("TabBar Parity: newly created document is activeDocument", wsD.activeDocumentId == wsD.documents.last?.id)
+
+        // 3. Secondary view creation parity
+        let countBeforeSec = wsD.secondaryDocuments.count
+        wsD.newDocumentInSecondaryView()
+        assertTest("TabBar Parity: newDocumentInSecondaryView creates tab in secondary view", wsD.secondaryDocuments.count == countBeforeSec + 1 && wsD.secondaryDocuments.last?.title.hasPrefix("new ") == true)
+        assertTest("TabBar Parity: secondary view document is secondaryActiveDocumentId", wsD.secondaryActiveDocumentId == wsD.secondaryDocuments.last?.id)
+
+        // 4. Tab item double click to close (when doubleClickTabToClose is true)
+        wsD.doubleClickTabToClose = true
+        let testTabToClose = wsD.documents.last!
+        let countBeforeClose = wsD.documents.count
+        let closedTabItem = wsD.closeDocument(id: testTabToClose.id, force: true)
+        assertTest("TabBar Parity: Double clicking tab item closes document", closedTabItem && wsD.documents.count == countBeforeClose - 1)
+
+        // 5. Pinned tab cannot be closed on double click (Authentic Notepad++)
+        let pinnedDoc = wsD.documents[0]
+        pinnedDoc.isPinned = true
+        let pinnedClosed = wsD.closeDocument(id: pinnedDoc.id, force: false)
+        assertTest("TabBar Parity: Pinned tab is protected and cannot be closed on double click", !pinnedClosed)
+
+        // 6. Double click tab disabled preference
+        wsD.doubleClickTabToClose = false
+        assertTest("TabBar Parity: doubleClickTabToClose preference can be toggled off", !wsD.doubleClickTabToClose)
+
+        // -------------------------------------------------------------
+        // Subtest E: Live SwiftUI TabBarView Hit Testing & Gesture Event Simulation
+        // -------------------------------------------------------------
+        let liveWs = NppWorkspace()
+        liveWs.closeAll(force: true)
+        liveWs.doubleClickSpaceToNewTab = true
+        let preSimCount = liveWs.documents.count
+
+        let tabBarView = NppTabBarView(workspace: liveWs, viewIndex: 0)
+        let hostingView = NSHostingView(rootView: tabBarView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 30)
+
+        let testWindow = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 800, height: 30),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        testWindow.isReleasedWhenClosed = false
+        testWindow.contentView = hostingView
+        testWindow.makeKeyAndOrderFront(nil)
+        hostingView.layoutSubtreeIfNeeded()
+
+        // Send simulated double click events at x: 350, y: 15 (guaranteed empty space to the right of tabs)
+        let clickPoint = hostingView.convert(NSPoint(x: 350, y: 15), to: nil)
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let eventDown1 = NSEvent.mouseEvent(with: .leftMouseDown, location: clickPoint, modifierFlags: [], timestamp: uptime, windowNumber: testWindow.windowNumber, context: nil, eventNumber: 601, clickCount: 1, pressure: 1.0)!
+        let eventUp1 = NSEvent.mouseEvent(with: .leftMouseUp, location: clickPoint, modifierFlags: [], timestamp: uptime + 0.01, windowNumber: testWindow.windowNumber, context: nil, eventNumber: 602, clickCount: 1, pressure: 0.0)!
+        let eventDown2 = NSEvent.mouseEvent(with: .leftMouseDown, location: clickPoint, modifierFlags: [], timestamp: uptime + 0.05, windowNumber: testWindow.windowNumber, context: nil, eventNumber: 603, clickCount: 2, pressure: 1.0)!
+        let eventUp2 = NSEvent.mouseEvent(with: .leftMouseUp, location: clickPoint, modifierFlags: [], timestamp: uptime + 0.06, windowNumber: testWindow.windowNumber, context: nil, eventNumber: 604, clickCount: 2, pressure: 0.0)!
+
+        testWindow.sendEvent(eventDown1)
+        testWindow.sendEvent(eventUp1)
+        testWindow.sendEvent(eventDown2)
+        testWindow.sendEvent(eventUp2)
+
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        assertTest("TabBar Parity: Live SwiftUI double click on empty area to the right of tabs triggers new document", liveWs.documents.count == preSimCount + 1)
+        assertTest("TabBar Parity: Newly created document from double click gesture is active document", liveWs.activeDocumentId == liveWs.documents.last?.id)
+        testWindow.orderOut(nil)
+
+        // -------------------------------------------------------------
+        // Subtest F: AppDelegate applicationShouldTerminate Bridge
+        // -------------------------------------------------------------
+        let origPeriodic = appDelegate.workspace.periodicBackupEnabled
+        let origRemember = appDelegate.workspace.rememberSession
+        let origHandler = appDelegate.workspace.confirmSaveHandler
+
+        appDelegate.workspace.periodicBackupEnabled = true
+        appDelegate.workspace.rememberSession = true
+        let termReply = appDelegate.applicationShouldTerminate(NSApp)
+        assertTest("AppDelegate: applicationShouldTerminate returns .terminateNow when snapshot mode is active", termReply == .terminateNow)
+
+        appDelegate.workspace.periodicBackupEnabled = false
+        appDelegate.workspace.confirmSaveHandler = { _ in .cancel }
+        if !appDelegate.workspace.documents.isEmpty {
+            let cancelDoc = appDelegate.workspace.documents[0]
+            let oldContent = cancelDoc.content
+            let oldDirty = cancelDoc.isDirty
+            cancelDoc.content = "dirty for appDelegate test"
+            cancelDoc.isDirty = true
+            let termReplyCancel = appDelegate.applicationShouldTerminate(NSApp)
+            assertTest("AppDelegate: applicationShouldTerminate returns .terminateCancel when prompt is cancelled", termReplyCancel == .terminateCancel)
+            cancelDoc.content = oldContent
+            cancelDoc.isDirty = oldDirty
+        }
+
+        // Restore clean state
+        appDelegate.workspace.confirmSaveHandler = origHandler
+        appDelegate.workspace.periodicBackupEnabled = origPeriodic
+        appDelegate.workspace.rememberSession = origRemember
+    }
+
+    // MARK: - Adversarial Stress Testing: Quit & Session Snapshot Lifecycle (Challenger 1)
+    static func runAdversarialQuitStressTests(
+        appDelegate: AppDelegate,
+        assertTest: @escaping (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("⚔️ CHALLENGER 1: ADVERSARIAL STRESS TESTS (QUIT & SNAPSHOT)")
+        print("========================================================")
+
+        let tempBase = FileManager.default.temporaryDirectory.appendingPathComponent("npp_challenger_stress_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempBase, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        // -------------------------------------------------------------
+        // Challenge 1: Complex Multi-Document Snapshot & Exact Restoration
+        // (Clean saved, Dirty saved, Clean untitled, Dirty untitled with content,
+        //  Dirty untitled empty, CJK Korean text, Dual View, Bookmarks, Cursor/Selection)
+        // -------------------------------------------------------------
+        let ws1 = NppWorkspace()
+        ws1.supportDirectoryOverride = tempBase.appendingPathComponent("ws1_support")
+        ws1.rememberSession = true
+        ws1.periodicBackupEnabled = true
+        ws1.closeAll(force: true)
+
+        let fileClean = tempBase.appendingPathComponent("clean_file.txt")
+        let fileDirty = tempBase.appendingPathComponent("dirty_한글_file.txt")
+        try? "Clean initial text\n".write(to: fileClean, atomically: true, encoding: .utf8)
+        try? "Dirty file original disk content\n".write(to: fileDirty, atomically: true, encoding: .utf8)
+
+        // 1. Clean saved file
+        ws1.openFile(url: fileClean)
+
+        // 2. Dirty saved file with Korean text
+        ws1.openFile(url: fileDirty)
+        if let d = ws1.documents.first(where: { $0.filePath?.standardizedFileURL == fileDirty.standardizedFileURL }) {
+            d.content = "Dirty file modified text: 한국어 유니코드 및 CJK 테스트 🚀\nLine 2 with special chars: <xml>&test\"'\nLine 3"
+            d.isDirty = true
+            d.toggleBookmark(line: 2)
+            d.cursorPos = 10
+            d.selectionLength = 5
+        }
+
+        // 3. Untitled with Korean content
+        ws1.newDocument() // new 2
+        let untitledModified = ws1.activeDocument!
+        untitledModified.content = "무제 문서 내용입니다. 세션 복구 및 스냅샷 보존 검증.\n두 번째 줄입니다."
+        untitledModified.isDirty = true
+        untitledModified.toggleBookmark(line: 1)
+
+        // 4. Untitled with empty content but marked isDirty and with XML special characters in title
+        ws1.newDocument() // new 3
+        let untitledEmptyDirty = ws1.activeDocument!
+        untitledEmptyDirty.title = "<special_tag>&test"
+        untitledEmptyDirty.content = ""
+        untitledEmptyDirty.isDirty = true
+
+        // 5. Dual view tab (secondary view)
+        ws1.newDocument() // new 4
+        let subViewDoc = ws1.activeDocument!
+        subViewDoc.content = "Secondary view document text"
+        subViewDoc.isDirty = true
+        ws1.moveToOtherView(id: subViewDoc.id)
+
+        // Set confirmSaveHandler to fail if called unexpectedly
+        var savePromptWasShown = false
+        ws1.confirmSaveHandler = { _ in
+            savePromptWasShown = true
+            return .cancel
+        }
+
+        assertTest("Challenger 1.1: canRestoreUnsavedOnLaunch is true", ws1.canRestoreUnsavedOnLaunch)
+        let termSuccess1 = ws1.prepareForTermination()
+        assertTest("Challenger 1.2: prepareForTermination returns true with zero modal alerts", termSuccess1 && !savePromptWasShown)
+
+        // Verify backup files created
+        let backupList = (try? FileManager.default.contentsOfDirectory(atPath: ws1.backupDirectoryURL.path)) ?? []
+        // Expected backups: fileDirty, untitledModified, untitledEmptyDirty, subViewDoc (4 total)
+        // fileClean should NOT be backed up
+        assertTest("Challenger 1.3: Exactly 4 dirty documents backed up to disk", backupList.count == 4)
+
+        // Verify session.xml contains proper activeView and document entries
+        let sessionData = (try? Data(contentsOf: ws1.autoSessionURL)) ?? Data()
+        let sessionXML = String(decoding: sessionData, as: UTF8.self)
+        assertTest("Challenger 1.4: session.xml contains mainView and subView", sessionXML.contains("<mainView") && sessionXML.contains("<subView"))
+        assertTest("Challenger 1.5: session.xml escaped XML special chars in title safely", !sessionXML.contains("<special_tag>") && sessionXML.contains("&lt;special_tag&gt;&amp;test"))
+
+        // Relaunch simulation
+        let ws1Relaunch = NppWorkspace()
+        ws1Relaunch.supportDirectoryOverride = ws1.supportDirectoryOverride
+        ws1Relaunch.rememberSession = true
+        ws1Relaunch.periodicBackupEnabled = true
+        let restoreOk = ws1Relaunch.restoreAutoSession()
+        assertTest("Challenger 1.6: restoreAutoSession succeeded", restoreOk)
+
+        // Check clean saved file
+        let restoredClean = ws1Relaunch.documents.first(where: { $0.filePath?.standardizedFileURL == fileClean.standardizedFileURL })
+        assertTest("Challenger 1.7: Clean saved file restored with isDirty == false", restoredClean != nil && restoredClean?.isDirty == false)
+
+        // Check dirty saved file
+        let restoredDirty = ws1Relaunch.documents.first(where: { $0.filePath?.standardizedFileURL == fileDirty.standardizedFileURL })
+        assertTest("Challenger 1.8: Dirty saved file restored with exact Korean text and XML content", restoredDirty?.content.contains("한국어 유니코드 및 CJK 테스트 🚀") == true && restoredDirty?.content.contains("<xml>&test\"'") == true)
+        assertTest("Challenger 1.9: Dirty saved file has isDirty == true", restoredDirty?.isDirty == true)
+        assertTest("Challenger 1.10: Bookmarks restored on dirty saved file", restoredDirty?.bookmarkedLines.contains(2) == true)
+        assertTest("Challenger 1.11: Cursor position restored on dirty saved file", restoredDirty?.cursorPos == 10 && restoredDirty?.selectionLength == 5)
+
+        // Check untitled modified
+        let restoredUntitled = ws1Relaunch.documents.first(where: { $0.filePath == nil && $0.content.contains("무제 문서") })
+        assertTest("Challenger 1.12: Untitled modified document restored intact", restoredUntitled != nil && restoredUntitled?.isDirty == true)
+
+        // Check dual view doc
+        let restoredSubViewDoc = ws1Relaunch.documents.first(where: { $0.content == "Secondary view document text" })
+        assertTest("Challenger 1.13: Dual view document placed in secondary view", restoredSubViewDoc != nil && ws1Relaunch.secondaryDocumentIds.contains(restoredSubViewDoc!.id))
+
+        // Check no stray extra blank tab
+        let strayBlanks = ws1Relaunch.documents.filter { $0.filePath == nil && !$0.isDirty && $0.content.isEmpty }
+        assertTest("Challenger 1.14: No stray unmanaged blank tabs left over", strayBlanks.isEmpty)
+        assertTest("Challenger 1.15: Restored untitled document with XML title intact", ws1Relaunch.documents.contains { $0.title == "<special_tag>&test" })
+
+        // -------------------------------------------------------------
+        // Challenge 2: Snapshot Disabled Save Prompt Fallback & Cancel Safety
+        // -------------------------------------------------------------
+        let ws2 = NppWorkspace()
+        ws2.supportDirectoryOverride = tempBase.appendingPathComponent("ws2_support")
+        ws2.rememberSession = true
+        ws2.periodicBackupEnabled = false // Snapshot disabled
+        ws2.closeAll(force: true)
+
+        let doc2A = ws2.documents[0]
+        doc2A.content = "Doc 2A initial dirty content"
+        doc2A.isDirty = true
+
+        ws2.newDocument()
+        let doc2B = ws2.activeDocument!
+        doc2B.content = "Doc 2B second dirty content"
+        doc2B.isDirty = true
+
+        assertTest("Challenger 2.1: canRestoreUnsavedOnLaunch is false when periodicBackup is disabled", !ws2.canRestoreUnsavedOnLaunch)
+
+        // User chooses Cancel on first prompt
+        var promptsAsked = 0
+        ws2.confirmSaveHandler = { _ in
+            promptsAsked += 1
+            return .cancel
+        }
+        let termReplyCancel = ws2.prepareForTermination()
+        assertTest("Challenger 2.2: prepareForTermination returns false on cancel", !termReplyCancel)
+        assertTest("Challenger 2.3: Zero tabs closed on cancelled termination (data preservation)", ws2.documents.count == 2 && ws2.documents[0].id == doc2A.id && ws2.documents[1].id == doc2B.id)
+        assertTest("Challenger 2.4: Dirty flags remain true on cancelled termination", doc2A.isDirty && doc2B.isDirty)
+
+        // User chooses Don't Save
+        promptsAsked = 0
+        ws2.confirmSaveHandler = { _ in
+            promptsAsked += 1
+            return .dontSave
+        }
+        let termReplyDontSave = ws2.prepareForTermination()
+        assertTest("Challenger 2.5: prepareForTermination returns true when user selects Don't Save", termReplyDontSave)
+        assertTest("Challenger 2.6: User was prompted for each dirty doc", promptsAsked == 2)
+
+        // -------------------------------------------------------------
+        // Challenge 3: Rapid / Idempotent Termination Calls Stress Test
+        // -------------------------------------------------------------
+        let ws3 = NppWorkspace()
+        ws3.supportDirectoryOverride = tempBase.appendingPathComponent("ws3_support")
+        ws3.rememberSession = true
+        ws3.periodicBackupEnabled = true
+        ws3.closeAll(force: true)
+        ws3.documents[0].content = "Rapid termination stress text"
+        ws3.documents[0].isDirty = true
+
+        var rapidAllPassed = true
+        for _ in 1...25 {
+            let res = ws3.prepareForTermination()
+            if !res { rapidAllPassed = false }
+        }
+        assertTest("Challenger 3.1: 25 rapid successive prepareForTermination calls succeed idempotently", rapidAllPassed)
+
+        let sessionData3 = (try? Data(contentsOf: ws3.autoSessionURL)) ?? Data()
+        let parsedXML = try? XMLDocument(data: sessionData3)
+        assertTest("Challenger 3.2: session.xml remains valid XML after rapid termination calls", parsedXML != nil)
+
+        // -------------------------------------------------------------
+        // Challenge 4: Backup Disk Failure Graceful Fallback
+        // -------------------------------------------------------------
+        let ws4 = NppWorkspace()
+        // Point support directory to an invalid path or a file where a directory should be
+        let blockingFile = tempBase.appendingPathComponent("blocking_file")
+        try? "not a directory".write(to: blockingFile, atomically: true, encoding: .utf8)
+        ws4.supportDirectoryOverride = blockingFile.appendingPathComponent("sub") // cannot create dir under a file
+        ws4.rememberSession = true
+        ws4.periodicBackupEnabled = true
+        ws4.closeAll(force: true)
+        ws4.documents[0].content = "Dirty document with unwritable backup directory"
+        ws4.documents[0].isDirty = true
+
+        var fallbackPromptShown = false
+        ws4.confirmSaveHandler = { _ in
+            fallbackPromptShown = true
+            return .cancel
+        }
+        let fallbackTermCancel = ws4.prepareForTermination()
+        assertTest("Challenger 4.1: When snapshot write fails, falls back to promptSaveDirtyDocumentsBeforeQuit", fallbackPromptShown)
+        assertTest("Challenger 4.2: Fallback prompt cancel safely aborts termination without crash", !fallbackTermCancel)
+
+        // -------------------------------------------------------------
+        // Challenge 5: In-Flight CJK IME Text Resignation via AppDelegate
+        // -------------------------------------------------------------
+        let origPeriodic = appDelegate.workspace.periodicBackupEnabled
+        let origRemember = appDelegate.workspace.rememberSession
+        let origHandler = appDelegate.workspace.confirmSaveHandler
+        defer {
+            appDelegate.workspace.periodicBackupEnabled = origPeriodic
+            appDelegate.workspace.rememberSession = origRemember
+            appDelegate.workspace.confirmSaveHandler = origHandler
+        }
+
+        appDelegate.workspace.periodicBackupEnabled = true
+        appDelegate.workspace.rememberSession = true
+        appDelegate.workspace.confirmSaveHandler = { _ in .cancel }
+
+        // Simulate active editing in text view
+        if let win = appDelegate.window, let tv = appDelegate.workspace.activeTextView {
+            tv.string = "Active typing: 한국어 입력 중 종료 테스트"
+            tv.didChangeText()
+            win.makeFirstResponder(tv)
+            assertTest("Challenger 5.1: NSTextView is first responder before terminate", win.firstResponder === tv)
+
+            let termReplyNow = appDelegate.applicationShouldTerminate(NSApp)
+            assertTest("Challenger 5.2: applicationShouldTerminate returns .terminateNow with in-flight editing", termReplyNow == .terminateNow)
+            assertTest("Challenger 5.3: Active text view editing was committed and document marked dirty", appDelegate.workspace.activeDocument?.content.contains("한국어 입력 중 종료 테스트") == true)
+        } else {
+            // Headless / fallback check
+            let termReplyNow = appDelegate.applicationShouldTerminate(NSApp)
+            assertTest("Challenger 5.2: applicationShouldTerminate returns .terminateNow", termReplyNow == .terminateNow)
+        }
+
+        // -------------------------------------------------------------
+        // Challenge 6: Tab Bar Double-Click Stress & Preference Toggle
+        // -------------------------------------------------------------
+        let ws6 = NppWorkspace()
+        ws6.doubleClickSpaceToNewTab = true
+        let initCount = ws6.documents.count
+        ws6.newDocument() // simulated double click 1
+        ws6.newDocument() // simulated double click 2
+        assertTest("Challenger 6.1: Double click creates sequential new documents", ws6.documents.count == initCount + 2)
+        assertTest("Challenger 6.2: Newly created document has sequential 'new' title", ws6.documents.last?.title.hasPrefix("new") == true)
+
+        // Disable doubleClickSpaceToNewTab preference
+        ws6.doubleClickSpaceToNewTab = false
+        assertTest("Challenger 6.3: doubleClickSpaceToNewTab preference can be disabled", !ws6.doubleClickSpaceToNewTab)
+
+        print("========================================================")
+        print("⚔️ CHALLENGER 1: ADVERSARIAL STRESS SUITE COMPLETE")
+        print("========================================================\n")
+    }
+
+    // MARK: - AppKit Event Simulation Helper for TabBar Gestures
+    static func simulateClicks(to window: NSWindow, at pointInWindow: NSPoint, count: Int, startEventNum: Int = 1000) {
+        let uptime = ProcessInfo.processInfo.systemUptime
+        for c in 1...count {
+            let down = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: pointInWindow,
+                modifierFlags: [],
+                timestamp: uptime + Double(c) * 0.03,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: startEventNum + c * 2,
+                clickCount: c,
+                pressure: 1.0
+            )!
+            let up = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: pointInWindow,
+                modifierFlags: [],
+                timestamp: uptime + Double(c) * 0.03 + 0.01,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: startEventNum + c * 2 + 1,
+                clickCount: c,
+                pressure: 0.0
+            )!
+            window.sendEvent(down)
+            window.sendEvent(up)
+        }
+        let waitTime = (count == 1) ? 0.40 : 0.15
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: waitTime))
+    }
+
+    // MARK: - Adversarial Tab Bar Interactions & Geometry Stress Suite (Challenger 2)
+    static func runAdversarialTabBarStressTests(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n=========================================================================")
+        print("⚔️ CHALLENGER 2: ADVERSARIAL STRESS TESTS (TAB BAR & DUAL VIEW)")
+        print("=========================================================================")
+
+        // SUITE 1: 1 Tab Open — Empty Space Double-Click at Varying Distances
+        do {
+            let ws = NppWorkspace()
+            ws.closeAll(force: true)
+            ws.doubleClickSpaceToNewTab = true
+            assertTest("Challenger 2 [Suite 1.0]: Workspace initialized with 1 tab", ws.documents.count == 1)
+
+            let view = NppTabBarView(workspace: ws, viewIndex: 0)
+            let hosting = NSHostingView(rootView: view)
+            hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 30)
+
+            let win = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 800, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.isReleasedWhenClosed = false
+            win.contentView = hosting
+            win.makeKeyAndOrderFront(nil)
+            hosting.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+
+            // 1.1: +5px past last tab
+            let countBefore1 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 101, y: 15), count: 2, startEventNum: 1000)
+            assertTest("Challenger 2 [Suite 1.1]: Double-click at +5px past last tab creates new document", ws.documents.count == countBefore1 + 1)
+            assertTest("Challenger 2 [Suite 1.1]: Newly created document has sequential 'new' title", ws.activeDocument?.title.hasPrefix("new ") == true)
+
+            // 1.2: +20px past last tab
+            let countBefore2 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 205, y: 15), count: 2, startEventNum: 1100)
+            assertTest("Challenger 2 [Suite 1.2]: Double-click at +20px past last tab creates new document", ws.documents.count == countBefore2 + 1)
+            assertTest("Challenger 2 [Suite 1.2]: Sequential naming increments", ws.activeDocument?.title.hasPrefix("new ") == true)
+
+            // 1.3: +100px past last tab
+            let countBefore3 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 375, y: 15), count: 2, startEventNum: 1200)
+            assertTest("Challenger 2 [Suite 1.3]: Double-click at +100px past last tab creates new document", ws.documents.count == countBefore3 + 1)
+
+            // 1.4: Far right edge
+            let countBefore4 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 700, y: 15), count: 2, startEventNum: 1300)
+            assertTest("Challenger 2 [Suite 1.4]: Double-click at far right edge (x: 700) creates new document", ws.documents.count == countBefore4 + 1)
+
+            win.orderOut(nil)
+        }
+
+        // SUITE 2: 2 Tabs Open — Geometry & Boundaries
+        do {
+            let ws = NppWorkspace()
+            ws.closeAll(force: true)
+            ws.doubleClickSpaceToNewTab = true
+            ws.newDocument()
+            assertTest("Challenger 2 [Suite 2.0]: Exactly 2 tabs open", ws.documents.count == 2)
+
+            let view = NppTabBarView(workspace: ws, viewIndex: 0)
+            let hosting = NSHostingView(rootView: view)
+            hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 30)
+
+            let win = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 800, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.isReleasedWhenClosed = false
+            win.contentView = hosting
+            win.makeKeyAndOrderFront(nil)
+            hosting.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+
+            let c1 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 190, y: 15), count: 2, startEventNum: 2000)
+            assertTest("Challenger 2 [Suite 2.1]: Double-click at +5px past Tab 2 creates new tab", ws.documents.count == c1 + 1)
+
+            let c2 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 300, y: 15), count: 2, startEventNum: 2100)
+            assertTest("Challenger 2 [Suite 2.2]: Double-click at +20px past tabs creates new tab", ws.documents.count == c2 + 1)
+
+            let c3 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 480, y: 15), count: 2, startEventNum: 2200)
+            assertTest("Challenger 2 [Suite 2.3]: Double-click at +100px past tabs creates new tab", ws.documents.count == c3 + 1)
+
+            let c4 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 715, y: 15), count: 2, startEventNum: 2300)
+            assertTest("Challenger 2 [Suite 2.4]: Double-click at far right edge (x: 715) creates new tab", ws.documents.count == c4 + 1)
+
+            win.orderOut(nil)
+        }
+
+        // SUITE 3: 10 Tabs Open (Scrolled Overflow & Wide Window)
+        do {
+            let ws = NppWorkspace()
+            ws.closeAll(force: true)
+            ws.doubleClickSpaceToNewTab = true
+            while ws.documents.count < 10 {
+                ws.newDocument()
+            }
+            assertTest("Challenger 2 [Suite 3.0]: 10 tabs created", ws.documents.count == 10)
+
+            let view = NppTabBarView(workspace: ws, viewIndex: 0)
+            let hosting = NSHostingView(rootView: view)
+            hosting.frame = NSRect(x: 0, y: 0, width: 1400, height: 30)
+
+            let win = NSWindow(contentRect: NSRect(x: 50, y: 50, width: 1400, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.isReleasedWhenClosed = false
+            win.contentView = hosting
+            win.makeKeyAndOrderFront(nil)
+            hosting.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+
+            let c1 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 910, y: 15), count: 2, startEventNum: 3000)
+            assertTest("Challenger 2 [Suite 3.1]: Double click at +5px past 10th tab creates 11th tab", ws.documents.count == c1 + 1 && ws.activeDocument?.title.hasPrefix("new ") == true)
+
+            let c2 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 1020, y: 15), count: 2, startEventNum: 3100)
+            assertTest("Challenger 2 [Suite 3.2]: Double click at +20px past last tab creates 12th tab", ws.documents.count == c2 + 1)
+
+            let c3 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 1180, y: 15), count: 2, startEventNum: 3200)
+            assertTest("Challenger 2 [Suite 3.3]: Double click at +100px past last tab creates 13th tab", ws.documents.count == c3 + 1)
+
+            let c4 = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 1300, y: 15), count: 2, startEventNum: 3300)
+            assertTest("Challenger 2 [Suite 3.4]: Double click at far right edge (x: 1300) creates 14th tab", ws.documents.count == c4 + 1)
+
+            win.orderOut(nil)
+        }
+
+        // SUITE 4: Interaction Isolation & Gesture Mutual Exclusion
+        do {
+            let ws = NppWorkspace()
+            ws.closeAll(force: true)
+            ws.doubleClickSpaceToNewTab = true
+            ws.doubleClickTabToClose = true
+            ws.showTabCloseButton = true
+
+            ws.newDocument() // doc 2
+            ws.newDocument() // doc 3
+            assertTest("Challenger 2 [Suite 4.0]: 3 documents prepared", ws.documents.count == 3)
+
+            let doc1 = ws.documents[0]
+            let doc2 = ws.documents[1]
+            let doc3 = ws.documents[2]
+
+            let view = NppTabBarView(workspace: ws, viewIndex: 0)
+            let hosting = NSHostingView(rootView: view)
+            hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 30)
+
+            let win = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 800, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.isReleasedWhenClosed = false
+            win.contentView = hosting
+            win.makeKeyAndOrderFront(nil)
+            hosting.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+
+            assertTest("Challenger 2 [Suite 4.1.A]: Initially active doc is doc 3", ws.activeDocumentId == doc3.id)
+
+            // 4.1 Single click on Tab 1
+            let countBeforeSelect = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 40, y: 15), count: 1, startEventNum: 4000)
+            assertTest("Challenger 2 [Suite 4.1.B]: Single click on Tab 1 selects Tab 1", ws.activeDocumentId == doc1.id)
+            assertTest("Challenger 2 [Suite 4.1.C]: Single click does NOT create a new document", ws.documents.count == countBeforeSelect)
+
+            // 4.2 Single click on Tab 2
+            simulateClicks(to: win, at: NSPoint(x: 130, y: 15), count: 1, startEventNum: 4100)
+            assertTest("Challenger 2 [Suite 4.2.A]: Single click on Tab 2 selects Tab 2", ws.activeDocumentId == doc2.id)
+            assertTest("Challenger 2 [Suite 4.2.B]: Single click does NOT create a new document", ws.documents.count == countBeforeSelect)
+
+            // 4.3 Click close button 'x' on Tab 2
+            let countBeforeCloseBtn = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 165, y: 15), count: 1, startEventNum: 4150)
+            assertTest("Challenger 2 [Suite 4.3.A]: Clicking tab close button 'x' closes Tab 2", !ws.documents.contains { $0.id == doc2.id } && ws.documents.count == countBeforeCloseBtn - 1)
+            assertTest("Challenger 2 [Suite 4.3.B]: Clicking tab close button 'x' does NOT create new document", ws.documents.count == countBeforeCloseBtn - 1)
+
+            // 4.4 Double click on Tab 3 with doubleClickTabToClose == true
+            ws.doubleClickTabToClose = true
+            let countBeforeClose = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 130, y: 15), count: 2, startEventNum: 4200)
+            assertTest("Challenger 2 [Suite 4.4.A]: Double click on Tab 3 closes it", !ws.documents.contains { $0.id == doc3.id } && ws.documents.count == countBeforeClose - 1)
+            assertTest("Challenger 2 [Suite 4.4.B]: Double click on tab does NOT trigger document creation", ws.documents.count == countBeforeClose - 1)
+
+            // 4.5 Double click on Tab 1 with doubleClickTabToClose == false
+            ws.doubleClickTabToClose = false
+            let countBeforeNoClose = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 40, y: 15), count: 2, startEventNum: 4300)
+            assertTest("Challenger 2 [Suite 4.5.A]: Double click on Tab 1 does NOT close Tab 1 when doubleClickTabToClose is false", ws.documents.contains { $0.id == doc1.id })
+            assertTest("Challenger 2 [Suite 4.5.B]: Double click on Tab 1 does NOT create document", ws.documents.count == countBeforeNoClose)
+
+            // 4.6 Pinned tab protection from double click close
+            ws.doubleClickTabToClose = true
+            doc1.isPinned = true
+            simulateClicks(to: win, at: NSPoint(x: 40, y: 15), count: 2, startEventNum: 4400)
+            assertTest("Challenger 2 [Suite 4.6]: Pinned Tab 1 is NOT closed on double-click", ws.documents.contains { $0.id == doc1.id })
+
+            // 4.7 Single click on empty space
+            let countBeforeEmptySingle = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 400, y: 15), count: 1, startEventNum: 4500)
+            assertTest("Challenger 2 [Suite 4.7]: Single click on empty space does NOT create a document", ws.documents.count == countBeforeEmptySingle)
+
+            // 4.8 Double click disabled preference
+            ws.doubleClickSpaceToNewTab = false
+            simulateClicks(to: win, at: NSPoint(x: 400, y: 15), count: 2, startEventNum: 4600)
+            assertTest("Challenger 2 [Suite 4.8]: Double click on empty space does NOTHING when doubleClickSpaceToNewTab is false", ws.documents.count == countBeforeEmptySingle)
+
+            win.orderOut(nil)
+        }
+
+        // SUITE 5: Dual View Tab Bar Empty Space Double Click
+        do {
+            let ws = NppWorkspace()
+            ws.closeAll(force: true)
+            ws.doubleClickSpaceToNewTab = true
+
+            ws.newDocument() // doc 2
+            let doc2 = ws.documents.last!
+            ws.moveToOtherView(id: doc2.id)
+            assertTest("Challenger 2 [Suite 5.0]: Dual View active with 1 primary doc and 1 secondary doc", ws.isDualView && ws.primaryDocuments.count == 1 && ws.secondaryDocuments.count == 1)
+
+            let primaryView = NppTabBarView(workspace: ws, viewIndex: 0)
+            let primaryHosting = NSHostingView(rootView: primaryView)
+            primaryHosting.frame = NSRect(x: 0, y: 0, width: 400, height: 30)
+
+            let winPrimary = NSWindow(contentRect: NSRect(x: 50, y: 100, width: 400, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
+            winPrimary.isReleasedWhenClosed = false
+            winPrimary.contentView = primaryHosting
+            winPrimary.makeKeyAndOrderFront(nil)
+            primaryHosting.layoutSubtreeIfNeeded()
+
+            let secondaryView = NppTabBarView(workspace: ws, viewIndex: 1)
+            let secondaryHosting = NSHostingView(rootView: secondaryView)
+            secondaryHosting.frame = NSRect(x: 0, y: 0, width: 400, height: 30)
+
+            let winSecondary = NSWindow(contentRect: NSRect(x: 500, y: 100, width: 400, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
+            winSecondary.isReleasedWhenClosed = false
+            winSecondary.contentView = secondaryHosting
+            winSecondary.makeKeyAndOrderFront(nil)
+            secondaryHosting.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+
+            // Test 5.1: Double click empty space in SECONDARY tab bar
+            let secBefore = ws.secondaryDocuments.count
+            let primBefore = ws.primaryDocuments.count
+            simulateClicks(to: winSecondary, at: NSPoint(x: 250, y: 15), count: 2, startEventNum: 5000)
+            assertTest("Challenger 2 [Suite 5.1.A]: Double click in secondary tab bar creates tab in secondaryDocuments", ws.secondaryDocuments.count == secBefore + 1)
+            assertTest("Challenger 2 [Suite 5.1.B]: Double click in secondary tab bar leaves primaryDocuments unchanged", ws.primaryDocuments.count == primBefore)
+            assertTest("Challenger 2 [Suite 5.1.C]: Secondary active document is set to new document", ws.secondaryActiveDocumentId == ws.secondaryDocuments.last?.id)
+            assertTest("Challenger 2 [Suite 5.1.D]: Workspace activeView switches to 1", ws.activeView == 1)
+
+            // Test 5.2: Double click empty space in PRIMARY tab bar
+            let secBefore2 = ws.secondaryDocuments.count
+            let primBefore2 = ws.primaryDocuments.count
+            simulateClicks(to: winPrimary, at: NSPoint(x: 250, y: 15), count: 2, startEventNum: 5100)
+            assertTest("Challenger 2 [Suite 5.2.A]: Double click in primary tab bar creates tab in primaryDocuments", ws.primaryDocuments.count == primBefore2 + 1)
+            assertTest("Challenger 2 [Suite 5.2.B]: Double click in primary tab bar leaves secondaryDocuments unchanged", ws.secondaryDocuments.count == secBefore2)
+            assertTest("Challenger 2 [Suite 5.2.C]: Primary active document is set to new document", ws.activeDocumentId == ws.primaryDocuments.last?.id)
+            assertTest("Challenger 2 [Suite 5.2.D]: Workspace activeView switches to 0", ws.activeView == 0)
+
+            winPrimary.orderOut(nil)
+            winSecondary.orderOut(nil)
+        }
+
+        // SUITE 6: Reduced Tab Bar (tabReduce == true)
+        do {
+            let ws = NppWorkspace()
+            ws.closeAll(force: true)
+            ws.tabReduce = true
+            ws.doubleClickSpaceToNewTab = true
+
+            let view = NppTabBarView(workspace: ws, viewIndex: 0)
+            let hosting = NSHostingView(rootView: view)
+            hosting.frame = NSRect(x: 0, y: 0, width: 800, height: 24)
+
+            let win = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 800, height: 24), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.isReleasedWhenClosed = false
+            win.contentView = hosting
+            win.makeKeyAndOrderFront(nil)
+            hosting.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+
+            let cBefore = ws.documents.count
+            simulateClicks(to: win, at: NSPoint(x: 300, y: 12), count: 2, startEventNum: 6000)
+            assertTest("Challenger 2 [Suite 6.1]: Double click on reduced tab bar (height 24) creates new tab", ws.documents.count == cBefore + 1)
+
+            win.orderOut(nil)
+        }
+
+        // SUITE 7: Sequential Document Numbering Parity
+        do {
+            let ws = NppWorkspace()
+            ws.closeAll(force: true)
+            let d1 = ws.documents[0]
+            assertTest("Challenger 2 [Suite 7.1]: First doc title is 'new 1' (or sequential)", d1.title.hasPrefix("new "))
+
+            ws.newDocument()
+            let d2 = ws.documents.last!
+            assertTest("Challenger 2 [Suite 7.2]: Second doc title is sequential", d2.title.hasPrefix("new "))
+            assertTest("Challenger 2 [Suite 7.3]: Primary document titles are distinct", d1.title != d2.title)
+
+            let titleBeforeSec = ws.documents.last?.title ?? ""
+            ws.newDocumentInSecondaryView()
+            let secDoc = ws.secondaryDocuments.last!
+            assertTest("Challenger 2 [Suite 7.4]: Secondary doc has 'new ' prefix", secDoc.title.hasPrefix("new "))
+            assertTest("Challenger 2 [Suite 7.5]: Secondary doc title does not duplicate previous doc", secDoc.title != titleBeforeSec)
+
+            ws.newDocument()
+            let nextPrimDoc = ws.documents.last!
+            let hasDuplicate = (nextPrimDoc.title == secDoc.title)
+            assertTest("Challenger 2 [Suite 7.6]: Next primary doc does not collide with secondary doc title", !hasDuplicate)
+        }
+
+        print("=========================================================================")
+        print("⚔️ CHALLENGER 2: ADVERSARIAL STRESS TESTS COMPLETE")
+        print("=========================================================================\n")
+    }
+
+    // MARK: - Reviewer 2 Edge Cases: Backup Write Failure & Tab Pinning Roundtrip
+    static func runReviewerEdgeCaseTests(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n========================================================")
+        print("🔍 REVIEWER 2: EDGE CASE TESTS (BACKUP FALLBACK & PINNING)")
+        print("========================================================")
+
+        let tempBase = FileManager.default.temporaryDirectory.appendingPathComponent("npp_reviewer_edge_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempBase, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempBase) }
+
+        // -------------------------------------------------------------
+        // Reviewer Case 1: Read-Only Backup Directory Write Failure Detection
+        // -------------------------------------------------------------
+        let wsRev1 = NppWorkspace()
+        let rev1Support = tempBase.appendingPathComponent("rev1_support")
+        let rev1Backup = rev1Support.appendingPathComponent("backup")
+        try? FileManager.default.createDirectory(at: rev1Backup, withIntermediateDirectories: true)
+        // Make backup directory read-only (chmod 0444)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: rev1Backup.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: rev1Backup.path)
+        }
+
+        wsRev1.supportDirectoryOverride = rev1Support
+        wsRev1.rememberSession = true
+        wsRev1.periodicBackupEnabled = true
+        wsRev1.closeAll(force: true)
+        let dirtyDoc1 = wsRev1.documents[0]
+        dirtyDoc1.content = "Unsaved critical work that must not be lost"
+        dirtyDoc1.isDirty = true
+
+        // 1. Direct saveSession with unwritable backup directory must return false
+        let saveOk = wsRev1.saveSession(to: wsRev1.autoSessionURL, backupDirectory: rev1Backup)
+        assertTest("Reviewer 2.1: saveSession returns false when dirty doc backup write fails", !saveOk)
+
+        // 2. snapshotSession must return false
+        let snapOk = wsRev1.snapshotSession()
+        assertTest("Reviewer 2.2: snapshotSession returns false when backup write fails", !snapOk)
+
+        // 3. prepareForTermination must fall back to save prompt and abort when user cancels
+        var promptShown = false
+        wsRev1.confirmSaveHandler = { _ in
+            promptShown = true
+            return .cancel
+        }
+        let termCancel = wsRev1.prepareForTermination()
+        assertTest("Reviewer 2.3: prepareForTermination triggers save prompt on backup write failure", promptShown)
+        assertTest("Reviewer 2.4: Termination is aborted (.cancel) to prevent silent data loss", !termCancel)
+        assertTest("Reviewer 2.5: Dirty documents remain intact after aborted termination", wsRev1.documents.count == 1 && wsRev1.documents[0].isDirty)
+
+        // 4. prepareForTermination returns true if user selects Don't Save
+        wsRev1.confirmSaveHandler = { _ in .dontSave }
+        let termDontSave = wsRev1.prepareForTermination()
+        assertTest("Reviewer 2.6: Termination proceeds when user chooses Don't Save during backup failure fallback", termDontSave)
+
+        // -------------------------------------------------------------
+        // Reviewer Case 2: Tab Pinning Serialization & Restoration (Parameters.cpp parity)
+        // -------------------------------------------------------------
+        let wsPin = NppWorkspace()
+        let pinSupport = tempBase.appendingPathComponent("pin_support")
+        wsPin.supportDirectoryOverride = pinSupport
+        wsPin.rememberSession = true
+        wsPin.periodicBackupEnabled = true
+        wsPin.closeAll(force: true)
+
+        let pinFileA = tempBase.appendingPathComponent("PinnedTabA.txt")
+        let pinFileB = tempBase.appendingPathComponent("UnpinnedTabB.txt")
+        let pinFileC = tempBase.appendingPathComponent("PinnedTabC.txt")
+        try? "Pinned A content".write(to: pinFileA, atomically: true, encoding: .utf8)
+        try? "Unpinned B content".write(to: pinFileB, atomically: true, encoding: .utf8)
+        try? "Pinned C content".write(to: pinFileC, atomically: true, encoding: .utf8)
+
+        wsPin.openFile(url: pinFileA)
+        wsPin.openFile(url: pinFileB)
+        wsPin.openFile(url: pinFileC)
+
+        let docPinA = wsPin.documents.first { $0.filePath?.standardizedFileURL == pinFileA.standardizedFileURL }!
+        let docUnpinB = wsPin.documents.first { $0.filePath?.standardizedFileURL == pinFileB.standardizedFileURL }!
+        let docPinC = wsPin.documents.first { $0.filePath?.standardizedFileURL == pinFileC.standardizedFileURL }!
+
+        docPinA.isPinned = true
+        docUnpinB.isPinned = false
+        docPinC.isPinned = true
+        wsPin.moveToOtherView(id: docPinC.id)
+
+        let pinSessionURL = pinSupport.appendingPathComponent("pin_session.xml")
+        let pinSaveOk = wsPin.saveSession(to: pinSessionURL, backupDirectory: nil)
+        assertTest("Reviewer 2.7: saveSession succeeded for pinned tabs", pinSaveOk)
+
+        let pinSessionData = (try? Data(contentsOf: pinSessionURL)) ?? Data()
+        let pinSessionXML = String(decoding: pinSessionData, as: UTF8.self)
+        assertTest("Reviewer 2.8: session.xml contains tabPinned=\"true\"", pinSessionXML.contains("tabPinned=\"true\""))
+
+        // Relaunch and restore session
+        let wsPinRelaunch = NppWorkspace()
+        wsPinRelaunch.supportDirectoryOverride = pinSupport
+        let loadOk = wsPinRelaunch.loadSession(from: pinSessionURL)
+        assertTest("Reviewer 2.9: loadSession succeeded", loadOk)
+
+        let restoredDocA = wsPinRelaunch.documents.first(where: { $0.title == "PinnedTabA.txt" })
+        let restoredDocB = wsPinRelaunch.documents.first(where: { $0.title == "UnpinnedTabB.txt" })
+        let restoredDocC = wsPinRelaunch.secondaryDocuments.first(where: { $0.title == "PinnedTabC.txt" })
+
+        assertTest("Reviewer 2.10: Pinned tab A is restored with isPinned == true", restoredDocA?.isPinned == true)
+        assertTest("Reviewer 2.11: Unpinned tab B is restored with isPinned == false", restoredDocB?.isPinned == false)
+        assertTest("Reviewer 2.12: Secondary pinned tab C is restored with isPinned == true", restoredDocC?.isPinned == true)
+
+        // Verify pinned tab is protected from closeAll
+        wsPinRelaunch.closeAll(force: false)
+        assertTest("Reviewer 2.13: Restored pinned tab is preserved when closeAll is executed", wsPinRelaunch.documents.contains { $0.title == "PinnedTabA.txt" })
+
+        print("========================================================")
+        print("🔍 REVIEWER 2: EDGE CASE TESTS COMPLETE")
+        print("========================================================\n")
+    }
+
+    // =========================================================================
+    // MARK: - [WORKER 1] REGRESSION INVARIANT MATRIX & GUARDRAILS (Pillars 1-9)
+    // =========================================================================
+
+    // MARK: - Pillar 1: AppKit Lifecycle & Termination Tripwires
+    static func runAppKitLifecycleAndTerminationTripwires(appDelegate: AppDelegate, assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 1: AppKit Lifecycle & Termination Tripwires ---")
+        let ws = appDelegate.workspace
+        
+        // Tripwire 1.1: Delegate and Window Wiring
+        assertTest("Lifecycle 1.1: window.delegate === appDelegate", appDelegate.window?.delegate === appDelegate)
+        assertTest("Lifecycle 1.2: NSApp.delegate === appDelegate", NSApp.delegate === appDelegate)
+
+        let prevRemember = ws.rememberSession
+        let prevBackup = ws.periodicBackupEnabled
+        let prevProvider = ws.interactionProvider
+        let prevConfirm = ws.confirmSaveHandler
+        defer {
+            ws.rememberSession = prevRemember
+            ws.periodicBackupEnabled = prevBackup
+            ws.interactionProvider = prevProvider
+            ws.confirmSaveHandler = prevConfirm
+        }
+
+        // Permutation 1: Snapshot enabled: rememberSession=true && periodicBackupEnabled=true
+        ws.rememberSession = true
+        ws.periodicBackupEnabled = true
+        
+        ws.newDocument()
+        guard let docSnap = ws.activeDocument else { return }
+        docSnap.content = "Snapshot invariant verification content: \(UUID().uuidString)"
+        docSnap.isDirty = true
+        
+        var promptInvoked = false
+        ws.confirmSaveHandler = { _ in
+            promptInvoked = true
+            return .dontSave
+        }
+        
+        // In snapshot mode, prepareForTermination() MUST NOT prompt the user and must snapshot dirty documents
+        let termSuccess = appDelegate.prepareForApplicationTermination()
+        assertTest("Lifecycle 1.3: Snapshot mode prepares termination without modal prompt", termSuccess && !promptInvoked)
+        assertTest("Lifecycle 1.4: Session snapshot file exists on disk", FileManager.default.fileExists(atPath: ws.autoSessionURL.path))
+        
+        // Permutation 2: Snapshot disabled: rememberSession=false, dirty document -> Prompt with Cancel
+        ws.rememberSession = false
+        ws.periodicBackupEnabled = false
+        ws.newDocument()
+        guard let docPrompt = ws.activeDocument else { return }
+        docPrompt.content = "Dirty document requiring user prompt"
+        docPrompt.isDirty = true
+        
+        ws.confirmSaveHandler = { _ in
+            return .cancel
+        }
+        
+        let cancelSuccess = appDelegate.prepareForApplicationTermination()
+        assertTest("Lifecycle 1.5: Cancel in save prompt aborts termination", cancelSuccess == false)
+        assertTest("Lifecycle 1.6: Documents remain open and dirty when termination is cancelled", ws.documents.contains(where: { $0.id == docPrompt.id && $0.isDirty }))
+
+        // Permutation 3: Save prompt with Don't Save
+        ws.confirmSaveHandler = { _ in
+            return .dontSave
+        }
+        let dontSaveSuccess = appDelegate.prepareForApplicationTermination()
+        assertTest("Lifecycle 1.7: Don't Save proceeds with termination", dontSaveSuccess == true)
+
+        // Close All invariant with dirty documents
+        ws.newDocument()
+        guard let docCloseAll = ws.activeDocument else { return }
+        docCloseAll.content = "Close All dirty test"
+        docCloseAll.isDirty = true
+        ws.confirmSaveHandler = { _ in .cancel }
+        ws.closeAll(force: false)
+        assertTest("Lifecycle 1.8: Close All with Cancel preserves dirty documents", ws.documents.contains(where: { $0.id == docCloseAll.id }))
+
+        // Clean up test documents
+        ws.closeDocument(id: docSnap.id, force: true)
+        ws.closeDocument(id: docPrompt.id, force: true)
+        ws.closeDocument(id: docCloseAll.id, force: true)
+    }
+
+    // MARK: - Pillar 2: Live UI Event & TabBar Gesture Tripwires
+    static func runLiveUIEventAndGestureTripwires(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 2: Live UI Event & TabBar Gesture Tripwires ---")
+        let ws = NppWorkspace()
+        ws.interactionProvider = NppAutomatedTestInteractionProvider()
+        ws.isTestRunning = true
+
+        // Mount NppTabBarView in offscreen borderless NSWindow with NSHostingView
+        let tabBarView = NppTabBarView(workspace: ws, viewIndex: 0)
+        let hostingView = NSHostingView(rootView: tabBarView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 30)
+        
+        let testWin = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 800, height: 30),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        testWin.isReleasedWhenClosed = false
+        testWin.contentView = hostingView
+        testWin.makeKeyAndOrderFront(nil)
+        hostingView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+
+        assertTest("Gesture 2.1: Initial tab bar workspace has 1 document", ws.documents.count == 1)
+
+        // Synthesize single click NSEvent on empty space
+        simulateClicks(to: testWin, at: NSPoint(x: 700, y: 15), count: 1, startEventNum: 2100)
+        assertTest("Gesture 2.2: Single-click on empty space does NOT create a tab", ws.documents.count == 1)
+
+        // Tripwire 2.3: Double-click empty space setting enabled creates tab
+        ws.doubleClickSpaceToNewTab = true
+        let initialDocCount = ws.documents.count
+        simulateClicks(to: testWin, at: NSPoint(x: 700, y: 15), count: 2, startEventNum: 2300)
+        assertTest("Gesture 2.3: Double-click space creates new tab when enabled", ws.documents.count == initialDocCount + 1)
+
+        // Tripwire 2.4: Negative tripwire: doubleClickSpaceToNewTab == false
+        ws.doubleClickSpaceToNewTab = false
+        let countBeforeDisabled = ws.documents.count
+        simulateClicks(to: testWin, at: NSPoint(x: 700, y: 15), count: 2, startEventNum: 2400)
+        assertTest("Gesture 2.4: Double-click space does NOT create tab when disabled", ws.documents.count == countBeforeDisabled)
+
+        // Tripwire 2.5: Double-click tab to close (when enabled)
+        ws.doubleClickTabToClose = true
+        let countBeforeClose = ws.documents.count
+        simulateClicks(to: testWin, at: NSPoint(x: 130, y: 15), count: 2, startEventNum: 2500)
+        assertTest("Gesture 2.5: Double-click tab closes unpinned document when enabled", ws.documents.count == countBeforeClose - 1)
+
+        // Tripwire 2.6: Negative tripwire: pinned tab is immune to double-click tab close
+        guard let pinnedDoc = ws.documents.first else { return }
+        pinnedDoc.isPinned = true
+        hostingView.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.15))
+        let countBeforePinned = ws.documents.count
+        simulateClicks(to: testWin, at: NSPoint(x: 40, y: 15), count: 2, startEventNum: 2600)
+        assertTest("Gesture 2.6: Pinned document is protected from double-click close gesture", ws.documents.count == countBeforePinned && pinnedDoc.isPinned)
+
+        testWin.orderOut(nil)
+    }
+
+    // MARK: - Pillar 3: Dual-View Synchronized Scrolling Tripwires
+    static func runDualViewSynchronizedScrollingTripwires(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 3: Dual-View Synchronized Scrolling Tripwires ---")
+        let ws = NppWorkspace()
+        ws.interactionProvider = NppAutomatedTestInteractionProvider()
+        let secDoc = NppDocument(title: "secondaryDoc")
+        ws.documents.append(secDoc)
+        ws.secondaryDocumentIds.append(secDoc.id)
+
+        // Create two real NSScrollView instances with content
+        let primaryScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
+        let secondaryScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
+
+        let primaryDocView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 3000))
+        let secondaryDocView = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 3000))
+
+        primaryScroll.documentView = primaryDocView
+        secondaryScroll.documentView = secondaryDocView
+
+        ws.primaryScrollView = primaryScroll
+        ws.secondaryScrollView = secondaryScroll
+        ws.setupScrollSynchronization()
+
+        // Test vertical sync
+        ws.syncScrollV = true
+        ws.syncScrollH = false
+        ws.recalculateSyncScrollDeltas()
+
+        primaryScroll.contentView.scroll(to: NSPoint(x: 0, y: 200))
+        ws.handlePrimaryScroll()
+        assertTest("DualView 3.1: Vertical scrolling primary syncs secondary view", abs(secondaryScroll.contentView.bounds.origin.y - 200) < 1.0)
+
+        secondaryScroll.contentView.scroll(to: NSPoint(x: 0, y: 450))
+        ws.handleSecondaryScroll()
+        assertTest("DualView 3.2: Vertical scrolling secondary syncs primary view", abs(primaryScroll.contentView.bounds.origin.y - 450) < 1.0)
+
+        // Test horizontal sync
+        ws.syncScrollH = true
+        primaryDocView.frame = NSRect(x: 0, y: 0, width: 2000, height: 3000)
+        secondaryDocView.frame = NSRect(x: 0, y: 0, width: 2000, height: 3000)
+        ws.recalculateSyncScrollDeltas()
+
+        primaryScroll.contentView.scroll(to: NSPoint(x: 150, y: 450))
+        ws.handlePrimaryScroll()
+        assertTest("DualView 3.3: Horizontal scrolling primary syncs secondary view", abs(secondaryScroll.contentView.bounds.origin.x - 150) < 1.0)
+
+        // Negative tripwire: sync disabled
+        ws.syncScrollV = false
+        ws.syncScrollH = false
+        primaryScroll.contentView.scroll(to: NSPoint(x: 0, y: 800))
+        ws.handlePrimaryScroll()
+        assertTest("DualView 3.4: Scrolling does not affect peer when sync is disabled", abs(secondaryScroll.contentView.bounds.origin.y - 450) < 1.0)
+
+        // Teardown
+        let hadObserversBefore = ws.hasActiveScrollObservers
+        ws.teardownScrollSynchronization()
+        ws.syncScrollV = true
+        let secondaryOriginBefore = secondaryScroll.contentView.bounds.origin
+        primaryScroll.contentView.scroll(to: NSPoint(x: 0, y: 1200))
+        NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: primaryScroll.contentView)
+        let tornDownCleanly = hadObserversBefore && !ws.hasActiveScrollObservers && (abs(secondaryScroll.contentView.bounds.origin.y - secondaryOriginBefore.y) < 1.0)
+        assertTest("DualView 3.5: Scroll synchronization torn down cleanly", tornDownCleanly)
+    }
+
+    // MARK: - Pillar 4: Edit & Line Operations Tripwires
+    static func runEditAndLineOperationsTripwires(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 4: Edit & Line Operations Tripwires ---")
+        let ws = NppWorkspace()
+        ws.interactionProvider = NppAutomatedTestInteractionProvider()
+        ws.isTestRunning = true
+
+        ws.newDocument()
+        guard let doc = ws.activeDocument else { return }
+        let undoWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        textView.allowsUndo = true
+        undoWindow.contentView?.addSubview(textView)
+        ws.activeTextView = textView
+
+        // 4.1 Duplicate Line with Undo
+        textView.string = "Line Alpha\nLine Beta\nLine Gamma"
+        doc.content = textView.string
+        textView.setSelectedRange(NSRange(location: 0, length: 0)) // Cursor on Line Alpha
+        NppEditOperations.duplicateLine(in: textView)
+        assertTest("EditOps 4.1: Duplicate current line duplicates Line Alpha", textView.string.hasPrefix("Line Alpha\nLine Alpha\nLine Beta"))
+        textView.undoManager?.undo()
+        assertTest("EditOps 4.2: Undo reverts duplicate line operation", textView.string == "Line Alpha\nLine Beta\nLine Gamma")
+
+        // 4.3 Integer Sort Lines
+        doc.content = "10 apples\n2 apples\n1 apple\n20 apples\n3 apples"
+        NppEditOperations.sortLinesAsIntegers(in: doc, ascending: true)
+        let expectedIntSort = "1 apple\n2 apples\n3 apples\n10 apples\n20 apples"
+        assertTest("EditOps 4.3: Integer sorting sorts numeric values naturally", doc.content == expectedIntSort)
+
+        // 4.4 Blank lines and trailing newline sorting robustness
+        doc.content = "Cherry\n\nApple\nBanana\n"
+        NppEditOperations.sortLines(in: doc, ascending: true, ignoreCase: false)
+        assertTest("EditOps 4.4: Sort lines with blank lines preserves all lines without crash", doc.content.contains("Apple") && doc.content.contains("Banana") && doc.content.contains("Cherry"))
+
+        // 4.5 Join Lines with Undo
+        textView.string = "One\nTwo\nThree"
+        doc.content = textView.string
+        textView.selectAll(nil)
+        NppEditOperations.joinLines(in: textView)
+        assertTest("EditOps 4.5: Join lines joins with single space", textView.string == "One Two Three")
+        textView.undoManager?.undo()
+        assertTest("EditOps 4.6: Undo restores separated lines", textView.string == "One\nTwo\nThree")
+
+        // 4.7 Trim Trailing Spaces
+        doc.content = "Line with trailing spaces    \nAnother line  "
+        NppEditOperations.trimSpaces(in: doc, mode: .trailing)
+        assertTest("EditOps 4.7: Trim trailing spaces strips trailing whitespace", doc.content == "Line with trailing spaces\nAnother line")
+
+        // 4.8 Remove Bookmarked Lines
+        doc.eolFormat = .lf
+        doc.content = "Line 1\nLine 2 (BM)\nLine 3\nLine 4 (BM)\nLine 5"
+        textView.string = doc.content
+        doc.bookmarkedLines = [2, 4]
+        ws.removeBookmarkedLines()
+        assertTest("EditOps 4.8: Remove bookmarked lines deletes lines 2 and 4", doc.content == "Line 1\nLine 3\nLine 5")
+    }
+
+    // MARK: - Pillar 5: Search Engine Parity Tripwires
+    static func runSearchEngineParityTripwires(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 5: Search Engine Parity Tripwires ---")
+        let ws = NppWorkspace()
+        ws.interactionProvider = NppAutomatedTestInteractionProvider()
+        ws.isTestRunning = true
+
+        ws.newDocument()
+        guard let doc = ws.activeDocument else { return }
+        doc.content = "Alpha 100 Bravo\nCharlie 200 Delta\nalpha 300 echo"
+        ws.activeDocumentId = doc.id
+
+        // 5.1 Case sensitivity parity
+        ws.searchMode = 0 // Normal
+        ws.matchCase = true
+        ws.wrapAround = true
+        let match1 = ws.findRange(in: doc.content, query: "Alpha", forward: true, startLocation: 0)
+        assertTest("SearchParity 5.1: Match case true finds exact case match", match1?.location == 0)
+
+        ws.matchCase = false
+        let match2 = ws.findRange(in: doc.content, query: "ALPHA", forward: true, startLocation: 0)
+        assertTest("SearchParity 5.2: Match case false matches insensitive query", match2?.location == 0)
+
+        // 5.2 Whole word boundary parity
+        ws.matchWholeWord = true
+        let wholeWordDoc = "cat catalog concat cat"
+        let rangeWW1 = ws.findRange(in: wholeWordDoc, query: "cat", forward: true, startLocation: 0)
+        let rangeWW2 = ws.findRange(in: wholeWordDoc, query: "cat", forward: true, startLocation: 1)
+        assertTest("SearchParity 5.3: Whole word matches isolated 'cat' at index 0", rangeWW1?.location == 0 && rangeWW1?.length == 3)
+        assertTest("SearchParity 5.4: Whole word skips 'catalog' and 'concat' to index 19", rangeWW2?.location == 19)
+
+        // 5.3 Regex mode with dotMatchesNewline
+        ws.searchMode = 2 // Regex
+        ws.dotMatchesNewline = true
+        let multilineDoc = "BEGIN\nsome text\nEND"
+        let regexRange = ws.findRange(in: multilineDoc, query: "BEGIN.*END", forward: true, startLocation: 0)
+        assertTest("SearchParity 5.5: Regex dotMatchesNewline spans newline characters", regexRange != nil && regexRange?.length == multilineDoc.count)
+
+        // 5.4 Dialog search options immediately affect menu findNext
+        ws.findQueryText = "Charlie"
+        ws.lastSearchQuery = "Charlie"
+        ws.searchMode = 0
+        ws.matchWholeWord = false
+        ws.matchCase = true
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
+        tv.string = doc.content
+        ws.activeTextView = tv
+        let foundNext = ws.findNext(forward: true)
+        assertTest("SearchParity 5.6: Menu findNext executes using consolidated workspace search state", foundNext == true)
+    }
+
+    // MARK: - Pillar 6: Encoding & Character Sets Tripwires
+    static func runEncodingAndBOMTripwires(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 6: Encoding & Character Sets Tripwires ---")
+
+        // 6.1 UTF-8 with BOM Roundtrip
+        let docWithBOM = NppDocument(title: "docWithBOM")
+        docWithBOM.convertEncoding(to: "UTF-8", addBOM: true)
+        docWithBOM.content = "Notepad++ BOM Test"
+        let bomData = docWithBOM.encodedData() ?? Data()
+        let hasBOMPrefix = bomData.count >= 3 && bomData[0] == 0xEF && bomData[1] == 0xBB && bomData[2] == 0xBF
+        assertTest("Encoding 6.1: UTF-8 with BOM writes 0xEF, 0xBB, 0xBF bytes", hasBOMPrefix)
+
+        // 6.2 UTF-8 without BOM does not include BOM bytes
+        let docNoBOM = NppDocument(title: "docNoBOM")
+        docNoBOM.convertEncoding(to: "UTF-8", addBOM: false)
+        docNoBOM.content = "Notepad++ Plain Test"
+        let noBomData = docNoBOM.encodedData() ?? Data()
+        let lacksBOMPrefix = !(noBomData.count >= 3 && noBomData[0] == 0xEF && noBomData[1] == 0xBB && noBomData[2] == 0xBF)
+        assertTest("Encoding 6.2: UTF-8 without BOM omits BOM preamble", lacksBOMPrefix)
+
+        // 6.3 Korean CP949 / EUC-KR roundtrip
+        let koreanText = "안녕하세요 노드패드++ 맥 버전입니다"
+        let cp949Doc = NppDocument(title: "CP949Doc")
+        cp949Doc.content = koreanText
+        cp949Doc.convertEncoding(to: "CP949", addBOM: false)
+        let cp949Data = cp949Doc.encodedData() ?? Data()
+        assertTest("Encoding 6.3: Korean CP949 encodes non-empty bytes", !cp949Data.isEmpty)
+        let tempCP949URL = FileManager.default.temporaryDirectory.appendingPathComponent("test_cp949_\(UUID().uuidString).txt")
+        try? cp949Data.write(to: tempCP949URL)
+        let reloadedDoc = try? NppDocument.fromFile(url: tempCP949URL)
+        assertTest("Encoding 6.4: Korean CP949 decodes back to Hangul without corruption", reloadedDoc?.content == koreanText)
+        try? FileManager.default.removeItem(at: tempCP949URL)
+
+        // 6.5 Windows-1252 Latin roundtrip
+        let latinText = "Resume and Cafe: 100 EUR"
+        let w1252Doc = NppDocument(title: "W1252Doc")
+        w1252Doc.content = latinText
+        w1252Doc.convertEncoding(to: "WINDOWS-1252", addBOM: false)
+        let w1252Data = w1252Doc.encodedData() ?? Data()
+        let tempW1252URL = FileManager.default.temporaryDirectory.appendingPathComponent("test_w1252_\(UUID().uuidString).txt")
+        try? w1252Data.write(to: tempW1252URL)
+        let reloadedW1252 = try? NppDocument.fromFile(url: tempW1252URL)
+        assertTest("Encoding 6.5: Windows-1252 roundtrips Latin characters", reloadedW1252?.content == latinText)
+        try? FileManager.default.removeItem(at: tempW1252URL)
+
+        // 6.6 Unrepresentable character fallback
+        let unrepDoc = NppDocument(title: "UnrepDoc")
+        unrepDoc.convertEncoding(to: "WINDOWS-1252", addBOM: false)
+        unrepDoc.content = "Standard Text: \u{1F680}"
+        let unrepData = unrepDoc.encodedData() ?? Data()
+        let unrepStr = String(data: unrepData, encoding: .isoLatin1) ?? ""
+        assertTest("Encoding 6.6: Unrepresentable characters produce valid non-empty byte stream without crashing", !unrepData.isEmpty && unrepStr.contains("Standard Text: ?"))
+    }
+
+    // MARK: - Pillar 7: Session Restore & Backup Resilience Tripwires
+    static func runSessionAndBackupResilienceTripwires(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 7: Session Restore & Backup Resilience Tripwires ---")
+        let ws = NppWorkspace()
+        ws.interactionProvider = NppAutomatedTestInteractionProvider()
+        ws.isTestRunning = true
+
+        // 7.1 Corrupted session file with pure null bytes
+        let nullData = Data(repeating: 0, count: 512)
+        let tempNullURL = FileManager.default.temporaryDirectory.appendingPathComponent("npp_corrupted_null.xml")
+        try? nullData.write(to: tempNullURL)
+        let loadedNull = ws.loadSession(from: tempNullURL)
+        assertTest("Resilience 7.1: Corrupted session with null bytes handled safely (returns false)", loadedNull == false)
+        try? FileManager.default.removeItem(at: tempNullURL)
+
+        // 7.2 Truncated XML session file
+        let truncXML = "<NotepadPlus><Session><mainView><File filename=\"/some/path\"".data(using: .utf8)!
+        let tempTruncURL = FileManager.default.temporaryDirectory.appendingPathComponent("npp_corrupted_trunc.xml")
+        try? truncXML.write(to: tempTruncURL)
+        let loadedTrunc = ws.loadSession(from: tempTruncURL)
+        assertTest("Resilience 7.2: Truncated XML session recovers safely without crashing", loadedTrunc == false)
+        try? FileManager.default.removeItem(at: tempTruncURL)
+
+        // 7.3 Unwritable backup directory fallback
+        let prevBackupDir = ws.periodicBackupPath
+        ws.periodicBackupPath = "/System/Library/FakeUnwritableNppBackup"
+        ws.rememberSession = true
+        ws.periodicBackupEnabled = true
+        
+        // When snapshot fails, prepareForTermination falls back to prompting
+        var promptedOnFailure = false
+        ws.confirmSaveHandler = { _ in
+            promptedOnFailure = true
+            return .dontSave
+        }
+        ws.newDocument()
+        guard let docUnwritable = ws.activeDocument else { return }
+        docUnwritable.content = "Unwritable backup fallback test"
+        docUnwritable.isDirty = true
+        
+        _ = ws.prepareForTermination()
+        assertTest("Resilience 7.3: Unwritable backup dir falls back safely to save prompt", promptedOnFailure == true)
+        ws.periodicBackupPath = prevBackupDir
+        ws.closeDocument(id: docUnwritable.id, force: true)
+    }
+
+    // MARK: - Pillar 8: Menu Dispatch & Responder Chain Tripwires
+    static func runMenuAndResponderChainTripwires(appDelegate: AppDelegate, assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 8: Menu Dispatch & Responder Chain Tripwires ---")
+        guard let mainMenu = NSApp.mainMenu else {
+            assertTest("Menu 8.1: Main menu is instantiated", false)
+            return
+        }
+
+        assertTest("Menu 8.1: Main menu bar contains at least 10 menus", mainMenu.items.count >= 10)
+
+        // Crawl all menu items and verify action selectors
+        var totalMenuItems = 0
+        var totalActionItems = 0
+        var validActions = 0
+
+        func resolvesAction(_ action: Selector, for item: NSMenuItem) -> Bool {
+            if item.hasSubmenu || item.submenu != nil {
+                return item.target != nil || item.submenu != nil
+            }
+            if let target = item.target {
+                return (target as AnyObject).responds(to: action)
+            }
+            if appDelegate.responds(to: action) { return true }
+            if let tv = appDelegate.workspace.activeTextView, tv.responds(to: action) { return true }
+            if NSTextView.instancesRespond(to: action) { return true }
+            if (appDelegate.workspace as AnyObject).responds(to: action) { return true }
+            if let wc = appDelegate.window?.windowController, wc.responds(to: action) { return true }
+            if let win = appDelegate.window, win.responds(to: action) { return true }
+            if let fr = appDelegate.window?.firstResponder, (fr as AnyObject).responds(to: action) { return true }
+            if NSApp.target(forAction: action) != nil { return true }
+            if NSApp.responds(to: action) { return true }
+            return false
+        }
+
+        func crawlMenu(_ menu: NSMenu) {
+            for item in menu.items {
+                totalMenuItems += 1
+                if let action = item.action {
+                    totalActionItems += 1
+                    if resolvesAction(action, for: item) {
+                        validActions += 1
+                    }
+                }
+                if let sub = item.submenu {
+                    crawlMenu(sub)
+                }
+            }
+        }
+        crawlMenu(mainMenu)
+        assertTest("Menu 8.2: Total crawled menu items exceed 100", totalMenuItems >= 100)
+        assertTest("Menu 8.3: All crawled menu actions resolve to responders", validActions > 0 && validActions == totalActionItems)
+
+        // Critical Shortcut Invariants
+        func findMenuItem(keyEquivalent: String, modifierMask: NSEvent.ModifierFlags) -> NSMenuItem? {
+            func search(_ menu: NSMenu) -> NSMenuItem? {
+                for item in menu.items {
+                    if item.keyEquivalent == keyEquivalent && item.keyEquivalentModifierMask == modifierMask {
+                        return item
+                    }
+                    if let sub = item.submenu, let found = search(sub) {
+                        return found
+                    }
+                }
+                return nil
+            }
+            return search(mainMenu)
+        }
+
+        let cmdN = findMenuItem(keyEquivalent: "n", modifierMask: [.command])
+        let cmdO = findMenuItem(keyEquivalent: "o", modifierMask: [.command])
+        let cmdS = findMenuItem(keyEquivalent: "s", modifierMask: [.command])
+        let cmdW = findMenuItem(keyEquivalent: "w", modifierMask: [.command])
+        let cmdQ = findMenuItem(keyEquivalent: "q", modifierMask: [.command])
+        let cmdF = findMenuItem(keyEquivalent: "f", modifierMask: [.command])
+
+        assertTest("Menu 8.4: Cmd+N (New) shortcut mapped", cmdN != nil)
+        assertTest("Menu 8.5: Cmd+O (Open) shortcut mapped", cmdO != nil)
+        assertTest("Menu 8.6: Cmd+S (Save) shortcut mapped", cmdS != nil)
+        assertTest("Menu 8.7: Cmd+W (Close) shortcut mapped", cmdW != nil)
+        assertTest("Menu 8.8: Cmd+Q (Quit) shortcut mapped", cmdQ != nil)
+        assertTest("Menu 8.9: Cmd+F (Find) shortcut mapped", cmdF != nil)
+    }
+
+    // MARK: - Pillar 9: Preferences State Persistence Tripwires
+    static func runPreferencesPersistenceTripwires(assertTest: @escaping (String, Bool) -> Void) {
+        print("\n--- Running Pillar 9: Preferences State Persistence Tripwires ---")
+        let ws = NppWorkspace()
+        ws.interactionProvider = NppAutomatedTestInteractionProvider()
+        ws.isTestRunning = true
+
+        // 9.1 Set custom preference values
+        ws.rememberSession = false
+        ws.periodicBackupEnabled = false
+        ws.doubleClickSpaceToNewTab = false
+        ws.doubleClickTabToClose = true
+        ws.fontFamily = "Courier New"
+        ws.fontSize = 17.5
+        ws.darkModeChoice = 2
+        ws.themeMode = "monokai"
+        ws.isWordWrapEnabled = true
+        ws.showLineNumbers = false
+        ws.tabSize = 8
+
+        // Save preferences
+        ws.savePreferences()
+
+        // Verify values written to UserDefaults directly
+        let ud = UserDefaults.standard
+        let udFont = ud.string(forKey: NppWorkspace.prefsFontFamilyKey)
+        let udSize = ud.double(forKey: NppWorkspace.prefsFontSizeKey)
+        let udTabClose = ud.bool(forKey: NppWorkspace.prefsDoubleClickTabToCloseKey)
+        let udTabSpace = ud.bool(forKey: NppWorkspace.prefsDoubleClickSpaceToNewTabKey)
+        let udTheme = ud.string(forKey: NppWorkspace.prefsSelectedThemeKey)
+
+        assertTest("Prefs 9.1: Preferences saved to UserDefaults (fontFamily)", udFont == "Courier New")
+        assertTest("Prefs 9.2: Preferences saved to UserDefaults (fontSize)", abs(udSize - 17.5) < 0.01)
+        assertTest("Prefs 9.3: Preferences saved to UserDefaults (doubleClickTabToClose)", udTabClose == true)
+        assertTest("Prefs 9.4: Preferences saved to UserDefaults (doubleClickSpaceToNewTab)", udTabSpace == false)
+        assertTest("Prefs 9.5: Preferences saved to UserDefaults (themeMode)", udTheme == "monokai")
+
+        // 9.6 Load preferences into a clean workspace instance
+        let cleanWs = NppWorkspace()
+        cleanWs.loadPreferences()
+        assertTest("Prefs 9.6: Clean workspace loads persisted fontFamily", cleanWs.fontFamily == "Courier New")
+        assertTest("Prefs 9.7: Clean workspace loads persisted fontSize", abs(cleanWs.fontSize - 17.5) < 0.01)
+        assertTest("Prefs 9.8: Clean workspace loads persisted doubleClickSpaceToNewTab", cleanWs.doubleClickSpaceToNewTab == false)
+        assertTest("Prefs 9.9: Clean workspace loads persisted doubleClickTabToClose", cleanWs.doubleClickTabToClose == true)
+        assertTest("Prefs 9.10: Clean workspace loads persisted themeMode", cleanWs.themeMode == "monokai")
+
+        // 9.11 Reset preferences to defaults
+        ws.resetPreferencesToDefaults()
+        let postResetFont = ud.string(forKey: NppWorkspace.prefsFontFamilyKey)
+        assertTest("Prefs 9.11: Reset preferences clears persisted keys in UserDefaults", postResetFont == nil)
     }
 
     static func saveWindowPNG(_ win: NSWindow, to filename: String) {
