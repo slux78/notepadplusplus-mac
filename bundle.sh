@@ -1,6 +1,30 @@
 #!/bin/bash
 set -e
 
+# Parse command line arguments and environment variables
+CREATE_DMG_FLAG=0
+if [ "${CREATE_DMG:-0}" = "1" ]; then
+    CREATE_DMG_FLAG=1
+fi
+
+for arg in "$@"; do
+    case "$arg" in
+        --dmg|-d)
+            CREATE_DMG_FLAG=1
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--dmg|-d]"
+            echo "  --dmg, -d: Automatically generate a distributable DMG image after bundling"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg" >&2
+            echo "Usage: $0 [--dmg|-d]" >&2
+            exit 1
+            ;;
+    esac
+done
+
 echo "=== Building Notepad++ for Mac (Release) ==="
 swift build -c release
 
@@ -96,4 +120,29 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-echo "=== Notepad++.app successfully built at $APP_DIR ==="
+echo "Sealing application bundle..."
+find "$APP_DIR" -name "._*" -delete 2>/dev/null || true
+xattr -d com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+xattr -dr com.apple.FinderInfo "$APP_DIR" 2>/dev/null || true
+xattr -dr com.apple.ResourceFork "$APP_DIR" 2>/dev/null || true
+xattr -cr "$APP_DIR" 2>/dev/null || true
+xattr -c "$APP_DIR" "$APP_DIR/Contents/Resources/NotepadPlusPlusMac_NotepadPlusPlusMac.bundle" 2>/dev/null || true
+codesign --force --deep --sign - "$APP_DIR"
+xattr -c "$APP_DIR" 2>/dev/null || true
+
+echo "Verifying application bundle signature..."
+codesign --verify --deep --strict "$APP_DIR" 2>/dev/null || codesign --verify --deep "$APP_DIR"
+
+echo "=== Notepad++.app successfully built and signed at $APP_DIR ==="
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "$CREATE_DMG_FLAG" -eq 1 ]; then
+    echo ""
+    echo "=== Invoking DMG creation pipeline ==="
+    "$SCRIPT_DIR/create_dmg.sh"
+else
+    echo ""
+    echo "Notice: Distributable DMG was not generated."
+    echo "To build a distributable DMG, run: ./create_dmg.sh (or ./bundle.sh --dmg)"
+fi
