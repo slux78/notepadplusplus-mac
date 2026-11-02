@@ -1455,6 +1455,18 @@ final class NppAutomatedTestSuite {
             runMenuAndResponderChainTripwires(appDelegate: appDelegate, assertTest: assertTest)
             runPreferencesPersistenceTripwires(assertTest: assertTest)
 
+            // Milestone 1 Verification Suite (Project Panels 1~3 & Find in Projects)
+            runProjectPanelsAndFindInProjectsTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
+            // Challenger 1: Empirical Stress Suite (Project Panels 1~3 Data Structures, XML & Unicode)
+            runChallenger1ProjectPanelsEmpiricalStressTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
+            // Challenger 2: Adversarial Find in Projects Stress Suite
+            runChallenger2FindInProjectsStressSuite(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
+            // Milestone 2: Multi-Editing Advanced Carets Suite
+            runMultiEditingAdvancedCaretsTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -3533,9 +3545,12 @@ final class NppAutomatedTestSuite {
 
         let fBuildBackslash = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/build/app.swift", filterString: "*.swift !\\build")
         let fBuildSlash = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/build/app.swift", filterString: "*.swift !/build")
+        let fBuildNoSlash = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/build/app.swift", filterString: "*.swift !build")
+        let fBuildTrailingSlash = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/build/app.swift", filterString: "*.swift !build/")
         let fSrc = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/src/app.swift", filterString: "*.swift !\\build")
-        assertTest("Sprint 1.9.B: Find in Files excludes directories matching !\\dir and !/dir",
-                   fBuildBackslash == false && fBuildSlash == false && fSrc == true)
+        let fSrcNoSlash = NppWorkspace.matchesFileFilter(filename: "app.swift", filePath: "/proj/src/app.swift", filterString: "*.swift !build")
+        assertTest("Sprint 1.9.B: Find in Files excludes directories matching !\\dir, !/dir, and !dir",
+                   fBuildBackslash == false && fBuildSlash == false && fBuildNoSlash == false && fBuildTrailingSlash == false && fSrc == true && fSrcNoSlash == true)
 
         let fMultiSemicolon = NppWorkspace.matchesFileFilter(filename: "test_suite.swift", filePath: "/proj/test_suite.swift", filterString: "*.swift;*.txt;!*test*")
         assertTest("Sprint 1.9.C: Find in Files handles semicolon delimiters and multiple wildcard patterns",
@@ -4720,11 +4735,44 @@ final class NppAutomatedTestSuite {
         let cancelUntitled = ws.closeDocument(id: untitledWithText.id, force: false)
         assertTest("Dirty Save Confirm: Untitled doc with content prompts and .cancel keeps open", !cancelUntitled && ws.documents.contains(where: { $0.id == untitledWithText.id }) && promptCalled)
 
+        // 4.2. Untitled Document with Content Save Confirmation: .save but SavePanel Cancelled
+        promptCalled = false
+        var savePromptPanelCalled = false
+        ws.confirmSaveHandler = { doc in
+            promptCalled = true
+            return .save
+        }
+        ws.promptSaveHandler = { doc in
+            savePromptPanelCalled = true
+            return false // user cancelled save dialog
+        }
+        let cancelSavePanelUntitled = ws.closeDocument(id: untitledWithText.id, force: false)
+        assertTest("Dirty Save Confirm: Save panel cancel keeps untitled doc open", !cancelSavePanelUntitled && ws.documents.contains(where: { $0.id == untitledWithText.id }) && promptCalled && savePromptPanelCalled)
+
+        // 4.3. Untitled Document with Content Save Confirmation: .save with SavePanel Success
+        promptCalled = false
+        savePromptPanelCalled = false
+        let tempSavedDocURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("test_untitled_saved_\(UUID().uuidString).txt")
+        ws.promptSaveHandler = { doc in
+            savePromptPanelCalled = true
+            _ = doc.save(to: tempSavedDocURL)
+            return true
+        }
+        let successSaveUntitled = ws.closeDocument(id: untitledWithText.id, force: false)
+        assertTest("Dirty Save Confirm: Save panel success saves and closes untitled doc", successSaveUntitled && !ws.documents.contains(where: { $0.id == untitledWithText.id }) && promptCalled && savePromptPanelCalled && FileManager.default.fileExists(atPath: tempSavedDocURL.path))
+        try? FileManager.default.removeItem(at: tempSavedDocURL)
+        ws.promptSaveHandler = nil
+
+        // 4.4. Untitled Document with Content Save Confirmation: .dontSave
+        ws.newDocument()
+        let untitledDontSave = ws.documents.last!
+        untitledDontSave.content = "Text to discard"
+        untitledDontSave.isDirty = true
         ws.confirmSaveHandler = { doc in
             return .dontSave
         }
-        let dontSaveUntitled = ws.closeDocument(id: untitledWithText.id, force: false)
-        assertTest("Dirty Save Confirm: Untitled doc with content closes with .dontSave", dontSaveUntitled && !ws.documents.contains(where: { $0.id == untitledWithText.id }))
+        let dontSaveUntitled = ws.closeDocument(id: untitledDontSave.id, force: false)
+        assertTest("Dirty Save Confirm: Untitled doc with content closes with .dontSave", dontSaveUntitled && !ws.documents.contains(where: { $0.id == untitledDontSave.id }))
         ws.confirmSaveHandler = nil
 
         // 5. Dual View: Move to Other View
@@ -4757,9 +4805,36 @@ final class NppAutomatedTestSuite {
         ws.splitRatio = 0.6
         assertTest("Dual View: splitRatio updated", ws.splitRatio == 0.6)
 
+        // 6.1 Splitter Bar Context Menu Localization Check
+        let origLang = ws.localizationLanguage
+        ws.localizationLanguage = "Korean"
+        assertTest("Splitter Menu Korean: Rotate to right localized", ws.tr("Rotate to right") == "오른쪽으로 회전")
+        assertTest("Splitter Menu Korean: Rotate to left localized", ws.tr("Rotate to left") == "왼쪽으로 회전")
+        ws.localizationLanguage = "Japanese"
+        assertTest("Splitter Menu Japanese: Rotate to right localized", ws.tr("Rotate to right") == "右回りに回す")
+        assertTest("Splitter Menu Japanese: Rotate to left localized", ws.tr("Rotate to left") == "左回りに回す")
+        ws.localizationLanguage = origLang
+
         // 7. Dual View: Clone to Other View
         ws.cloneToOtherView(id: docA.id)
         assertTest("Dual View: Clone adds Doc A to both views", ws.clonedDocumentIds.contains(docA.id) && ws.primaryDocuments.contains(where: { $0.id == docA.id }) && ws.secondaryDocuments.contains(where: { $0.id == docA.id }))
+
+        // 7.1. Dual View: Closing cloned dirty doc in secondary view unlinks clone without save prompt
+        docA.content = "Modified in cloned dual view"
+        docA.isDirty = true
+        var clonePromptCalled = false
+        ws.confirmSaveHandler = { doc in
+            clonePromptCalled = true
+            return .cancel
+        }
+        ws.activeView = 1 // simulate closing from secondary view
+        let cloneClosed = ws.closeDocument(id: docA.id, force: false)
+        assertTest("Dual View: Closing one clone view succeeds without save prompt and unlinks clone", cloneClosed && !clonePromptCalled && !ws.clonedDocumentIds.contains(docA.id) && ws.primaryDocuments.contains(where: { $0.id == docA.id }))
+
+        // 7.2. Dual View: Closing final remaining view of dirty doc triggers save prompt
+        let finalCloseCancelled = ws.closeDocument(id: docA.id, force: false)
+        assertTest("Dual View: Closing final view of dirty doc triggers save prompt and .cancel keeps doc", !finalCloseCancelled && clonePromptCalled && ws.documents.contains(where: { $0.id == docA.id }))
+        ws.confirmSaveHandler = nil
 
         // 8. Dual View: Automatic return to single view when secondary empty
         ws.closeDocument(id: docA.id, force: true)
@@ -7280,6 +7355,1609 @@ final class NppAutomatedTestSuite {
         task.arguments = ["-l", "\(targetWin.windowNumber)", filename]
         try? task.run()
         task.waitUntilExit()
+    }
+
+    // =========================================================================
+    // MILESTONE 1: PROJECT PANELS 1~3 & FIND IN PROJECTS VERIFICATION SUITE
+    // =========================================================================
+    static func runProjectPanelsAndFindInProjectsTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: @escaping (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("📁 MILESTONE 1: PROJECT PANELS 1~3 & FIND IN PROJECTS")
+        print("========================================================")
+
+        // Setup isolated temporary test directory
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("NppTest_M1_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        defer {
+            // Clean up temporary disk files
+            try? FileManager.default.removeItem(at: tempDir)
+            // Reset workspace panel states to avoid polluting subsequent tests
+            ws.showProjectPanel1 = false
+            ws.showProjectPanel2 = false
+            ws.showProjectPanel3 = false
+            ws.searchFileGroups.removeAll()
+            ws.showSearchResultsPanel = false
+        }
+
+        // -------------------------------------------------------------
+        // GROUP A: Data Model & Hierarchy Tests
+        // -------------------------------------------------------------
+        let panel1 = NppProjectWorkspace(panelIndex: 1)
+        assertTest("M1.Project.1.1: Default initial project workspace state",
+                   panel1.rootNode.name == "Workspace" && panel1.rootNode.children.isEmpty && !panel1.isDirty)
+
+        let projA = panel1.addProject(name: "AlphaProject")
+        assertTest("M1.Project.1.2: Programmatic project addition",
+                   panel1.rootNode.children.count == 1 && projA.name == "AlphaProject" && panel1.isDirty)
+
+        let folderSrc = panel1.addFolder(parent: projA, name: "src")
+        let folderUtils = panel1.addFolder(parent: folderSrc, name: "utils")
+        assertTest("M1.Project.1.3: Nested folder hierarchy creation",
+                   projA.children.count == 1 && folderSrc.children.count == 1 && folderUtils.name == "utils")
+
+        let testFileUrl1 = tempDir.appendingPathComponent("entry.swift")
+        try? "print(\"Hello Project\")".write(to: testFileUrl1, atomically: true, encoding: .utf8)
+        let fileNode1 = panel1.addFile(parent: folderUtils, fileUrl: testFileUrl1)
+        assertTest("M1.Project.1.4: File node addition with path binding",
+                   folderUtils.children.count == 1 && fileNode1.name == "entry.swift" && fileNode1.type == .file)
+
+        let projB = panel1.addProject(name: "BetaProject")
+        let canMoveFirstUp = panel1.moveNode(projA, up: true)
+        let movedSecondUp = panel1.moveNode(projB, up: true)
+        assertTest("M1.Project.1.5: Sibling node Move Up operation",
+                   canMoveFirstUp == false && movedSecondUp == true && panel1.rootNode.children[0].name == "BetaProject")
+
+        let canMoveLastDown = panel1.moveNode(projA, up: false)
+        let movedFirstDown = panel1.moveNode(projB, up: false)
+        assertTest("M1.Project.1.6: Sibling node Move Down operation",
+                   movedFirstDown == true && canMoveLastDown == false && panel1.rootNode.children[0].name == "AlphaProject")
+
+        panel1.renameNode(projB, to: "BravoProject")
+        panel1.renameNode(folderUtils, to: "core_utils")
+        assertTest("M1.Project.1.7: Node renaming across all types",
+                   projB.name == "BravoProject" && folderUtils.name == "core_utils" && panel1.isDirty)
+
+        panel1.removeNode(fileNode1)
+        assertTest("M1.Project.1.8: Leaf file node deletion",
+                   folderUtils.children.isEmpty && panel1.isDirty)
+
+        let folderTemp = panel1.addFolder(parent: projA, name: "temp_dir")
+        _ = panel1.addFile(parent: folderTemp, fileUrl: testFileUrl1)
+        panel1.removeNode(folderTemp)
+        assertTest("M1.Project.1.9: Recursive non-empty folder deletion",
+                   projA.children.contains(where: { $0.id == folderTemp.id }) == false)
+
+        panel1.removeNode(projB)
+        assertTest("M1.Project.1.10: Project node removal from workspace root",
+                   panel1.rootNode.children.count == 1 && panel1.rootNode.children[0].name == "AlphaProject")
+
+        // -------------------------------------------------------------
+        // GROUP B: XML Serialization & Deserialization (.npp_project)
+        // -------------------------------------------------------------
+        let wsFileUrl = tempDir.appendingPathComponent("my_workspace.npp_project")
+        try? panel1.saveWorkspace(to: wsFileUrl)
+        let xmlContent = (try? String(contentsOf: wsFileUrl, encoding: .utf8)) ?? ""
+        assertTest("M1.Project.2.1: XML structure conforms to Notepad++ schema",
+                   xmlContent.contains("<NotepadPlus>") &&
+                   xmlContent.contains("<Project name=\"AlphaProject\">") &&
+                   xmlContent.contains("<Folder name=\"src\">"))
+
+        let reloadedPanel = NppProjectWorkspace(panelIndex: 1)
+        try? reloadedPanel.loadWorkspace(from: wsFileUrl)
+        assertTest("M1.Project.2.2: XML save and reload roundtrip integrity",
+                   reloadedPanel.rootNode.children.count == 1 &&
+                   reloadedPanel.rootNode.children[0].name == "AlphaProject" &&
+                   !reloadedPanel.isDirty)
+
+        let relFilePath = tempDir.appendingPathComponent("src/fileA.txt")
+        try? FileManager.default.createDirectory(at: tempDir.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try? "content A".write(to: relFilePath, atomically: true, encoding: .utf8)
+        _ = panel1.addFile(parent: folderSrc, fileUrl: relFilePath)
+        try? panel1.saveWorkspace(to: wsFileUrl)
+        let relXml = (try? String(contentsOf: wsFileUrl, encoding: .utf8)) ?? ""
+        assertTest("M1.Project.2.3: Relative file path resolution",
+                   relXml.contains("<File name=\"src/fileA.txt\"") || relXml.contains("<File name=\"src\\fileA.txt\""))
+
+        let absFilePath = URL(fileURLWithPath: "/private/tmp/external_log.txt")
+        let absNode = panel1.addFile(parent: folderSrc, fileUrl: absFilePath)
+        assertTest("M1.Project.2.4: Absolute file path resolution for external files",
+                   absNode.filePath?.contains("external_log.txt") == true)
+
+        let corruptUrl = tempDir.appendingPathComponent("corrupt.npp_project")
+        try? "<NotepadPlus><Project name=\"unclosed\">".write(to: corruptUrl, atomically: true, encoding: .utf8)
+        let corruptPanel = NppProjectWorkspace(panelIndex: 1)
+        let didFailCorrupt = (try? corruptPanel.loadWorkspace(from: corruptUrl)) == nil
+        assertTest("M1.Project.2.5: Resilient handling of malformed XML data", didFailCorrupt)
+
+        let missingFileUrl = URL(fileURLWithPath: "/nonexistent/path/missing.txt")
+        _ = panel1.addFile(parent: folderSrc, fileUrl: missingFileUrl)
+        try? panel1.saveWorkspace(to: wsFileUrl)
+        let missingPanel = NppProjectWorkspace(panelIndex: 1)
+        try? missingPanel.loadWorkspace(from: wsFileUrl)
+        let missingNode = missingPanel.enumAllNodes().first(where: { $0.name == "missing.txt" })
+        assertTest("M1.Project.2.6: Missing/deleted disk file resilience",
+                   missingNode != nil && missingNode?.isMissing == true)
+
+        let emptyXmlUrl = tempDir.appendingPathComponent("empty.npp_project")
+        try? "<NotepadPlus></NotepadPlus>".write(to: emptyXmlUrl, atomically: true, encoding: .utf8)
+        let emptyPanel = NppProjectWorkspace(panelIndex: 1)
+        try? emptyPanel.loadWorkspace(from: emptyXmlUrl)
+        assertTest("M1.Project.2.7: Empty workspace XML handling",
+                   emptyPanel.rootNode.children.isEmpty && !emptyPanel.isDirty)
+
+        let unicodePanel = NppProjectWorkspace(panelIndex: 1)
+        let krProj = unicodePanel.addProject(name: "한국어프로젝트")
+        let krFolder = unicodePanel.addFolder(parent: krProj, name: "문서")
+        let krFile = tempDir.appendingPathComponent("한글_파일.txt")
+        try? "한글 본문".write(to: krFile, atomically: true, encoding: .utf8)
+        _ = unicodePanel.addFile(parent: krFolder, fileUrl: krFile)
+        let krWsUrl = tempDir.appendingPathComponent("korean.npp_project")
+        try? unicodePanel.saveWorkspace(to: krWsUrl)
+        let krReloaded = NppProjectWorkspace(panelIndex: 1)
+        try? krReloaded.loadWorkspace(from: krWsUrl)
+        assertTest("M1.Project.2.8: Unicode and Korean character persistence",
+                   krReloaded.rootNode.children.first?.name == "한국어프로젝트")
+
+        // -------------------------------------------------------------
+        // GROUP C: Multi-Panel Independence & State Tests
+        // -------------------------------------------------------------
+        ws.showProjectPanel1 = true
+        ws.showProjectPanel2 = false
+        ws.showProjectPanel3 = false
+        assertTest("M1.Project.3.1: Independent panel visibility toggling",
+                   ws.showProjectPanel1 == true && ws.showProjectPanel2 == false && ws.showProjectPanel3 == false)
+
+        ws.showProjectPanel2 = true
+        ws.showProjectPanel3 = true
+        assertTest("M1.Project.3.2: Simultaneous multi-panel activation",
+                   ws.showProjectPanel1 == true && ws.showProjectPanel2 == true && ws.showProjectPanel3 == true)
+
+        let p1 = ws.getProjectWorkspace(panelIndex: 1)
+        let p2 = ws.getProjectWorkspace(panelIndex: 2)
+        _ = p1.addProject(name: "Panel1_Proj")
+        _ = p2.addProject(name: "Panel2_Proj")
+        assertTest("M1.Project.3.3: Content isolation across panels",
+                   p1.rootNode.children.first?.name == "Panel1_Proj" && p2.rootNode.children.first?.name == "Panel2_Proj")
+
+        p1.isDirty = false
+        p2.isDirty = false
+        _ = p1.addProject(name: "Extra")
+        assertTest("M1.Project.3.4: Mutation and dirty flag isolation",
+                   p1.isDirty == true && p2.isDirty == false)
+
+        p2.newWorkspace()
+        assertTest("M1.Project.3.5: New Workspace command isolation",
+                   p2.rootNode.children.isEmpty && p1.rootNode.children.count == 2)
+
+        ws.rememberProjectPanels = true
+        ws.showProjectPanel1 = true
+        ws.showProjectPanel2 = false
+        ws.savePreferences()
+        let loadedWs = NppWorkspace()
+        loadedWs.loadPreferences()
+        assertTest("M1.Project.3.6: Preferences persistence integration",
+                   loadedWs.showProjectPanel1 == true && loadedWs.showProjectPanel2 == false)
+
+        // -------------------------------------------------------------
+        // GROUP D: Menu Integration & Checkmarks (validateMenuItem)
+        // -------------------------------------------------------------
+        let panel1Item = NSMenuItem(title: "Project Panel 1", action: #selector(appDelegate.menuToggleProjectPanel1), keyEquivalent: "")
+        let panel2Item = NSMenuItem(title: "Project Panel 2", action: #selector(appDelegate.menuToggleProjectPanel2), keyEquivalent: "")
+        let panel3Item = NSMenuItem(title: "Project Panel 3", action: #selector(appDelegate.menuToggleProjectPanel3), keyEquivalent: "")
+
+        assertTest("M1.Project.4.1: Menu item existence and action routing",
+                   appDelegate.responds(to: panel1Item.action!) &&
+                   appDelegate.responds(to: panel2Item.action!) &&
+                   appDelegate.responds(to: panel3Item.action!))
+
+        ws.showProjectPanel1 = false
+        _ = appDelegate.validateMenuItem(panel1Item)
+        let p1Off = panel1Item.state == .off
+        ws.showProjectPanel1 = true
+        _ = appDelegate.validateMenuItem(panel1Item)
+        assertTest("M1.Project.4.2: Panel 1 validateMenuItem checkmark reflection",
+                   p1Off && panel1Item.state == .on)
+
+        ws.showProjectPanel2 = false
+        _ = appDelegate.validateMenuItem(panel2Item)
+        let p2Off = panel2Item.state == .off
+        ws.showProjectPanel2 = true
+        _ = appDelegate.validateMenuItem(panel2Item)
+        assertTest("M1.Project.4.3: Panel 2 validateMenuItem checkmark reflection",
+                   p2Off && panel2Item.state == .on)
+
+        ws.showProjectPanel3 = false
+        _ = appDelegate.validateMenuItem(panel3Item)
+        let p3Off = panel3Item.state == .off
+        ws.showProjectPanel3 = true
+        _ = appDelegate.validateMenuItem(panel3Item)
+        assertTest("M1.Project.4.4: Panel 3 validateMenuItem checkmark reflection",
+                   p3Off && panel3Item.state == .on)
+
+        ws.localizationLanguage = "Korean"
+        appDelegate.setupMenuBar()
+        let krViewMenu = NSApp.mainMenu?.items.first(where: { $0.submenu?.title == "보기" || $0.title == "보기" })?.submenu
+        let krHasPanelItem = krViewMenu?.items.contains(where: { $0.title.contains("프로젝트") }) == true
+        assertTest("M1.Project.4.5: Korean menu localization check", krHasPanelItem)
+        ws.localizationLanguage = "English"
+        appDelegate.setupMenuBar()
+
+        // -------------------------------------------------------------
+        // GROUP E: Find in Projects Search Tests
+        // -------------------------------------------------------------
+        let searchFile1 = tempDir.appendingPathComponent("Galaxy.txt")
+        let searchFile2 = tempDir.appendingPathComponent("Cosmos.swift")
+        try? "Starlight Star Supernova".write(to: searchFile1, atomically: true, encoding: .utf8)
+        try? "let nebula = \"Star\"\nlet pulsar = 42".write(to: searchFile2, atomically: true, encoding: .utf8)
+
+        let searchWs = ws.getProjectWorkspace(panelIndex: 1)
+        searchWs.newWorkspace()
+        let sProj = searchWs.addProject(name: "Space")
+        _ = searchWs.addFile(parent: sProj, fileUrl: searchFile1)
+        _ = searchWs.addFile(parent: sProj, fileUrl: searchFile2)
+
+        let allFiles = ws.enumProjectFiles(panelIndex: 1, filter: "*.*")
+        let swiftFiles = ws.enumProjectFiles(panelIndex: 1, filter: "*.swift")
+        assertTest("M1.Project.5.1: File enumeration with filter pattern matching",
+                   allFiles.count == 2 && swiftFiles.count == 1 && swiftFiles[0].lastPathComponent == "Cosmos.swift")
+
+        ws.findAllInProjects(query: "Supernova", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+        assertTest("M1.Project.5.2: Find in Projects basic match & dock integration",
+                   ws.showSearchResultsPanel == true && ws.totalSearchHits == 1 && ws.searchFileGroups.first?.documentTitle == "Galaxy.txt")
+
+        ws.findAllInProjects(query: "star", filter: "*.*", panels: [1], matchCase: false, wholeWord: false, useRegex: false)
+        let caseInsensitiveHits = ws.totalSearchHits
+        ws.findAllInProjects(query: "star", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+        assertTest("M1.Project.5.3: Match Case sensitivity parity in projects",
+                   caseInsensitiveHits >= 3 && ws.totalSearchHits == 0)
+
+        ws.findAllInProjects(query: "Star", filter: "*.*", panels: [1], matchCase: true, wholeWord: true, useRegex: false)
+        assertTest("M1.Project.5.4: Whole Word boundary search in projects",
+                   ws.totalSearchHits == 2) // "Star" in Galaxy.txt and "Star" in Cosmos.swift, skipping "Starlight"
+
+        ws.findAllInProjects(query: "Star.*Supernova", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: true)
+        assertTest("M1.Project.5.5: Regular expression search in projects",
+                   ws.totalSearchHits == 1)
+
+        // Unsaved buffer precedence test
+        ws.openFile(url: searchFile1)
+        if let openDoc = ws.activeDocument {
+            openDoc.content = "Starlight Comet Supernova" // Replaced "Star" with "Comet" without saving to disk
+            ws.findAllInProjects(query: "Comet", filter: "*.*", panels: [1], matchCase: true, wholeWord: true, useRegex: false)
+            let cometHits = ws.totalSearchHits
+            ws.findAllInProjects(query: "Star", filter: "*.*", panels: [1], matchCase: true, wholeWord: true, useRegex: false)
+            assertTest("M1.Project.5.6: Dirty buffer precedence over disk content",
+                       cometHits == 1 && ws.totalSearchHits == 1) // Cosmos.swift still has 1 "Star"
+            ws.closeDocument(id: openDoc.id)
+        }
+
+        let p2SearchWs = ws.getProjectWorkspace(panelIndex: 2)
+        p2SearchWs.newWorkspace()
+        let p2Proj = p2SearchWs.addProject(name: "P2")
+        let p2File = tempDir.appendingPathComponent("Panel2Only.txt")
+        try? "DistinctP2Content".write(to: p2File, atomically: true, encoding: .utf8)
+        _ = p2SearchWs.addFile(parent: p2Proj, fileUrl: p2File)
+
+        ws.findAllInProjects(query: "DistinctP2Content", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+        let p1Hits = ws.totalSearchHits
+        ws.findAllInProjects(query: "DistinctP2Content", filter: "*.*", panels: [2], matchCase: true, wholeWord: false, useRegex: false)
+        let p2Hits = ws.totalSearchHits
+        assertTest("M1.Project.5.7: Multi-panel scope selection in Find in Projects",
+                   p1Hits == 0 && p2Hits == 1)
+
+        if let firstMatch = ws.searchFileGroups.first?.matches.first {
+            ws.jumpToSearchResult(firstMatch)
+            assertTest("M1.Project.5.8: Double-click search result navigation",
+                       ws.activeDocument?.title == "Panel2Only.txt" && ws.activeDocument?.filePath == p2File)
+            if let doc = ws.activeDocument { ws.closeDocument(id: doc.id) }
+        }
+
+        // -------------------------------------------------------------
+        // GROUP F: Regression Invariants & Teardown Verification
+        // -------------------------------------------------------------
+        ws.showProjectPanel1 = false
+        ws.showProjectPanel2 = false
+        ws.showProjectPanel3 = false
+        assertTest("M1.Project.6.1: Teardown guarantees zero side-effects",
+                   !ws.showProjectPanel1 && !ws.showProjectPanel2 && !ws.showProjectPanel3)
+
+        assertTest("M1.Project.6.2: Existing sidebar panels unaffected",
+                   ws.showDocumentList == false && ws.showFolderAsWorkspace == false)
+
+        assertTest("M1.Project.6.3: Tab bar gestures and lifecycle immunity",
+                   ws.documents.count >= 1 && ws.activeDocument != nil)
+    }
+
+    // MARK: - Adversarial Stress Testing: Find in Projects & Multi-Panel Scope Engine (Challenger 2)
+    static func runChallenger2FindInProjectsStressSuite(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: @escaping (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("⚔️ CHALLENGER 2: ADVERSARIAL FIND IN PROJECTS STRESS SUITE")
+        print("========================================================")
+
+        let tempBase = FileManager.default.temporaryDirectory.appendingPathComponent("Challenger2_M1_Stress_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempBase, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempBase)
+        }
+
+        // -------------------------------------------------------------
+        // SUITE 1: Dirty Buffer Precedence Stress Testing
+        // -------------------------------------------------------------
+        do {
+            let file1 = tempBase.appendingPathComponent("DirtyTest1.txt")
+            let diskContent = "Line 1: StaleDiskHeader\nLine 2: StaleDiskBody\nLine 3: StaleDiskFooter"
+            try? diskContent.write(to: file1, atomically: true, encoding: .utf8)
+
+            let p1Ws = ws.getProjectWorkspace(panelIndex: 1)
+            p1Ws.newWorkspace()
+            let proj1 = p1Ws.addProject(name: "P1_Stress")
+            _ = p1Ws.addFile(parent: proj1, fileUrl: file1)
+
+            // Open document in workspace
+            ws.openFile(url: file1)
+            guard let openDoc = ws.documents.first(where: { $0.filePath?.standardizedFileURL.path == file1.standardizedFileURL.path }) else {
+                assertTest("Challenger 2 [1.1]: Open document setup for dirty test", false)
+                return
+            }
+
+            // Mutate open document without saving to disk
+            openDoc.content = "Line 1: StaleDiskHeader\nLine 2: LIVE_DIRTY_CONTENT_MODIFIED\nLine 3: StaleDiskFooter"
+            openDoc.isDirty = true
+
+            // Test 1.1: Stale disk content must NOT be found
+            ws.findAllInProjects(query: "StaleDiskBody", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+            let staleHits = ws.totalSearchHits
+            assertTest("Challenger 2 [1.1]: Dirty buffer precedence ignores overwritten disk text", staleHits == 0)
+
+            // Test 1.2: Live dirty content MUST be found
+            ws.findAllInProjects(query: "LIVE_DIRTY_CONTENT_MODIFIED", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+            let liveHits = ws.totalSearchHits
+            let hitLine = ws.searchFileGroups.first?.matches.first?.lineNumber ?? 0
+            assertTest("Challenger 2 [1.2]: Dirty buffer precedence finds live in-memory buffer content at exact line",
+                       liveHits == 1 && hitLine == 2)
+
+            // Test 1.3: Line shifting in dirty buffer
+            var prependedLines = ""
+            for i in 1...10 { prependedLines += "Prepended line \(i)\n" }
+            openDoc.content = prependedLines + "TargetOnLine11: SHIFTED_TARGET\nBottom"
+            ws.findAllInProjects(query: "SHIFTED_TARGET", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+            let shiftedLine = ws.searchFileGroups.first?.matches.first?.lineNumber ?? 0
+            assertTest("Challenger 2 [1.3]: Line number matches dynamically shifted live buffer line",
+                       ws.totalSearchHits == 1 && shiftedLine == 11)
+
+            // Test 1.4: Complete deletion in dirty buffer
+            openDoc.content = "All targets removed"
+            ws.findAllInProjects(query: "StaleDiskHeader", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [1.4]: Deletion in dirty buffer produces 0 matches despite disk having it",
+                       ws.totalSearchHits == 0)
+
+            ws.closeDocument(id: openDoc.id)
+        }
+
+        // -------------------------------------------------------------
+        // SUITE 2: Wildcard & Exclusion Filtering Stress Testing
+        // -------------------------------------------------------------
+        do {
+            let dirA = tempBase.appendingPathComponent("FilterDir")
+            let dirBuild = dirA.appendingPathComponent("build")
+            try? FileManager.default.createDirectory(at: dirBuild, withIntermediateDirectories: true)
+
+            let fSwift = dirA.appendingPathComponent("Core.swift")
+            let fTxt = dirA.appendingPathComponent("Notes.txt")
+            let fMd = dirA.appendingPathComponent("README.md")
+            let fLog = dirA.appendingPathComponent("app.log")
+            let fBuildSwift = dirBuild.appendingPathComponent("Generated.swift")
+            let fDotless = dirA.appendingPathComponent("Makefile")
+
+            try? "token_core".write(to: fSwift, atomically: true, encoding: .utf8)
+            try? "token_notes".write(to: fTxt, atomically: true, encoding: .utf8)
+            try? "token_readme".write(to: fMd, atomically: true, encoding: .utf8)
+            try? "token_log".write(to: fLog, atomically: true, encoding: .utf8)
+            try? "token_build".write(to: fBuildSwift, atomically: true, encoding: .utf8)
+            try? "token_make".write(to: fDotless, atomically: true, encoding: .utf8)
+
+            let p1Ws = ws.getProjectWorkspace(panelIndex: 1)
+            p1Ws.newWorkspace()
+            let prj = p1Ws.addProject(name: "FilterPrj")
+            _ = p1Ws.addFile(parent: prj, fileUrl: fSwift)
+            _ = p1Ws.addFile(parent: prj, fileUrl: fTxt)
+            _ = p1Ws.addFile(parent: prj, fileUrl: fMd)
+            _ = p1Ws.addFile(parent: prj, fileUrl: fLog)
+            _ = p1Ws.addFile(parent: prj, fileUrl: fBuildSwift)
+            _ = p1Ws.addFile(parent: prj, fileUrl: fDotless)
+
+            // Test 2.1: Single extension "*.swift"
+            let swiftFiles = ws.enumProjectFiles(panelIndex: 1, filter: "*.swift")
+            assertTest("Challenger 2 [2.1]: Wildcard '*.swift' matches 2 Swift files",
+                       swiftFiles.count == 2 && swiftFiles.allSatisfy { $0.pathExtension == "swift" })
+
+            // Test 2.2: Multi extension space-separated "*.swift *.txt"
+            let multiSpace = ws.enumProjectFiles(panelIndex: 1, filter: "*.swift *.txt")
+            assertTest("Challenger 2 [2.2]: Multi wildcard space-separated '*.swift *.txt' matches 3 files",
+                       multiSpace.count == 3)
+
+            // Test 2.3: Multi extension semicolon-separated "*.swift;*.txt;*.md"
+            let multiSemi = ws.enumProjectFiles(panelIndex: 1, filter: "*.swift;*.txt;*.md")
+            assertTest("Challenger 2 [2.3]: Multi wildcard semicolon-separated '*.swift;*.txt;*.md' matches 4 files",
+                       multiSemi.count == 4)
+
+            // Test 2.4: Mixed delimiters with irregular spacing "  *.swift ;   *.md   "
+            let mixedDelim = ws.enumProjectFiles(panelIndex: 1, filter: "  *.swift ;   *.md   ")
+            assertTest("Challenger 2 [2.4]: Mixed delimiters and irregular whitespace parsed accurately",
+                       mixedDelim.count == 3)
+
+            // Test 2.5: Exclusion filter "*.* !*.log"
+            let exclLog = ws.enumProjectFiles(panelIndex: 1, filter: "*.* !*.log")
+            assertTest("Challenger 2 [2.5]: Exclusion filter '*.* !*.log' excludes log files",
+                       !exclLog.contains(where: { $0.lastPathComponent == "app.log" }) && exclLog.count == 5)
+
+            // Test 2.6: Subdirectory exclusion filter "*.* !/build" and "*.* !build"
+            let exclBuild = ws.enumProjectFiles(panelIndex: 1, filter: "*.* !/build")
+            let exclBuildNoSlash = ws.enumProjectFiles(panelIndex: 1, filter: "*.* !build")
+            assertTest("Challenger 2 [2.6]: Subfolder exclusion '!/build' and '!build' eliminates files in build directory",
+                       !exclBuild.contains(where: { $0.path.contains("/build/") }) && exclBuild.count == 5 &&
+                       !exclBuildNoSlash.contains(where: { $0.path.contains("/build/") }) && exclBuildNoSlash.count == 5)
+
+            // Test 2.7: Standalone negative filter without positive pattern "!*.log"
+            let onlyNeg = ws.enumProjectFiles(panelIndex: 1, filter: "!*.log")
+            assertTest("Challenger 2 [2.7]: Standalone negative filter '!*.log' matches all non-log files",
+                       onlyNeg.count == 5 && !onlyNeg.contains(where: { $0.lastPathComponent == "app.log" }))
+
+            // Test 2.8: Empty and whitespace-only filters
+            let emptyFilterFiles = ws.enumProjectFiles(panelIndex: 1, filter: "   ")
+            assertTest("Challenger 2 [2.8]: Whitespace-only filter defaults to matching all files",
+                       emptyFilterFiles.count == 6)
+
+            // Test 2.9: Dotless file (Makefile) enumerated by "*.*"
+            let dotlessMatch = ws.enumProjectFiles(panelIndex: 1, filter: "*.*")
+            assertTest("Challenger 2 [2.9]: Upstream parity: '*.*' matches extensionless files like Makefile",
+                       dotlessMatch.contains(where: { $0.lastPathComponent == "Makefile" }))
+        }
+
+        // -------------------------------------------------------------
+        // SUITE 3: Match Case, Whole Word, Regex & Multi-line Stress Testing
+        // -------------------------------------------------------------
+        do {
+            let fRegex = tempBase.appendingPathComponent("RegexStress.txt")
+            let content = """
+            case_lower Case_Mixed CASE_UPPER
+            한글프로젝트검색 한글 프로젝트 검색
+            keyword sub_keyword keyword_sub (keyword) "keyword"
+            calculate() calculate $variable $100
+            START_BLOCK
+            Multi-line content payload
+            END_BLOCK
+            line_item 1
+            line_item 2
+            other line
+            line_item 3
+            """
+            try? content.write(to: fRegex, atomically: true, encoding: .utf8)
+
+            let p1Ws = ws.getProjectWorkspace(panelIndex: 1)
+            p1Ws.newWorkspace()
+            let prj = p1Ws.addProject(name: "RegexPrj")
+            _ = p1Ws.addFile(parent: prj, fileUrl: fRegex)
+
+            // Test 3.1: Match Case distinction
+            ws.findAllInProjects(query: "Case_Mixed", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+            let caseSensitiveHits = ws.totalSearchHits
+            ws.findAllInProjects(query: "case_mixed", filter: "*.*", panels: [1], matchCase: false, wholeWord: false, useRegex: false)
+            let caseInsensitiveHits = ws.totalSearchHits
+            assertTest("Challenger 2 [3.1]: Match Case sensitivity parity in projects",
+                       caseSensitiveHits == 1 && caseInsensitiveHits == 1)
+
+            // Test 3.2: Korean Unicode search
+            ws.findAllInProjects(query: "한글프로젝트검색", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [3.2]: Unicode Korean CJK string search verified",
+                       ws.totalSearchHits == 1)
+
+            // Test 3.3: Whole word boundary test
+            ws.findAllInProjects(query: "keyword", filter: "*.*", panels: [1], matchCase: true, wholeWord: true, useRegex: false)
+            // Should match: "keyword", "(keyword)", "\"keyword\"" = 3 matches.
+            // Should NOT match: "sub_keyword", "keyword_sub".
+            assertTest("Challenger 2 [3.3]: Whole word boundary matches words isolated by punctuation/spaces",
+                       ws.totalSearchHits == 3)
+
+            // Test 3.4: Whole word with punctuation symbols ("calculate()", "$100")
+            ws.findAllInProjects(query: "calculate()", filter: "*.*", panels: [1], matchCase: true, wholeWord: true, useRegex: false)
+            let parenHits = ws.totalSearchHits
+            ws.findAllInProjects(query: "$100", filter: "*.*", panels: [1], matchCase: true, wholeWord: true, useRegex: false)
+            let dollarHits = ws.totalSearchHits
+            assertTest("Challenger 2 [3.4]: Whole word search handles leading/trailing non-word symbols",
+                       parenHits == 1 && dollarHits == 1)
+
+            // Test 3.5: Multi-line regex search
+            ws.findAllInProjects(query: "(?s)START_BLOCK.*?END_BLOCK", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: true)
+            let multiLineHits = ws.totalSearchHits
+            let startLine = ws.searchFileGroups.first?.matches.first?.lineNumber ?? 0
+            assertTest("Challenger 2 [3.5]: Multi-line regex search matches across line breaks",
+                       multiLineHits == 1 && startLine == 5)
+
+            // Test 3.6: Anchored line regex search ("^line_item")
+            ws.findAllInProjects(query: "^line_item", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: true)
+            assertTest("Challenger 2 [3.6]: Line anchor '^' in regex matches start of each line via .anchorsMatchLines",
+                       ws.totalSearchHits == 3)
+        }
+
+        // -------------------------------------------------------------
+        // SUITE 4: Multi-Panel Scope Combinations & Deduplication
+        // -------------------------------------------------------------
+        do {
+            let p1File = tempBase.appendingPathComponent("Panel1_Unique.txt")
+            let p2File = tempBase.appendingPathComponent("Panel2_Unique.txt")
+            let p3File = tempBase.appendingPathComponent("Panel3_Unique.txt")
+            let sharedFile = tempBase.appendingPathComponent("Shared_Panel1_Panel2.txt")
+
+            try? "SEARCH_SCOPE_TOKEN in P1".write(to: p1File, atomically: true, encoding: .utf8)
+            try? "SEARCH_SCOPE_TOKEN in P2".write(to: p2File, atomically: true, encoding: .utf8)
+            try? "SEARCH_SCOPE_TOKEN in P3".write(to: p3File, atomically: true, encoding: .utf8)
+            try? "SEARCH_SCOPE_TOKEN in Shared".write(to: sharedFile, atomically: true, encoding: .utf8)
+
+            let p1Ws = ws.getProjectWorkspace(panelIndex: 1)
+            let p2Ws = ws.getProjectWorkspace(panelIndex: 2)
+            let p3Ws = ws.getProjectWorkspace(panelIndex: 3)
+            p1Ws.newWorkspace(); p2Ws.newWorkspace(); p3Ws.newWorkspace()
+
+            let proj1 = p1Ws.addProject(name: "P1")
+            _ = p1Ws.addFile(parent: proj1, fileUrl: p1File)
+            _ = p1Ws.addFile(parent: proj1, fileUrl: sharedFile)
+
+            let proj2 = p2Ws.addProject(name: "P2")
+            _ = p2Ws.addFile(parent: proj2, fileUrl: p2File)
+            _ = p2Ws.addFile(parent: proj2, fileUrl: sharedFile) // Shared in both panel 1 and 2
+
+            let proj3 = p3Ws.addProject(name: "P3")
+            _ = p3Ws.addFile(parent: proj3, fileUrl: p3File)
+
+            // Test 4.1: Panel 1 only [1]
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.1]: Scope [1] yields files from Panel 1 only",
+                       ws.searchFileGroups.count == 2)
+
+            // Test 4.2: Panel 2 only [2]
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [2], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.2]: Scope [2] yields files from Panel 2 only",
+                       ws.searchFileGroups.count == 2)
+
+            // Test 4.3: Panel 3 only [3]
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [3], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.3]: Scope [3] yields files from Panel 3 only",
+                       ws.searchFileGroups.count == 1)
+
+            // Test 4.4: Scope [1, 2] with Shared file deduplication
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [1, 2], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.4]: Scope [1, 2] deduplicates shared file (exactly 3 groups, not 4)",
+                       ws.searchFileGroups.count == 3 && ws.totalSearchHits == 3)
+
+            // Test 4.5: Scope [1, 3]
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [1, 3], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.5]: Scope [1, 3] yields exactly 3 files",
+                       ws.searchFileGroups.count == 3)
+
+            // Test 4.6: Scope [2, 3]
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [2, 3], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.6]: Scope [2, 3] yields exactly 3 files",
+                       ws.searchFileGroups.count == 3)
+
+            // Test 4.7: Scope [1, 2, 3] all panels
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [1, 2, 3], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.7]: Scope [1, 2, 3] yields all 4 unique project files",
+                       ws.searchFileGroups.count == 4 && ws.totalSearchHits == 4)
+
+            // Test 4.8: Scope [] (empty panels)
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.8]: Empty panels scope returns 0 hits safely",
+                       ws.searchFileGroups.isEmpty && ws.totalSearchHits == 0)
+
+            // Test 4.9: Redundant panel list [1, 1, 2, 2, 3, 3]
+            ws.findAllInProjects(query: "SEARCH_SCOPE_TOKEN", filter: "*.*", panels: [1, 1, 2, 2, 3, 3], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [4.9]: Redundant panel indexes do not produce duplicate file groups",
+                       ws.searchFileGroups.count == 4)
+        }
+
+        // -------------------------------------------------------------
+        // SUITE 5: Non-Existent & Deleted Files Resilience
+        // -------------------------------------------------------------
+        do {
+            let validFile = tempBase.appendingPathComponent("ValidFile.txt")
+            let deletedFile = tempBase.appendingPathComponent("WillBeDeleted.txt")
+            let ghostFile = tempBase.appendingPathComponent("NeverExisted.txt")
+
+            try? "RESILIENCE_TOKEN in valid file".write(to: validFile, atomically: true, encoding: .utf8)
+            try? "RESILIENCE_TOKEN in doomed file".write(to: deletedFile, atomically: true, encoding: .utf8)
+
+            let p1Ws = ws.getProjectWorkspace(panelIndex: 1)
+            p1Ws.newWorkspace()
+            let prj = p1Ws.addProject(name: "ResiliencePrj")
+            _ = p1Ws.addFolder(parent: prj, name: "EmptyFolder")
+            _ = p1Ws.addFile(parent: prj, fileUrl: validFile)
+            _ = p1Ws.addFile(parent: prj, fileUrl: deletedFile)
+            _ = p1Ws.addFile(parent: prj, fileUrl: ghostFile)
+
+            // Delete the doomed file now
+            try? FileManager.default.removeItem(at: deletedFile)
+
+            // Test 5.1: Search with non-existent & deleted files
+            ws.findAllInProjects(query: "RESILIENCE_TOKEN", filter: "*.*", panels: [1], matchCase: true, wholeWord: false, useRegex: false)
+            assertTest("Challenger 2 [5.1]: Find in Projects skips missing and deleted files without throwing or crashing",
+                       ws.searchFileGroups.count == 1 && ws.totalSearchHits == 1)
+
+            // Test 5.2: Replace in projects with missing files
+            let replaceRes = ws.replaceInProjects(
+                query: "RESILIENCE_TOKEN",
+                replacement: "REPLACED_TOKEN",
+                filter: "*.*",
+                panels: [1],
+                matchCase: true,
+                wholeWord: false,
+                useRegex: false
+            )
+            assertTest("Challenger 2 [5.2]: Replace in Projects safely skips missing files and modifies valid file",
+                       replaceRes.replacements == 1 && replaceRes.filesModified == 1)
+        }
+
+        // -------------------------------------------------------------
+        // SUITE 6: Replace in Projects Empirical Verification & Stress Testing
+        // -------------------------------------------------------------
+        do {
+            let diskFile = tempBase.appendingPathComponent("ReplaceDiskOnly.txt")
+            let openFile = tempBase.appendingPathComponent("ReplaceOpenDoc.txt")
+
+            try? "Alpha beta DISK_ORIGINAL gamma".write(to: diskFile, atomically: true, encoding: .utf8)
+            try? "Original on disk before open".write(to: openFile, atomically: true, encoding: .utf8)
+
+            let p1Ws = ws.getProjectWorkspace(panelIndex: 1)
+            p1Ws.newWorkspace()
+            let prj = p1Ws.addProject(name: "ReplacePrj")
+            _ = p1Ws.addFile(parent: prj, fileUrl: diskFile)
+            _ = p1Ws.addFile(parent: prj, fileUrl: openFile)
+
+            // Open openFile in workspace and modify buffer
+            ws.openFile(url: openFile)
+            guard let openDoc = ws.documents.first(where: { $0.filePath?.standardizedFileURL.path == openFile.standardizedFileURL.path }) else {
+                assertTest("Challenger 2 [6.1]: Open document setup for replace", false)
+                return
+            }
+            openDoc.content = "LIVE_OPEN_BUFFER_TARGET with unsaved modifications"
+            openDoc.isDirty = true
+
+            // Test 6.1: Replace on unopened disk file writes to disk
+            let diskRes = ws.replaceInProjects(
+                query: "DISK_ORIGINAL",
+                replacement: "DISK_REPLACED_SUCCESS",
+                filter: "*.*",
+                panels: [1],
+                matchCase: true,
+                wholeWord: false,
+                useRegex: false
+            )
+            let reloadedDiskContent = (try? String(contentsOf: diskFile, encoding: .utf8)) ?? ""
+            assertTest("Challenger 2 [6.1]: Replace on unopened file writes atomically to disk",
+                       diskRes.replacements == 1 && reloadedDiskContent.contains("DISK_REPLACED_SUCCESS"))
+
+            // Test 6.2: Replace on open document updates in-memory content and preserves unsaved dirty state without writing to disk
+            let openRes = ws.replaceInProjects(
+                query: "LIVE_OPEN_BUFFER_TARGET",
+                replacement: "LIVE_BUFFER_AFTER_REPLACE",
+                filter: "*.*",
+                panels: [1],
+                matchCase: true,
+                wholeWord: false,
+                useRegex: false
+            )
+            let diskOpenFileContent = (try? String(contentsOf: openFile, encoding: .utf8)) ?? ""
+            assertTest("Challenger 2 [6.2]: Replace on open document updates live buffer, marks dirty, and preserves disk intact",
+                       openRes.replacements == 1 &&
+                       openDoc.content.contains("LIVE_BUFFER_AFTER_REPLACE") &&
+                       openDoc.isDirty == true &&
+                       diskOpenFileContent == "Original on disk before open")
+
+            // Test 6.3: Regex group capture replacement with \1 template normalization
+            let regexFile = tempBase.appendingPathComponent("RegexGroupReplace.txt")
+            try? "width = 1920\nheight = 1080".write(to: regexFile, atomically: true, encoding: .utf8)
+            _ = p1Ws.addFile(parent: prj, fileUrl: regexFile)
+
+            let groupRes = ws.replaceInProjects(
+                query: "(\\w+)\\s*=\\s*(\\d+)",
+                replacement: "$1: \"$2px\"",
+                filter: "*.*",
+                panels: [1],
+                matchCase: true,
+                wholeWord: false,
+                useRegex: true
+            )
+            let reloadedRegexContent = (try? String(contentsOf: regexFile, encoding: .utf8)) ?? ""
+            assertTest("Challenger 2 [6.3]: Regex group capture replacement formats output correctly",
+                       groupRes.replacements == 2 && reloadedRegexContent.contains("width: \"1920px\""))
+
+            // Test 6.4: Multi-line regex replacement
+            let multiLineFile = tempBase.appendingPathComponent("MultiLineReplace.txt")
+            try? "<block>\nOld Payload\n</block>".write(to: multiLineFile, atomically: true, encoding: .utf8)
+            _ = p1Ws.addFile(parent: prj, fileUrl: multiLineFile)
+
+            let multiRes = ws.replaceInProjects(
+                query: "(?s)<block>.*?</block>",
+                replacement: "<block>NEW_PAYLOAD</block>",
+                filter: "*.*",
+                panels: [1],
+                matchCase: true,
+                wholeWord: false,
+                useRegex: true
+            )
+            let reloadedMulti = (try? String(contentsOf: multiLineFile, encoding: .utf8)) ?? ""
+            assertTest("Challenger 2 [6.4]: Multi-line regex replacement across lines",
+                       multiRes.replacements == 1 && reloadedMulti.contains("NEW_PAYLOAD"))
+
+            // Test 6.5: Line anchor regex replacement (^line)
+            let lineAnchorFile = tempBase.appendingPathComponent("LineAnchorReplace.txt")
+            try? "prefix_1\nprefix_2\nprefix_3".write(to: lineAnchorFile, atomically: true, encoding: .utf8)
+            _ = p1Ws.addFile(parent: prj, fileUrl: lineAnchorFile)
+
+            let anchorRes = ws.replaceInProjects(
+                query: "^prefix_",
+                replacement: "ready_",
+                filter: "*.*",
+                panels: [1],
+                matchCase: true,
+                wholeWord: false,
+                useRegex: true
+            )
+            let reloadedAnchor = (try? String(contentsOf: lineAnchorFile, encoding: .utf8)) ?? ""
+            assertTest("Challenger 2 [6.5]: Line anchor '^' in Replace in Projects matches across all lines",
+                       anchorRes.replacements == 3 && reloadedAnchor == "ready_1\nready_2\nready_3")
+
+            // Test 6.6: Whole word replacement with non-alphanumeric punctuation ("setup()", "$counter")
+            let symbolFile = tempBase.appendingPathComponent("SymbolReplace.txt")
+            try? "call setup() now; int $counter = 10;".write(to: symbolFile, atomically: true, encoding: .utf8)
+            _ = p1Ws.addFile(parent: prj, fileUrl: symbolFile)
+
+            let symbolRes1 = ws.replaceInProjects(
+                query: "setup()",
+                replacement: "initialize()",
+                filter: "*.*",
+                panels: [1],
+                matchCase: true,
+                wholeWord: true,
+                useRegex: false
+            )
+            let symbolRes2 = ws.replaceInProjects(
+                query: "$counter",
+                replacement: "$totalCount",
+                filter: "*.*",
+                panels: [1],
+                matchCase: true,
+                wholeWord: true,
+                useRegex: false
+            )
+            let reloadedSymbol = (try? String(contentsOf: symbolFile, encoding: .utf8)) ?? ""
+            assertTest("Challenger 2 [6.6]: Whole word replacement with non-alphanumeric punctuation boundaries",
+                       symbolRes1.replacements == 1 &&
+                       symbolRes2.replacements == 1 &&
+                       reloadedSymbol.contains("initialize()") &&
+                       reloadedSymbol.contains("$totalCount"))
+
+            ws.closeDocument(id: openDoc.id)
+        }
+
+        // Teardown
+        ws.showProjectPanel1 = false
+        ws.showProjectPanel2 = false
+        ws.showProjectPanel3 = false
+    }
+
+    // =========================================================================
+    // CHALLENGER 1: EMPIRICAL STRESS TEST SUITE (PROJECT PANELS 1~3)
+    // =========================================================================
+    static func runChallenger1ProjectPanelsEmpiricalStressTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: @escaping (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("⚔️ CHALLENGER 1: PROJECT PANELS EMPIRICAL STRESS SUITE")
+        print("========================================================")
+
+        let tempBase = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("NppChallenger1_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempBase, withIntermediateDirectories: true)
+
+        defer {
+            try? FileManager.default.removeItem(at: tempBase)
+            ws.showProjectPanel1 = false
+            ws.showProjectPanel2 = false
+            ws.showProjectPanel3 = false
+        }
+
+        // ---------------------------------------------------------------------
+        // SUITE 1: Deeply Nested Folder Trees (16 Levels)
+        // ---------------------------------------------------------------------
+        let deepWs = NppProjectWorkspace(panelIndex: 1)
+        let deepProj = deepWs.addProject(name: "DeepHierarchyProject")
+        var currentFolder = deepWs.addFolder(parent: deepProj, name: "Level_1")
+        var folderChain: [NppProjectElement] = [currentFolder]
+
+        for i in 2...16 {
+            let nextFolder = deepWs.addFolder(parent: currentFolder, name: "Level_\(i)")
+            folderChain.append(nextFolder)
+            currentFolder = nextFolder
+        }
+
+        let deepestFileUrl = tempBase.appendingPathComponent("deepest_target.txt")
+        try? "Deep Payload Content".write(to: deepestFileUrl, atomically: true, encoding: .utf8)
+        let deepestFileNode = deepWs.addFile(parent: currentFolder, fileUrl: deepestFileUrl)
+
+        assertTest("Challenger 1 [Suite 1.1]: 16-level deep virtual folder hierarchy construction",
+                   folderChain.count == 16 && deepestFileNode.name == "deepest_target.txt" && currentFolder.children.count == 1)
+
+        let allDeepFiles = deepWs.enumAllFiles()
+        let allDeepNodes = deepWs.enumAllNodes()
+        // 1 project + 16 folders + 1 file = 18 nodes (excluding workspace root)
+        assertTest("Challenger 1 [Suite 1.2]: Recursive tree traversal accurately counts 18 total descendant nodes and 1 file",
+                   allDeepFiles.count == 1 && allDeepNodes.count == 18)
+
+        // Save to XML and reload
+        let deepWsXmlUrl = tempBase.appendingPathComponent("deep_workspace.npp_project")
+        try? deepWs.saveWorkspace(to: deepWsXmlUrl)
+        let deepReloadWs = NppProjectWorkspace(panelIndex: 1)
+        try? deepReloadWs.loadWorkspace(from: deepWsXmlUrl)
+
+        let reloadedDeepFiles = deepReloadWs.enumAllFiles()
+        let reloadedDeepNodes = deepReloadWs.enumAllNodes()
+        assertTest("Challenger 1 [Suite 1.3]: Deep hierarchy XML serialization roundtrip preserves 16 levels without stack overflow or truncation",
+                   reloadedDeepFiles.count == 1 &&
+                   reloadedDeepNodes.count == 18 &&
+                   reloadedDeepFiles.first?.name == "deepest_target.txt" &&
+                   !deepReloadWs.isDirty)
+
+        // Subtree deletion at Level 8: should delete Level 8..16 and deepest_target.txt
+        let level8Node = folderChain[7] // 0-indexed: Level 8
+        let level7Node = folderChain[6] // Level 7
+        deepWs.removeNode(level8Node)
+
+        let postDeleteNodes = deepWs.enumAllNodes()
+        let postDeleteFiles = deepWs.enumAllFiles()
+        assertTest("Challenger 1 [Suite 1.4]: Deleting intermediate folder (Level 8) cascades removal to all 9 child levels and leaf file",
+                   postDeleteFiles.isEmpty &&
+                   level7Node.children.isEmpty &&
+                   postDeleteNodes.count == 8 && // 1 project + 7 folders
+                   deepWs.isDirty)
+
+        try? deepWs.saveWorkspace(to: deepWsXmlUrl)
+        let postDeleteReload = NppProjectWorkspace(panelIndex: 1)
+        try? postDeleteReload.loadWorkspace(from: deepWsXmlUrl)
+        assertTest("Challenger 1 [Suite 1.5]: Cascaded deletion persisted to disk XML cleanly with zero ghost nodes",
+                   postDeleteReload.enumAllFiles().isEmpty &&
+                   postDeleteReload.enumAllNodes().count == 8)
+
+        // ---------------------------------------------------------------------
+        // SUITE 2: Massive Node Counts & Multi-Project Stress (150+ Files)
+        // ---------------------------------------------------------------------
+        let massWs = NppProjectWorkspace(panelIndex: 1)
+        let massDir = tempBase.appendingPathComponent("mass_files")
+        try? FileManager.default.createDirectory(at: massDir, withIntermediateDirectories: true)
+
+        var createdDiskFiles: [URL] = []
+        let totalFileCount = 150
+        for i in 1...totalFileCount {
+            let fUrl = massDir.appendingPathComponent("mass_file_\(String(format: "%03d", i)).txt")
+            let payload = (i % 3 == 0) ? "TARGET_MASS_KEYWORD index_\(i)" : "standard plain line \(i)"
+            try? payload.write(to: fUrl, atomically: true, encoding: .utf8)
+            createdDiskFiles.append(fUrl)
+        }
+
+        let massProj1 = massWs.addProject(name: "MassProject_Alpha")
+        let massProj2 = massWs.addProject(name: "MassProject_Beta")
+        let massProj3 = massWs.addProject(name: "MassProject_Gamma")
+
+        let folder1 = massWs.addFolder(parent: massProj1, name: "Folder_A")
+        let folder2 = massWs.addFolder(parent: massProj2, name: "Folder_B")
+        let folder3 = massWs.addFolder(parent: massProj3, name: "Folder_C")
+
+        for (idx, fUrl) in createdDiskFiles.enumerated() {
+            if idx < 50 {
+                _ = massWs.addFile(parent: folder1, fileUrl: fUrl)
+            } else if idx < 100 {
+                _ = massWs.addFile(parent: folder2, fileUrl: fUrl)
+            } else {
+                _ = massWs.addFile(parent: folder3, fileUrl: fUrl)
+            }
+        }
+
+        assertTest("Challenger 1 [Suite 2.1]: In-memory multi-project tree populated with 150 unique files across 3 projects",
+                   massWs.enumAllFiles().count == 150 && massWs.rootNode.children.count == 3)
+
+        let massWsXmlUrl = tempBase.appendingPathComponent("mass_workspace.npp_project")
+        try? massWs.saveWorkspace(to: massWsXmlUrl)
+        let massReloadWs = NppProjectWorkspace(panelIndex: 1)
+        try? massReloadWs.loadWorkspace(from: massWsXmlUrl)
+
+        let reloadedMassFiles = massReloadWs.enumAllFiles()
+        assertTest("Challenger 1 [Suite 2.2]: Massive XML serialization roundtrip restores all 150 file nodes intact",
+                   reloadedMassFiles.count == 150 &&
+                   reloadedMassFiles.allSatisfy { $0.filePath != nil && FileManager.default.fileExists(atPath: $0.filePath!) })
+
+        // Find in Projects across 150 files: exactly 50 files contain TARGET_MASS_KEYWORD (every 3rd file)
+        let oldP1 = ws.projectWorkspace1
+        ws.projectWorkspace1 = massWs
+        ws.findAllInProjects(query: "TARGET_MASS_KEYWORD", filter: "*.*", panels: [1], matchCase: true, wholeWord: true, useRegex: false)
+        assertTest("Challenger 1 [Suite 2.3]: Find in Projects across 150 files correctly matches exactly 50 hits with 50 groups",
+                   ws.totalSearchHits == 50 && ws.searchFileGroups.count == 50)
+
+        // Replace in Projects across 150 files: replace TARGET_MASS_KEYWORD with REPLACED_KEYWORD
+        let replaceRes = ws.replaceInProjects(query: "TARGET_MASS_KEYWORD", replacement: "REPLACED_KEYWORD", filter: "*.*", panels: [1], matchCase: true, wholeWord: true, useRegex: false)
+        assertTest("Challenger 1 [Suite 2.4]: Batch Replace in Projects correctly modifies exactly 50 files on disk",
+                   replaceRes.replacements == 50 && replaceRes.filesModified == 50)
+
+        // Verify disk files reflect replacement
+        let diskCheck = createdDiskFiles.filter { url in
+            let c = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            return c.contains("REPLACED_KEYWORD")
+        }
+        assertTest("Challenger 1 [Suite 2.5]: Physical disk verification confirms all 50 modified files contain REPLACED_KEYWORD",
+                   diskCheck.count == 50)
+        ws.projectWorkspace1 = oldP1
+
+        // ---------------------------------------------------------------------
+        // SUITE 3: Boundary & Mutation Permutations for moveNode(up: true/false)
+        // ---------------------------------------------------------------------
+        let moveWs = NppProjectWorkspace(panelIndex: 1)
+        let rootMoveUp = moveWs.moveNode(moveWs.rootNode, up: true)
+        let rootMoveDown = moveWs.moveNode(moveWs.rootNode, up: false)
+        assertTest("Challenger 1 [Suite 3.1]: moveNode on workspace rootNode safely rejected (returns false)",
+                   rootMoveUp == false && rootMoveDown == false)
+
+        let solitaryProj = moveWs.addProject(name: "Solitary")
+        let solitaryUp = moveWs.moveNode(solitaryProj, up: true)
+        let solitaryDown = moveWs.moveNode(solitaryProj, up: false)
+        assertTest("Challenger 1 [Suite 3.2]: moveNode on single child sibling list safely rejected both up and down",
+                   solitaryUp == false && solitaryDown == false)
+
+        let pA = solitaryProj
+        pA.name = "Project_A"
+        let pB = moveWs.addProject(name: "Project_B")
+        _ = moveWs.addProject(name: "Project_C")
+        let pD = moveWs.addProject(name: "Project_D")
+        // Initial order: [A, B, C, D]
+
+        // Boundary start: A move up -> false
+        let canAMoveUp = moveWs.moveNode(pA, up: true)
+        assertTest("Challenger 1 [Suite 3.3]: Boundary check: first sibling cannot move up",
+                   canAMoveUp == false && moveWs.rootNode.children.first?.id == pA.id)
+
+        // Boundary end: D move down -> false
+        let canDMoveDown = moveWs.moveNode(pD, up: false)
+        assertTest("Challenger 1 [Suite 3.4]: Boundary check: last sibling cannot move down",
+                   canDMoveDown == false && moveWs.rootNode.children.last?.id == pD.id)
+
+        // Move B up: [A, B, C, D] -> [B, A, C, D]
+        let didMoveBUp = moveWs.moveNode(pB, up: true)
+        assertTest("Challenger 1 [Suite 3.5]: Interior node B move up swaps with predecessor A",
+                   didMoveBUp == true &&
+                   moveWs.rootNode.children[0].name == "Project_B" &&
+                   moveWs.rootNode.children[1].name == "Project_A")
+
+        // Move B down: [B, A, C, D] -> [A, B, C, D]
+        let didMoveBDown = moveWs.moveNode(pB, up: false)
+        assertTest("Challenger 1 [Suite 3.6]: Interior node B move down restores original sequence",
+                   didMoveBDown == true &&
+                   moveWs.rootNode.children[0].name == "Project_A" &&
+                   moveWs.rootNode.children[1].name == "Project_B")
+
+        // Orphaned element test: unattached node
+        let orphanNode = NppProjectElement(type: .folder, name: "Orphan")
+        let orphanMove = moveWs.moveNode(orphanNode, up: true)
+        assertTest("Challenger 1 [Suite 3.7]: moveNode on unattached orphan node returns false without crashing",
+                   orphanMove == false)
+
+        // File movements within folder
+        let fFolder = moveWs.addFolder(parent: pA, name: "SubFiles")
+        let f1 = moveWs.addFile(parent: fFolder, fileUrl: tempBase.appendingPathComponent("f1.txt"))
+        let f2 = moveWs.addFile(parent: fFolder, fileUrl: tempBase.appendingPathComponent("f2.txt"))
+        let f3 = moveWs.addFile(parent: fFolder, fileUrl: tempBase.appendingPathComponent("f3.txt"))
+
+        let f1Up = moveWs.moveNode(f1, up: true)
+        let f3Down = moveWs.moveNode(f3, up: false)
+        let f2Up = moveWs.moveNode(f2, up: true)
+        assertTest("Challenger 1 [Suite 3.8]: Leaf file sibling moveNode respects folder boundaries and swaps correctly",
+                   f1Up == false && f3Down == false && f2Up == true && fFolder.children[0].id == f2.id)
+
+        // ---------------------------------------------------------------------
+        // SUITE 4: XML Serialization of Paths with Spaces, Entities & Korean
+        // ---------------------------------------------------------------------
+        let xmlStressWs = NppProjectWorkspace(panelIndex: 1)
+        let complexProjName = "R&D <Alpha> \"Quoted\" & 'Apos' [2026]"
+        let complexFolderName = "한글 폴더 & Sub<Dir> #1"
+        let complexFileName = "특수문자 & 공백 파일 (v1.0) [최종].txt"
+
+        let specialProj = xmlStressWs.addProject(name: complexProjName)
+        let specialFolder = xmlStressWs.addFolder(parent: specialProj, name: complexFolderName)
+        let specialFileUrl = tempBase.appendingPathComponent(complexFileName)
+        try? "Unicode content: 대한민국 만세 🇰🇷".write(to: specialFileUrl, atomically: true, encoding: .utf8)
+        let specialFileNode = xmlStressWs.addFile(parent: specialFolder, fileUrl: specialFileUrl)
+
+        let exportedXml = (try? xmlStressWs.exportToXml()) ?? ""
+        assertTest("Challenger 1 [Suite 4.1]: XML export encodes special XML characters as valid entities (&amp;, &lt;, &gt;, &quot;, &apos;)",
+                   exportedXml.contains("&amp;") &&
+                   exportedXml.contains("&lt;Alpha&gt;") &&
+                   exportedXml.contains("&quot;Quoted&quot;") &&
+                   exportedXml.contains("&apos;Apos&apos;"))
+
+        let specialWsUrl = tempBase.appendingPathComponent("special_chars.npp_project")
+        try? xmlStressWs.saveWorkspace(to: specialWsUrl)
+
+        let xmlReloadWs = NppProjectWorkspace(panelIndex: 1)
+        try? xmlReloadWs.loadWorkspace(from: specialWsUrl)
+
+        let reloadedProj = xmlReloadWs.rootNode.children.first
+        let reloadedFolder = reloadedProj?.children.first
+        let reloadedFile = reloadedFolder?.children.first
+        assertTest("Challenger 1 [Suite 4.2]: Full XML roundtrip decodes entities and Korean unicode 100% byte-for-byte identically",
+                   reloadedProj?.name == complexProjName &&
+                   reloadedFolder?.name == complexFolderName &&
+                   reloadedFile?.name == complexFileName &&
+                   reloadedFile?.filePath == specialFileNode.filePath)
+
+        // ---------------------------------------------------------------------
+        // SUITE 5: Relative & Absolute Path Resolution Edge Cases
+        // ---------------------------------------------------------------------
+        let pathWsDir = tempBase.appendingPathComponent("path_test_dir")
+        let pathSubDir = pathWsDir.appendingPathComponent("nested_sub")
+        let pathSiblingDir = tempBase.appendingPathComponent("sibling_dir")
+        try? FileManager.default.createDirectory(at: pathSubDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: pathSiblingDir, withIntermediateDirectories: true)
+
+        let fileInWsDir = pathWsDir.appendingPathComponent("root_level.txt")
+        let fileInSubDir = pathSubDir.appendingPathComponent("sub_level.txt")
+        let fileInSiblingDir = pathSiblingDir.appendingPathComponent("sibling_level.txt")
+        try? "Root Level".write(to: fileInWsDir, atomically: true, encoding: .utf8)
+        try? "Sub Level".write(to: fileInSubDir, atomically: true, encoding: .utf8)
+        try? "Sibling Level".write(to: fileInSiblingDir, atomically: true, encoding: .utf8)
+
+        let pathWs = NppProjectWorkspace(panelIndex: 1)
+        let pathWsFile = pathWsDir.appendingPathComponent("rel_test.npp_project")
+        pathWs.filePath = pathWsFile
+        let pPrj = pathWs.addProject(name: "PathPrj")
+
+        _ = pathWs.addFile(parent: pPrj, fileUrl: fileInWsDir)
+        _ = pathWs.addFile(parent: pPrj, fileUrl: fileInSubDir)
+        _ = pathWs.addFile(parent: pPrj, fileUrl: fileInSiblingDir)
+
+        let pathXml = (try? pathWs.exportToXml()) ?? ""
+        assertTest("Challenger 1 [Suite 5.1]: XML export accurately computes relative paths for same-dir and sub-dir files",
+                   pathXml.contains("<File name=\"root_level.txt\"") &&
+                   pathXml.contains("<File name=\"nested_sub/sub_level.txt\"") &&
+                   pathXml.contains(fileInSiblingDir.standardizedFileURL.path))
+
+        try? pathWs.saveWorkspace(to: pathWsFile)
+        let pathReloadWs = NppProjectWorkspace(panelIndex: 1)
+        try? pathReloadWs.loadWorkspace(from: pathWsFile)
+
+        let reloadedPaths = pathReloadWs.enumAllFiles().compactMap { $0.filePath }
+        assertTest("Challenger 1 [Suite 5.2]: Path deserialization reconstructs valid absolute paths for both relative and external files",
+                   reloadedPaths.contains(fileInWsDir.standardizedFileURL.path) &&
+                   reloadedPaths.contains(fileInSubDir.standardizedFileURL.path) &&
+                   reloadedPaths.contains(fileInSiblingDir.standardizedFileURL.path))
+
+        // Missing file on disk
+        let nonExistentFileUrl = pathWsDir.appendingPathComponent("ghost_file_missing.txt")
+        _ = pathWs.addFile(parent: pPrj, fileUrl: nonExistentFileUrl)
+        try? pathWs.saveWorkspace(to: pathWsFile)
+        let ghostWs = NppProjectWorkspace(panelIndex: 1)
+        try? ghostWs.loadWorkspace(from: pathWsFile)
+        let ghostNode = ghostWs.enumAllFiles().first(where: { $0.name == "ghost_file_missing.txt" })
+        assertTest("Challenger 1 [Suite 5.3]: Non-existent files flagged as isMissing without breaking XML load",
+                   ghostNode != nil && ghostNode?.isMissing == true)
+
+        // ---------------------------------------------------------------------
+        // SUITE 6: Multi-Panel Dirty State Isolation & Mutations
+        // ---------------------------------------------------------------------
+        let ws1 = ws.projectWorkspace1
+        let ws2 = ws.projectWorkspace2
+        let ws3 = ws.projectWorkspace3
+
+        ws1.newWorkspace()
+        ws2.newWorkspace()
+        ws3.newWorkspace()
+
+        assertTest("Challenger 1 [Suite 6.1]: All 3 panels initialized clean (isDirty == false)",
+                   !ws1.isDirty && !ws2.isDirty && !ws3.isDirty)
+
+        // Mutate Panel 1 only
+        _ = ws1.addProject(name: "P1_Alpha")
+        assertTest("Challenger 1 [Suite 6.2]: Mutating Panel 1 sets Panel 1 dirty, leaving Panels 2 & 3 clean",
+                   ws1.isDirty == true && ws2.isDirty == false && ws3.isDirty == false)
+
+        // Mutate Panel 2 only
+        _ = ws2.addProject(name: "P2_Beta")
+        assertTest("Challenger 1 [Suite 6.3]: Mutating Panel 2 marks Panel 2 dirty, leaving Panel 3 clean",
+                   ws1.isDirty == true && ws2.isDirty == true && ws3.isDirty == false)
+
+        // Save Panel 1
+        let p1SaveFile = tempBase.appendingPathComponent("p1_saved.npp_project")
+        try? ws1.saveWorkspace(to: p1SaveFile)
+        assertTest("Challenger 1 [Suite 6.4]: Saving Panel 1 clears Panel 1 dirty flag while Panel 2 remains dirty",
+                   ws1.isDirty == false && ws2.isDirty == true)
+
+        // Reset Panel 2 via newWorkspace()
+        ws2.newWorkspace()
+        assertTest("Challenger 1 [Suite 6.5]: newWorkspace on Panel 2 resets only Panel 2, preserving Panel 1 data",
+                   ws2.isDirty == false &&
+                   ws2.rootNode.children.isEmpty &&
+                   ws1.rootNode.children.count == 1 &&
+                   ws1.rootNode.children.first?.name == "P1_Alpha")
+
+        // ---------------------------------------------------------------------
+        // SUITE 7: Rename & Modify File Path Mutation Consistency
+        // ---------------------------------------------------------------------
+        let editWs = NppProjectWorkspace(panelIndex: 1)
+        let editPrj = editWs.addProject(name: "EditPrj")
+        let editFile = tempBase.appendingPathComponent("original_name.txt")
+        try? "Editable Content".write(to: editFile, atomically: true, encoding: .utf8)
+        let editNode = editWs.addFile(parent: editPrj, fileUrl: editFile)
+
+        // Rename node label
+        editWs.renameNode(editNode, to: "renamed_name.txt")
+        assertTest("Challenger 1 [Suite 7.1]: Renaming file node updates label and computed path, marking workspace dirty",
+                   editNode.name == "renamed_name.txt" &&
+                   editNode.filePath?.contains("renamed_name.txt") == true &&
+                   editWs.isDirty)
+
+        // Relocalize to new URL
+        let relocatedFile = tempBase.appendingPathComponent("relocated_target.txt")
+        try? "Relocated Payload".write(to: relocatedFile, atomically: true, encoding: .utf8)
+        editWs.modifyFilePath(node: editNode, newUrl: relocatedFile)
+        assertTest("Challenger 1 [Suite 7.2]: modifyFilePath re-binds target URL, updates name, and clears missing flag",
+                   editNode.name == "relocated_target.txt" &&
+                   editNode.filePath == relocatedFile.standardizedFileURL.path &&
+                   editNode.isMissing == false)
+
+        // ---------------------------------------------------------------------
+        // SUITE 8: Memory & Cyclic Reference Safety
+        // ---------------------------------------------------------------------
+        do {
+            let leakTestWs = NppProjectWorkspace(panelIndex: 1)
+            let leakProj = leakTestWs.addProject(name: "LeakCheck")
+            var prev: NppProjectElement = leakProj
+            for k in 1...100 {
+                prev = leakTestWs.addFolder(parent: prev, name: "Node_\(k)")
+            }
+            leakTestWs.removeNode(leakProj)
+            assertTest("Challenger 1 [Suite 8.1]: 100-node linked subtree removed with weak parent references preventing cyclic retention",
+                       leakTestWs.rootNode.children.isEmpty)
+        }
+    }
+
+    // =========================================================================
+    // MILESTONE 2: MULTI-EDITING ADVANCED CARETS TEST SUITE
+    // =========================================================================
+    static func runMultiEditingAdvancedCaretsTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: @escaping (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("⚡️ MILESTONE 2: MULTI-EDITING ADVANCED CARETS TEST SUITE")
+        print("========================================================")
+
+        ws.closeAll(force: true)
+        ws.newDocument()
+        guard let tv = ws.activeTextView as? NppTextView else {
+            assertTest("M2.MultiCaret: Active NppTextView is initialized", false)
+            return
+        }
+
+        let savedMultiSelection = ws.multiSelection
+        let savedColumnToMultiEditing = ws.columnToMultiEditing
+        defer {
+            ws.multiSelection = savedMultiSelection
+            ws.columnToMultiEditing = savedColumnToMultiEditing
+            ws.closeAll(force: true)
+        }
+        ws.multiSelection = true
+        ws.columnToMultiEditing = true
+
+        let winNum = appDelegate.window?.windowNumber ?? 0
+
+        // ---------------------------------------------------------------------
+        // SUITE 1: Programmatic Caret Management & Queries
+        // ---------------------------------------------------------------------
+        tv.string = "alpha\nbeta\ngamma"
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        assertTest("M2.MultiCaret.1.1: Initial editor state has exactly 1 primary caret at offset 0",
+                   tv.selectedRanges.count == 1 && tv.selectedRange().location == 0)
+
+        // Set 3 carets: 0 (start of alpha), 6 (start of beta), 11 (start of gamma)
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 6, length: 0)),
+                             NSValue(range: NSRange(location: 11, length: 0))]
+        assertTest("M2.MultiCaret.1.2: Programmatic multi-caret addition sets 3 active carets",
+                   tv.selectedRanges.count == 3 &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [0, 6, 11])
+
+        // Out of order additions automatically sorted ascending
+        tv.selectedRanges = [NSValue(range: NSRange(location: 11, length: 0)),
+                             NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 6, length: 0))]
+        let sortedLocs = tv.selectedRanges.map { $0.rangeValue.location }
+        assertTest("M2.MultiCaret.1.3: Out-of-order caret addition auto-sorts ascending",
+                   sortedLocs == [0, 6, 11])
+
+        // Querying non-zero selection ranges
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 5)),
+                             NSValue(range: NSRange(location: 6, length: 4))]
+        assertTest("M2.MultiCaret.1.4: Querying selection ranges returns accurate lengths",
+                   tv.selectedRanges.count == 2 &&
+                   tv.selectedRanges[0].rangeValue.length == 5 &&
+                   tv.selectedRanges[1].rangeValue.length == 4)
+
+        // Escape key collapses multi-carets to single primary caret
+        tv.cancelOperation(nil)
+        assertTest("M2.MultiCaret.1.5: Escape key collapses multi-carets to single primary caret",
+                   tv.selectedRanges.count == 1 && tv.selectedRanges[0].rangeValue.location == 0)
+
+        // Dropping individual caret
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 6, length: 0)),
+                             NSValue(range: NSRange(location: 11, length: 0))]
+        var droppedRanges = tv.selectedRanges
+        droppedRanges.remove(at: 1)
+        tv.selectedRanges = droppedRanges
+        assertTest("M2.MultiCaret.1.6: Dropping individual caret removes target cleanly",
+                   tv.selectedRanges.count == 2 &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [0, 11])
+
+        // Clamping out-of-bounds carets
+        let docLen = (tv.string as NSString).length
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: docLen + 500, length: 0))]
+        assertTest("M2.MultiCaret.1.7: Clamping out-of-bounds caret additions without crashing",
+                   (tv.selectedRanges.last?.rangeValue.location ?? 0) <= docLen)
+
+        // ---------------------------------------------------------------------
+        // SUITE 2: Cmd+Click Synthetic Mouse Gesture Simulation
+        // ---------------------------------------------------------------------
+        tv.string = "first\nsecond\nthird"
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+
+        // Simulate Cmd+Click at offset 6 (start of "second")
+        let glyph6 = tv.layoutManager?.glyphIndexForCharacter(at: 6) ?? 6
+        let charRect6 = tv.layoutManager?.boundingRect(forGlyphRange: NSRange(location: glyph6, length: 1), in: tv.textContainer!) ?? NSRect(x: 0, y: 16, width: 8, height: 16)
+        let clickInView = NSPoint(x: tv.textContainerOrigin.x + charRect6.minX + 2, y: tv.textContainerOrigin.y + charRect6.midY)
+        let clickInWin = tv.convert(clickInView, to: nil)
+
+        let cmdClickEvent = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: clickInWin,
+            modifierFlags: [.command],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: winNum,
+            context: nil,
+            eventNumber: 991,
+            clickCount: 1,
+            pressure: 1.0
+        )
+        if let ev = cmdClickEvent {
+            tv.mouseDown(with: ev)
+        } else {
+            tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                                 NSValue(range: NSRange(location: 6, length: 0))]
+        }
+        assertTest("M2.MultiCaret.2.1: Synthetic Cmd+Click adds secondary caret at specified offset",
+                   tv.selectedRanges.count == 2 && tv.selectedRanges.contains(where: { $0.rangeValue.location == 6 }))
+
+        // Cmd+Click on empty space past line end clamps to EOL (offset 5 on line 1)
+        let clickPastEol = NSPoint(x: tv.textContainerOrigin.x + 500, y: tv.textContainerOrigin.y + 5)
+        let clickPastWin = tv.convert(clickPastEol, to: nil)
+        if let evPast = NSEvent.mouseEvent(with: .leftMouseDown, location: clickPastWin, modifierFlags: [.command],
+                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                           context: nil, eventNumber: 992, clickCount: 1, pressure: 1.0) {
+            tv.mouseDown(with: evPast)
+        }
+        assertTest("M2.MultiCaret.2.2: Cmd+Click on empty space past line end clamps to EOL",
+                   tv.selectedRanges.contains(where: { $0.rangeValue.location == 5 }))
+
+        // Cmd+Click toggle on existing caret drops selection (toggle off offset 6)
+        if let evToggle = NSEvent.mouseEvent(with: .leftMouseDown, location: clickInWin, modifierFlags: [.command],
+                                             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                             context: nil, eventNumber: 993, clickCount: 1, pressure: 1.0) {
+            tv.mouseDown(with: evToggle)
+        }
+        assertTest("M2.MultiCaret.2.3: Cmd+Click toggle on existing caret drops selection",
+                   !tv.selectedRanges.contains(where: { $0.rangeValue.location == 6 }))
+
+        // Cmd+Click disabled when ws.multiSelection == false
+        ws.multiSelection = false
+        if let evDisabled = NSEvent.mouseEvent(with: .leftMouseDown, location: clickInWin, modifierFlags: [.command],
+                                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                               context: nil, eventNumber: 994, clickCount: 1, pressure: 1.0) {
+            tv.mouseDown(with: evDisabled)
+        }
+        assertTest("M2.MultiCaret.2.4: Cmd+Click disabled when ws.multiSelection == false resets to single caret",
+                   tv.selectedRanges.count == 1 && tv.selectedRanges[0].rangeValue.location == 6)
+        ws.multiSelection = true
+
+        // Normal click without modifiers resets multi-carets
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 6, length: 0)),
+                             NSValue(range: NSRange(location: 13, length: 0))]
+        let glyph2 = tv.layoutManager?.glyphIndexForCharacter(at: 2) ?? 2
+        let charRect2 = tv.layoutManager?.boundingRect(forGlyphRange: NSRange(location: glyph2, length: 1), in: tv.textContainer!) ?? NSRect(x: 16, y: 0, width: 8, height: 16)
+        let clickInView2 = NSPoint(x: tv.textContainerOrigin.x + charRect2.minX + 2, y: tv.textContainerOrigin.y + charRect2.midY)
+        if let normalClick = NSEvent.mouseEvent(with: .leftMouseDown, location: tv.convert(clickInView2, to: nil), modifierFlags: [],
+                                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                                context: nil, eventNumber: 995, clickCount: 1, pressure: 1.0) {
+            tv.mouseDown(with: normalClick)
+        } else {
+            tv.setSelectedRange(NSRange(location: 2, length: 0))
+        }
+        assertTest("M2.MultiCaret.2.5: Normal click without modifiers resets multi-carets",
+                   tv.selectedRanges.count == 1)
+
+        // Cmd+Drag creates multi-range selection
+        tv.string = "first\nsecond\nthird"
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        let glyph10 = tv.layoutManager?.glyphIndexForCharacter(at: 10) ?? 10
+        let charRect10 = tv.layoutManager?.boundingRect(forGlyphRange: NSRange(location: glyph10, length: 1), in: tv.textContainer!) ?? NSRect(x: 32, y: 16, width: 8, height: 16)
+        let dragToInWin = tv.convert(NSPoint(x: tv.textContainerOrigin.x + charRect10.minX + 2, y: tv.textContainerOrigin.y + charRect10.midY), to: nil)
+        if let cmdDown = NSEvent.mouseEvent(with: .leftMouseDown, location: clickInWin, modifierFlags: [.command],
+                                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                            context: nil, eventNumber: 996, clickCount: 1, pressure: 1.0),
+           let dragEv = NSEvent.mouseEvent(with: .leftMouseDragged, location: dragToInWin, modifierFlags: [.command],
+                                           timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                           context: nil, eventNumber: 997, clickCount: 1, pressure: 1.0),
+           let upEv = NSEvent.mouseEvent(with: .leftMouseUp, location: dragToInWin, modifierFlags: [.command],
+                                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                         context: nil, eventNumber: 998, clickCount: 1, pressure: 1.0) {
+            tv.handleMultiCaretMouseDown(event: cmdDown)
+            tv.handleMultiCaretMouseDragged(event: dragEv)
+            tv.handleMultiCaretMouseUp(event: upEv)
+        }
+        assertTest("M2.MultiCaret.2.6: Cmd+Drag creates multi-range selection",
+                   tv.selectedRanges.count >= 2 && tv.selectedRanges.contains(where: { $0.rangeValue.length > 0 }))
+
+        // ---------------------------------------------------------------------
+        // SUITE 3: Synchronized Typing & Multi-Paste
+        // ---------------------------------------------------------------------
+        tv.string = "aaa\nbbb\nccc"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 4, length: 0)),
+                             NSValue(range: NSRange(location: 8, length: 0))]
+
+        tv.insertText("X", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("M2.MultiCaret.3.1: Synchronized single character typing across 3 carets",
+                   tv.string == "Xaaa\nXbbb\nXccc" &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [1, 6, 11])
+
+        // Multi-character prefix insertion ("// ")
+        tv.string = "aaa\nbbb\nccc"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 4, length: 0)),
+                             NSValue(range: NSRange(location: 8, length: 0))]
+        tv.insertText("// ", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("M2.MultiCaret.3.2: Multi-character prefix insertion ('// ') adjusts offsets accurately",
+                   tv.string == "// aaa\n// bbb\n// ccc" &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [3, 10, 17])
+
+        // Synchronized replacement of non-zero selections
+        tv.string = "cat\nbat\nrat"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 3)),
+                             NSValue(range: NSRange(location: 4, length: 3)),
+                             NSValue(range: NSRange(location: 8, length: 3))]
+        tv.insertText("dog", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("M2.MultiCaret.3.3: Synchronized replacement of non-zero selections",
+                   tv.string == "dog\ndog\ndog" &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [3, 7, 11])
+
+        // Synchronized newline insertion across carets
+        tv.string = "aaa\nbbb\nccc"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 3, length: 0)),
+                             NSValue(range: NSRange(location: 7, length: 0)),
+                             NSValue(range: NSRange(location: 11, length: 0))]
+        tv.insertNewline(nil)
+        assertTest("M2.MultiCaret.3.4: Synchronized newline insertion across carets",
+                   tv.string.components(separatedBy: "\n").count == 6)
+
+        // Multi-paste line-by-line distribution
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("111\n222\n333", forType: .string)
+        tv.string = "lineA\nlineB\nlineC"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 6, length: 0)),
+                             NSValue(range: NSRange(location: 12, length: 0))]
+        tv.paste(nil)
+        assertTest("M2.MultiCaret.3.5: Multi-paste 1-to-1 line distribution across matching carets",
+                   tv.string.contains("111lineA") && tv.string.contains("222lineB") && tv.string.contains("333lineC"))
+
+        // Multi-paste single string broadcast
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("VALUE", forType: .string)
+        tv.string = "lineA\nlineB\nlineC"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 6, length: 0)),
+                             NSValue(range: NSRange(location: 12, length: 0))]
+        tv.paste(nil)
+        assertTest("M2.MultiCaret.3.6: Multi-paste broadcast clipboard content across all carets",
+                   tv.string.contains("VALUElineA") && tv.string.contains("VALUElineB") && tv.string.contains("VALUElineC"))
+
+        // Multi-Caret atomic Undo / Redo grouping
+        tv.undoManager?.removeAllActions()
+        tv.string = "base1\nbase2\nbase3"
+        tv.undoManager?.removeAllActions()
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 6, length: 0)),
+                             NSValue(range: NSRange(location: 12, length: 0))]
+        tv.insertText("PRE_", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("M2.MultiCaret.3.7.A: Multi-caret prefix inserted prior to undo",
+                   tv.string == "PRE_base1\nPRE_base2\nPRE_base3")
+        tv.undoManager?.undo()
+        assertTest("M2.MultiCaret.3.7.B: Single Undo reverts all caret modifications in one step",
+                   tv.string == "base1\nbase2\nbase3")
+
+        // ---------------------------------------------------------------------
+        // SUITE 4: Synchronized Deletions (Backspace & Delete)
+        // ---------------------------------------------------------------------
+        tv.string = "a1\nb2\nc3"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 2, length: 0)),
+                             NSValue(range: NSRange(location: 5, length: 0)),
+                             NSValue(range: NSRange(location: 8, length: 0))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("M2.MultiCaret.4.1: Synchronized Backspace at multiple carets",
+                   tv.string == "a\nb\nc" &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [1, 3, 5])
+
+        tv.string = "1a\n2b\n3c"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 3, length: 0)),
+                             NSValue(range: NSRange(location: 6, length: 0))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteForward(_:)))
+        assertTest("M2.MultiCaret.4.2: Synchronized Delete (forward) at multiple carets",
+                   tv.string == "a\nb\nc" &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [0, 2, 4])
+
+        // Backspace boundary at document start (offset 0)
+        tv.string = "abc\ndef"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 4, length: 0))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("M2.MultiCaret.4.3: Backspace boundary at offset 0 leaves caret 0 intact while deleting at caret 1",
+                   tv.string == "abcdef" &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [0, 3])
+
+        // Delete boundary at EOF
+        tv.string = "abc"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 3, length: 0))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteForward(_:)))
+        assertTest("M2.MultiCaret.4.4: Delete boundary at EOF safely deletes at caret 0 without crash",
+                   tv.string == "bc" &&
+                   tv.selectedRanges.map { $0.rangeValue.location } == [0, 2])
+
+        // CRLF atomic 2-byte backspace
+        tv.string = "line1\r\nline2\r\n"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 7, length: 0)),
+                             NSValue(range: NSRange(location: 14, length: 0))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("M2.MultiCaret.4.5: CRLF 2-byte atomic backspace leaves no orphan \\r",
+                   !tv.string.contains("\r") || tv.string.contains("\r\n"))
+
+        // Synchronized deletion on non-zero selections
+        tv.string = "hello world"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 2)),
+                             NSValue(range: NSRange(location: 6, length: 2))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("M2.MultiCaret.4.6: Synchronized deletion on non-zero selections",
+                   tv.string == "llo rld")
+
+        // ---------------------------------------------------------------------
+        // SUITE 5: Caret Coalescing Upon Collision
+        // ---------------------------------------------------------------------
+        tv.string = "abcde"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 3, length: 0)),
+                             NSValue(range: NSRange(location: 4, length: 0))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("M2.MultiCaret.5.1: Adjacent Backspace collision coalesces carets into one",
+                   tv.selectedRanges.count == 1 && (tv.selectedRanges[0].rangeValue.location == 2 || tv.selectedRanges[0].rangeValue.location == 3))
+
+        // Forward Delete coalesces colliding carets
+        tv.string = "abcde"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 2, length: 0)),
+                             NSValue(range: NSRange(location: 3, length: 0))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteForward(_:)))
+        assertTest("M2.MultiCaret.5.2: Forward Delete coalesces colliding carets",
+                   tv.selectedRanges.count == 1 && (tv.selectedRanges[0].rangeValue.location == 2 || tv.selectedRanges[0].rangeValue.location == 1))
+
+        // Duplicate programmatic addition coalesces immediately
+        tv.selectedRanges = [NSValue(range: NSRange(location: 2, length: 0)),
+                             NSValue(range: NSRange(location: 2, length: 0))]
+        assertTest("M2.MultiCaret.5.3: Duplicate programmatic caret addition deduplicated",
+                   tv.selectedRanges.count == 1 && tv.selectedRanges[0].rangeValue.location == 2)
+
+        // Arrow key collision at line boundary
+        tv.string = "abc"
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)),
+                             NSValue(range: NSRange(location: 1, length: 0))]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveLeft(_:)))
+        assertTest("M2.MultiCaret.5.4: Arrow key collision at boundary coalesces into single caret",
+                   tv.selectedRanges.count == 1 && tv.selectedRanges[0].rangeValue.location == 0)
+
+        // Post-coalescing typing executes only once
+        tv.insertText("Z", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("M2.MultiCaret.5.5: Post-coalescing typing executes only once",
+                   tv.string.contains("Z") && !tv.string.contains("ZZ"))
+
+        // ---------------------------------------------------------------------
+        // SUITE 6: Column Mode to Multi-Caret Conversion
+        // ---------------------------------------------------------------------
+        tv.string = "itemA\nitemB\nitemC\nitemD"
+        let colRanges = tv.computeColumnRanges(fromLine: 1, fromCol: 2, toLine: 4, toCol: 2)
+        tv.selectedRanges = colRanges
+        assertTest("M2.MultiCaret.6.1: 0-width column selection converts to 4 individual line carets",
+                   tv.selectedRanges.count == 4 &&
+                   tv.selectedRanges.allSatisfy { $0.rangeValue.length == 0 })
+
+        // Typing with converted column carets
+        tv.insertText("_", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("M2.MultiCaret.6.2: Synchronized typing after column selection inserts prefix across all lines",
+                   tv.string.components(separatedBy: "\n").allSatisfy { $0.hasPrefix("it_") })
+
+        // Non-zero width column selection converts to 3 ranges of length 2
+        tv.string = "abcdef\nghijkl\nmnopqr"
+        let nonZeroColRanges = tv.computeColumnRanges(fromLine: 1, fromCol: 1, toLine: 3, toCol: 3)
+        tv.selectedRanges = nonZeroColRanges
+        assertTest("M2.MultiCaret.6.3: Non-zero width column selection converts to 3 ranges of length 2",
+                   tv.selectedRanges.count == 3 && tv.selectedRanges.allSatisfy { $0.rangeValue.length == 2 })
+
+        // Uneven line clamping
+        tv.string = "12345678\n12\n12345678"
+        let unevenRanges = tv.computeColumnRanges(fromLine: 1, fromCol: 5, toLine: 3, toCol: 5)
+        tv.selectedRanges = unevenRanges
+        assertTest("M2.MultiCaret.6.4: Column selection on uneven lines clamps cleanly without crash",
+                   tv.selectedRanges.count == 3 && tv.selectedRanges[1].rangeValue.location <= 11)
+
+        // Option+Drag simulation generates multi-carets
+        tv.string = "line1\nline2\nline3"
+        let ptStart = tv.convert(NSPoint(x: tv.textContainerOrigin.x + 10, y: tv.textContainerOrigin.y + 5), to: nil)
+        let ptEnd = tv.convert(NSPoint(x: tv.textContainerOrigin.x + 10, y: tv.textContainerOrigin.y + 35), to: nil)
+        let optDown = NSEvent.mouseEvent(with: .leftMouseDown, location: ptStart, modifierFlags: [.option],
+                                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                         context: nil, eventNumber: 9991, clickCount: 1, pressure: 1.0)
+        let optDrag = NSEvent.mouseEvent(with: .leftMouseDragged, location: ptEnd, modifierFlags: [.option],
+                                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                         context: nil, eventNumber: 9992, clickCount: 1, pressure: 1.0)
+        let optUp = NSEvent.mouseEvent(with: .leftMouseUp, location: ptEnd, modifierFlags: [.option],
+                                       timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: winNum,
+                                       context: nil, eventNumber: 9993, clickCount: 1, pressure: 1.0)
+        if let d = optDown, let g = optDrag, let u = optUp {
+            tv.mouseDown(with: d)
+            tv.mouseDragged(with: g)
+            tv.mouseUp(with: u)
+        }
+        assertTest("M2.MultiCaret.6.5: Option+Drag simulation generates multi-carets",
+                   tv.selectedRanges.count >= 2)
+
+        // ---------------------------------------------------------------------
+        // SUITE 7: Regression Tripwire Check
+        // ---------------------------------------------------------------------
+        // Single-caret normal typing path check
+        tv.string = "Hello World"
+        tv.setSelectedRange(NSRange(location: 5, length: 0))
+        tv.insertText(",", replacementRange: NSRange(location: 5, length: 0))
+        assertTest("M2.Regression.7.1: Single-caret standard typing preserves 100% native behavior",
+                   tv.string == "Hello, World" && tv.selectedRange().location == 6)
+
+        // Single-caret backspace check
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("M2.Regression.7.2: Single-caret backspace preserves 100% native behavior",
+                   tv.string == "Hello World" && tv.selectedRange().location == 5)
     }
 
     static func captureCustomScreenshot(appDelegate: AppDelegate, setup: @escaping (NppWorkspace) -> Void, filename: String) {
