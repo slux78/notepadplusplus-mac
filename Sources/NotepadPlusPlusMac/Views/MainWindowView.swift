@@ -130,6 +130,14 @@ public struct NppMainWindowView: View {
                     NppDocumentMapView(workspace: workspace)
                         .frame(width: 140)
                 }
+
+                if workspace.showUserDefineDialog && workspace.isUserDefineDialogDocked {
+                    Divider()
+                    NppUserDefineDialogView(workspace: workspace, onClose: {
+                        workspace.showUserDefineDialog = false
+                    })
+                    .frame(width: 520)
+                }
             }
 
             // 5. Search Results Panel (Notepad++ Find Result dock)

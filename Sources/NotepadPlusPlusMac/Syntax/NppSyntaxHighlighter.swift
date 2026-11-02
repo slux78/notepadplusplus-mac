@@ -82,7 +82,12 @@ public final class NppSyntaxHighlighter {
         textStorage.addAttribute(.font, value: effectiveFont, range: fullRange)
 
         // Palette Definition (Tailored for authentic Scintilla / Notepad++ stylers)
-        let defaultTextColor = theme?.foregroundColor ?? (isDarkMode ? NSColor(calibratedWhite: 0.90, alpha: 1.0) : NSColor(calibratedWhite: 0.15, alpha: 1.0))
+        let defaultTextColor: NSColor
+        if isDarkMode {
+            defaultTextColor = (theme?.isDark == true ? theme?.foregroundColor : nil) ?? NSColor(calibratedWhite: 0.90, alpha: 1.0)
+        } else {
+            defaultTextColor = (theme?.isDark == false ? theme?.foregroundColor : nil) ?? NSColor(calibratedWhite: 0.15, alpha: 1.0)
+        }
         textStorage.addAttribute(.foregroundColor, value: defaultTextColor, range: fullRange)
 
         let controlFlowColor = isDarkMode ? NSColor(calibratedRed: 0.77, green: 0.52, blue: 0.75, alpha: 1.0) : NSColor(calibratedRed: 0.68, green: 0.0, blue: 0.85, alpha: 1.0) // Magenta/Purple #C586C0
@@ -100,6 +105,7 @@ public final class NppSyntaxHighlighter {
 
         if let udl = userDefinedLanguage {
             applyUserDefinedLanguage(udl, to: textStorage, string: string,
+                                     baseFont: effectiveFont,
                                      keywordColors: [declarationColor, controlFlowColor, typeColor,
                                                      constantColor, functionColor, preprocColor,
                                                      variableColor, operatorColor],
@@ -249,40 +255,133 @@ public final class NppSyntaxHighlighter {
         }
     }
 
+    private static func applyUDLStyle(named styleName: String,
+                                      language: NppUserDefineLanguage,
+                                      range: NSRange,
+                                      textStorage: NSTextStorage,
+                                      fallbackFgColor: NSColor,
+                                      baseFont: NSFont,
+                                      defaultItalicForComments: Bool = false) {
+        let fgColor = udlColor(named: styleName, in: language) ?? fallbackFgColor
+        textStorage.addAttribute(.foregroundColor, value: fgColor, range: range)
+
+        if let bgHex = language.styleBackgrounds[styleName], let bgColor = colorFromHex(bgHex) {
+            textStorage.addAttribute(.backgroundColor, value: bgColor, range: range)
+        }
+
+        let fontStyle = language.styleFontStyles[styleName] ?? (defaultItalicForComments ? 2 : 0)
+        let fontName = language.styleFontNames[styleName]
+        let fontSize = language.styleFontSizes[styleName]
+
+        var targetFont = baseFont
+        if let fn = fontName, !fn.isEmpty {
+            let size = fontSize.map { CGFloat($0) } ?? baseFont.pointSize
+            if let custom = NSFont(name: fn, size: size) {
+                targetFont = custom
+            }
+        } else if let fs = fontSize, CGFloat(fs) != baseFont.pointSize {
+            if let sized = NSFont(descriptor: baseFont.fontDescriptor, size: CGFloat(fs)) {
+                targetFont = sized
+            }
+        }
+
+        if (fontStyle & 1) != 0 { // Bold
+            targetFont = NSFontManager.shared.convert(targetFont, toHaveTrait: .boldFontMask)
+        }
+        if (fontStyle & 2) != 0 { // Italic
+            targetFont = NSFontManager.shared.convert(targetFont, toHaveTrait: .italicFontMask)
+        }
+        textStorage.addAttribute(.font, value: targetFont, range: range)
+
+        if (fontStyle & 4) != 0 { // Underline
+            textStorage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range)
+        }
+    }
+
+    private static func applyPatternWithUDLStyle(_ pattern: String,
+                                                 in string: String,
+                                                 styleName: String,
+                                                 language: NppUserDefineLanguage,
+                                                 textStorage: NSTextStorage,
+                                                 fallbackFgColor: NSColor,
+                                                 baseFont: NSFont,
+                                                 options: NSRegularExpression.Options = [],
+                                                 defaultItalicForComments: Bool = false) {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
+        let matches = regex.matches(in: string, options: [], range: NSRange(location: 0, length: (string as NSString).length))
+        for match in matches {
+            applyUDLStyle(named: styleName, language: language, range: match.range,
+                          textStorage: textStorage, fallbackFgColor: fallbackFgColor,
+                          baseFont: baseFont, defaultItalicForComments: defaultItalicForComments)
+        }
+    }
+
     private static func applyUserDefinedLanguage(_ language: NppUserDefineLanguage,
                                                  to storage: NSTextStorage, string: String,
+                                                 baseFont: NSFont,
                                                  keywordColors: [NSColor], numberColor: NSColor,
                                                  operatorColor: NSColor, commentColor: NSColor) {
+        let fullRange = NSRange(location: 0, length: (string as NSString).length)
+        guard fullRange.length > 0 else { return }
+
+        // 0. Base DEFAULT Style
+        if let defaultFg = udlColor(named: "DEFAULT", in: language) {
+            storage.addAttribute(.foregroundColor, value: defaultFg, range: fullRange)
+        }
+        if let defaultBg = udlBgColor(named: "DEFAULT", in: language) {
+            storage.addAttribute(.backgroundColor, value: defaultBg, range: fullRange)
+        }
+        if let defFs = language.styleFontStyles["DEFAULT"] {
+            var defFont = baseFont
+            if (defFs & 1) != 0 { defFont = NSFontManager.shared.convert(defFont, toHaveTrait: .boldFontMask) }
+            if (defFs & 2) != 0 { defFont = NSFontManager.shared.convert(defFont, toHaveTrait: .italicFontMask) }
+            storage.addAttribute(.font, value: defFont, range: fullRange)
+            if (defFs & 4) != 0 {
+                storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: fullRange)
+            }
+        }
+
         let options: NSRegularExpression.Options = language.ignoreCase ? [.caseInsensitive] : []
+
+        // 1. Keywords 1..8
         for group in 1...8 {
             let key = "Keywords\(group)"
             let patterns = NppUDLCodec.keywordPatterns(from: language.keywordLists[key] ?? "",
                                                         prefixMode: language.prefixModes[key] == true)
             guard !patterns.isEmpty else { continue }
             let pattern = patterns.joined(separator: "|")
-            let color = udlColor(named: "KEYWORDS\(group)", in: language) ?? keywordColors[group - 1]
-            applyPattern(pattern, in: string, color: color, textStorage: storage, options: options)
+            let fallback = keywordColors[group - 1]
+            applyPatternWithUDLStyle(pattern, in: string, styleName: "KEYWORDS\(group)",
+                                    language: language, textStorage: storage,
+                                    fallbackFgColor: fallback, baseFont: baseFont, options: options)
         }
-        let numericColor = udlColor(named: "NUMBERS", in: language) ?? numberColor
+
+        // 2. Numbers
+        let numericFallback = numberColor
         for pattern in NppUDLCodec.numberPatterns(for: language) {
-            applyPattern(pattern, in: string, color: numericColor, textStorage: storage)
+            applyPatternWithUDLStyle(pattern, in: string, styleName: "NUMBERS",
+                                    language: language, textStorage: storage,
+                                    fallbackFgColor: numericFallback, baseFont: baseFont)
         }
+
+        // 3. Operators 1
         let operators = (language.keywordLists["Operators1"] ?? "")
             .split(whereSeparator: { $0.isWhitespace }).map(String.init)
         if !operators.isEmpty {
             let pattern = operators.sorted { $0.count > $1.count }
                 .map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
-            applyPattern(pattern, in: string,
-                         color: udlColor(named: "OPERATORS", in: language) ?? operatorColor,
-                         textStorage: storage)
+            applyPatternWithUDLStyle(pattern, in: string, styleName: "OPERATORS",
+                                    language: language, textStorage: storage,
+                                    fallbackFgColor: operatorColor, baseFont: baseFont)
         }
+
+        // 4. Operators 2
         let backwardOperators = NppUDLCodec.keywordPatterns(
             from: language.keywordLists["Operators2"] ?? "", prefixMode: false
         )
         if !backwardOperators.isEmpty,
            let regex = try? NSRegularExpression(pattern: backwardOperators.joined(separator: "|"), options: options) {
             let source = string as NSString
-            let color = udlColor(named: "OPERATORS", in: language) ?? operatorColor
             for match in regex.matches(in: string, range: NSRange(location: 0, length: source.length)) {
                 let before = source.substring(to: match.range.location)
                 let after = source.substring(from: NSMaxRange(match.range))
@@ -291,32 +390,49 @@ public final class NppSyntaxHighlighter {
                 let rightSeparated = after.isEmpty || after.first?.isWhitespace == true ||
                     operators.contains { after.hasPrefix($0) }
                 if leftSeparated && rightSeparated {
-                    storage.addAttribute(.foregroundColor, value: color, range: match.range)
+                    applyUDLStyle(named: "OPERATORS", language: language, range: match.range,
+                                  textStorage: storage, fallbackFgColor: operatorColor, baseFont: baseFont)
                 }
             }
         }
-        applyUserDefinedDelimiters(language, to: storage, string: string)
+
+        // 5. Delimiters 1..8
+        applyUserDefinedDelimiters(language, to: storage, string: string, baseFont: baseFont)
+
+        // 6. Comments (Line & Block)
         let comments = language.keywordLists["Comments"] ?? ""
         let line = NppUDLCodec.commentToken(0, in: comments)
         if !line.isEmpty {
-            let pattern = NSRegularExpression.escapedPattern(for: line) + ".*$"
-            applyPattern(pattern, in: string,
-                         color: udlColor(named: "LINE COMMENTS", in: language) ?? commentColor,
-                         textStorage: storage, options: [.anchorsMatchLines])
+            let escapedLine = NSRegularExpression.escapedPattern(for: line)
+            let pattern: String
+            switch language.forcePureLC {
+            case 1: // Force at beginning of line
+                pattern = "^" + escapedLine + ".*$"
+            case 2: // Allow preceding whitespace
+                pattern = "^[ \\t]*" + escapedLine + ".*$"
+            default: // Anywhere
+                pattern = escapedLine + ".*$"
+            }
+            applyPatternWithUDLStyle(pattern, in: string, styleName: "LINE COMMENTS",
+                                    language: language, textStorage: storage,
+                                    fallbackFgColor: commentColor, baseFont: baseFont,
+                                    options: [.anchorsMatchLines], defaultItalicForComments: true)
         }
+
         let blockOpen = NppUDLCodec.commentToken(3, in: comments)
         let blockClose = NppUDLCodec.commentToken(4, in: comments)
         if !blockOpen.isEmpty, !blockClose.isEmpty {
             let pattern = NSRegularExpression.escapedPattern(for: blockOpen) + "[\\s\\S]*?" +
                 NSRegularExpression.escapedPattern(for: blockClose)
-            applyPattern(pattern, in: string,
-                         color: udlColor(named: "COMMENTS", in: language) ?? commentColor,
-                         textStorage: storage)
+            applyPatternWithUDLStyle(pattern, in: string, styleName: "COMMENTS",
+                                    language: language, textStorage: storage,
+                                    fallbackFgColor: commentColor, baseFont: baseFont,
+                                    defaultItalicForComments: true)
         }
     }
 
     private static func applyUserDefinedDelimiters(_ language: NppUserDefineLanguage,
-                                                    to storage: NSTextStorage, string: String) {
+                                                    to storage: NSTextStorage, string: String, baseFont: NSFont) {
         let source = string as NSString
         let rules = language.keywordLists["Delimiters"] ?? ""
         for group in 1...8 {
@@ -325,7 +441,6 @@ public final class NppSyntaxHighlighter {
             let escape = NppUDLCodec.commentToken(first + 1, in: rules)
             let closing = NppUDLCodec.commentToken(first + 2, in: rules)
             guard !opening.isEmpty, !closing.isEmpty else { continue }
-            let color = udlColor(named: "DELIMITERS\(group)", in: language) ?? NSColor.systemOrange
             var position = 0
             while position < source.length {
                 let openRange = source.range(of: opening, range: NSRange(location: position,
@@ -363,21 +478,31 @@ public final class NppSyntaxHighlighter {
                     }
                 }
                 if end > openRange.location {
-                    storage.addAttribute(.foregroundColor, value: color,
-                                         range: NSRange(location: openRange.location,
-                                                        length: end - openRange.location))
+                    let delimRange = NSRange(location: openRange.location, length: end - openRange.location)
+                    applyUDLStyle(named: "DELIMITERS\(group)", language: language, range: delimRange,
+                                  textStorage: storage, fallbackFgColor: NSColor.systemOrange, baseFont: baseFont)
                 }
                 position = max(end, contentStart)
             }
         }
     }
 
+    private static func colorFromHex(_ hex: String) -> NSColor? {
+        let clean = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        guard clean.count == 6, let value = Int(clean, radix: 16) else { return nil }
+        return NSColor(calibratedRed: CGFloat((value >> 16) & 0xFF) / 255.0,
+                       green: CGFloat((value >> 8) & 0xFF) / 255.0,
+                       blue: CGFloat(value & 0xFF) / 255.0, alpha: 1.0)
+    }
+
     private static func udlColor(named name: String, in language: NppUserDefineLanguage) -> NSColor? {
-        guard let hex = language.styleForegrounds[name], hex.count == 6,
-              let value = Int(hex, radix: 16) else { return nil }
-        return NSColor(calibratedRed: CGFloat((value >> 16) & 0xFF) / 255,
-                       green: CGFloat((value >> 8) & 0xFF) / 255,
-                       blue: CGFloat(value & 0xFF) / 255, alpha: 1)
+        guard let hex = language.styleForegrounds[name] else { return nil }
+        return colorFromHex(hex)
+    }
+
+    private static func udlBgColor(named name: String, in language: NppUserDefineLanguage) -> NSColor? {
+        guard let hex = language.styleBackgrounds[name] else { return nil }
+        return colorFromHex(hex)
     }
 
     private static func collectRanges(_ pattern: String, in string: String, options: NSRegularExpression.Options, into ranges: inout [NSRange]) {

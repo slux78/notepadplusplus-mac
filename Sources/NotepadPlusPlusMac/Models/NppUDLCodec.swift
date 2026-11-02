@@ -16,6 +16,10 @@ public enum NppUDLCodec {
             var keywords: [String: String] = [:]
             var prefixModes: [String: Bool] = [:]
             var styles: [String: String] = [:]
+            var styleBackgrounds: [String: String] = [:]
+            var styleFontStyles: [String: Int] = [:]
+            var styleFontNames: [String: String] = [:]
+            var styleFontSizes: [String: Int] = [:]
             if let lists = element.elements(forName: "KeywordLists").first {
                 for entry in lists.elements(forName: "Keywords") {
                     if let key = entry.attribute(forName: "name")?.stringValue {
@@ -29,12 +33,29 @@ public enum NppUDLCodec {
             }
             if let styleList = element.elements(forName: "Styles").first {
                 for entry in styleList.elements(forName: "WordsStyle") {
-                    if let key = entry.attribute(forName: "name")?.stringValue,
-                       let color = entry.attribute(forName: "fgColor")?.stringValue {
-                        styles[key] = color
+                    if let key = entry.attribute(forName: "name")?.stringValue {
+                        if let color = entry.attribute(forName: "fgColor")?.stringValue, !color.isEmpty {
+                            styles[key] = color
+                        }
+                        if let bg = entry.attribute(forName: "bgColor")?.stringValue, !bg.isEmpty {
+                            styleBackgrounds[key] = bg
+                        }
+                        if let fs = entry.attribute(forName: "fontStyle")?.stringValue, let fsInt = Int(fs) {
+                            styleFontStyles[key] = fsInt
+                        }
+                        if let fn = entry.attribute(forName: "fontName")?.stringValue, !fn.isEmpty {
+                            styleFontNames[key] = fn
+                        }
+                        if let fsz = entry.attribute(forName: "fontSize")?.stringValue, let fszInt = Int(fsz), fszInt > 0 {
+                            styleFontSizes[key] = fszInt
+                        }
                     }
                 }
             }
+            let allowFoldOfComments = global?.attribute(forName: "allowFoldOfComments")?.stringValue == "yes"
+            let foldCompact = global?.attribute(forName: "foldCompact")?.stringValue == "yes"
+            let forcePureLC = Int(global?.attribute(forName: "forcePureLC")?.stringValue ?? "0") ?? 0
+
             return NppUserDefineLanguage(
                 name: name,
                 extensions: element.attribute(forName: "ext")?.stringValue ?? "",
@@ -43,6 +64,13 @@ public enum NppUDLCodec {
                 prefixModes: prefixModes,
                 decimalSeparator: Int(global?.attribute(forName: "decimalSeparator")?.stringValue ?? "0") ?? 0,
                 styleForegrounds: styles,
+                styleBackgrounds: styleBackgrounds,
+                styleFontStyles: styleFontStyles,
+                styleFontNames: styleFontNames,
+                styleFontSizes: styleFontSizes,
+                allowFoldOfComments: allowFoldOfComments,
+                foldCompact: foldCompact,
+                forcePureLC: forcePureLC,
                 sourceXML: element.xmlString
             )
         }
@@ -64,15 +92,9 @@ public enum NppUDLCodec {
         let settings = child(named: "Settings", in: userLang)
         let global = child(named: "Global", in: settings)
         setAttribute("caseIgnored", value: language.ignoreCase ? "yes" : "no", on: global)
-        if global.attribute(forName: "allowFoldOfComments") == nil {
-            setAttribute("allowFoldOfComments", value: "no", on: global)
-        }
-        if global.attribute(forName: "foldCompact") == nil {
-            setAttribute("foldCompact", value: "no", on: global)
-        }
-        if global.attribute(forName: "forcePureLC") == nil {
-            setAttribute("forcePureLC", value: "0", on: global)
-        }
+        setAttribute("allowFoldOfComments", value: language.allowFoldOfComments ? "yes" : "no", on: global)
+        setAttribute("foldCompact", value: language.foldCompact ? "yes" : "no", on: global)
+        setAttribute("forcePureLC", value: String(language.forcePureLC), on: global)
         setAttribute("decimalSeparator", value: String(language.decimalSeparator), on: global)
         let prefix = child(named: "Prefix", in: settings)
         for group in 1...8 {
@@ -116,11 +138,51 @@ public enum NppUDLCodec {
             userLang.addChild(styles)
         }
         if let styles = userLang.elements(forName: "Styles").first {
+            var existingNames = Set<String>()
             for entry in styles.elements(forName: "WordsStyle") {
-                if let name = entry.attribute(forName: "name")?.stringValue,
-                   let color = language.styleForegrounds[name] {
+                if let name = entry.attribute(forName: "name")?.stringValue {
+                    existingNames.insert(name)
+                    if let color = language.styleForegrounds[name] {
+                        setAttribute("fgColor", value: color, on: entry)
+                    }
+                    if let bg = language.styleBackgrounds[name] {
+                        setAttribute("bgColor", value: bg, on: entry)
+                    }
+                    if let fs = language.styleFontStyles[name] {
+                        setAttribute("fontStyle", value: String(fs), on: entry)
+                    }
+                    if let fn = language.styleFontNames[name] {
+                        setAttribute("fontName", value: fn, on: entry)
+                    }
+                    if let fsz = language.styleFontSizes[name] {
+                        setAttribute("fontSize", value: String(fsz), on: entry)
+                    }
+                }
+            }
+            let allConfiguredNames = Set(language.styleForegrounds.keys)
+                .union(language.styleBackgrounds.keys)
+                .union(language.styleFontStyles.keys)
+                .union(language.styleFontNames.keys)
+                .union(language.styleFontSizes.keys)
+            for name in allConfiguredNames.subtracting(existingNames).sorted() {
+                let entry = XMLElement(name: "WordsStyle")
+                setAttribute("name", value: name, on: entry)
+                if let color = language.styleForegrounds[name] {
                     setAttribute("fgColor", value: color, on: entry)
                 }
+                if let bg = language.styleBackgrounds[name] {
+                    setAttribute("bgColor", value: bg, on: entry)
+                }
+                if let fs = language.styleFontStyles[name] {
+                    setAttribute("fontStyle", value: String(fs), on: entry)
+                }
+                if let fn = language.styleFontNames[name] {
+                    setAttribute("fontName", value: fn, on: entry)
+                }
+                if let fsz = language.styleFontSizes[name] {
+                    setAttribute("fontSize", value: String(fsz), on: entry)
+                }
+                styles.addChild(entry)
             }
         }
 
@@ -217,10 +279,12 @@ public enum NppUDLCodec {
         }
         var atoms = [decimal]
         for item in keywordItems(from: lists["Numbers, prefix1"] ?? "") {
-            atoms.append(NSRegularExpression.escapedPattern(for: item) + digits)
+            let base = item.lowercased().hasSuffix("x") ? "[0-9a-fA-F]+" : digits
+            atoms.append(NSRegularExpression.escapedPattern(for: item) + base)
         }
         for item in keywordItems(from: lists["Numbers, prefix2"] ?? "") {
-            atoms.append(NSRegularExpression.escapedPattern(for: item) + digitOrExtras(extras1))
+            let base = item.lowercased().hasSuffix("x") ? "[0-9a-fA-F]+" : digitOrExtras(extras1)
+            atoms.append(NSRegularExpression.escapedPattern(for: item) + base)
         }
         for item in keywordItems(from: lists["Numbers, suffix1"] ?? "") {
             atoms.append(digitOrExtras(extras2) + NSRegularExpression.escapedPattern(for: item))

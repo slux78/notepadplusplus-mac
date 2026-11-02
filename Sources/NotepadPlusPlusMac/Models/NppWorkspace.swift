@@ -27,6 +27,13 @@ public struct NppUserDefineLanguage: Codable, Equatable, Identifiable {
     public var prefixModes: [String: Bool]
     public var decimalSeparator: Int
     public var styleForegrounds: [String: String]
+    public var styleBackgrounds: [String: String]
+    public var styleFontStyles: [String: Int]
+    public var styleFontNames: [String: String]
+    public var styleFontSizes: [String: Int]
+    public var allowFoldOfComments: Bool
+    public var foldCompact: Bool
+    public var forcePureLC: Int
     /// Original UserLang element, retained so unedited styles and advanced rules survive export.
     public var sourceXML: String?
 
@@ -34,6 +41,13 @@ public struct NppUserDefineLanguage: Codable, Equatable, Identifiable {
                 keywordLists: [String: String] = [:], prefixModes: [String: Bool] = [:],
                 decimalSeparator: Int = 0,
                 styleForegrounds: [String: String] = [:],
+                styleBackgrounds: [String: String] = [:],
+                styleFontStyles: [String: Int] = [:],
+                styleFontNames: [String: String] = [:],
+                styleFontSizes: [String: Int] = [:],
+                allowFoldOfComments: Bool = false,
+                foldCompact: Bool = false,
+                forcePureLC: Int = 0,
                 sourceXML: String? = nil) {
         self.id = id
         self.name = name
@@ -43,11 +57,20 @@ public struct NppUserDefineLanguage: Codable, Equatable, Identifiable {
         self.prefixModes = prefixModes
         self.decimalSeparator = decimalSeparator
         self.styleForegrounds = styleForegrounds
+        self.styleBackgrounds = styleBackgrounds
+        self.styleFontStyles = styleFontStyles
+        self.styleFontNames = styleFontNames
+        self.styleFontSizes = styleFontSizes
+        self.allowFoldOfComments = allowFoldOfComments
+        self.foldCompact = foldCompact
+        self.forcePureLC = forcePureLC
         self.sourceXML = sourceXML
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, extensions, ignoreCase, keywordLists, prefixModes, decimalSeparator, styleForegrounds, sourceXML
+        case id, name, extensions, ignoreCase, keywordLists, prefixModes, decimalSeparator
+        case styleForegrounds, styleBackgrounds, styleFontStyles, styleFontNames, styleFontSizes
+        case allowFoldOfComments, foldCompact, forcePureLC, sourceXML
     }
 
     public init(from decoder: Decoder) throws {
@@ -60,6 +83,13 @@ public struct NppUserDefineLanguage: Codable, Equatable, Identifiable {
         prefixModes = try values.decodeIfPresent([String: Bool].self, forKey: .prefixModes) ?? [:]
         decimalSeparator = try values.decodeIfPresent(Int.self, forKey: .decimalSeparator) ?? 0
         styleForegrounds = try values.decodeIfPresent([String: String].self, forKey: .styleForegrounds) ?? [:]
+        styleBackgrounds = try values.decodeIfPresent([String: String].self, forKey: .styleBackgrounds) ?? [:]
+        styleFontStyles = try values.decodeIfPresent([String: Int].self, forKey: .styleFontStyles) ?? [:]
+        styleFontNames = try values.decodeIfPresent([String: String].self, forKey: .styleFontNames) ?? [:]
+        styleFontSizes = try values.decodeIfPresent([String: Int].self, forKey: .styleFontSizes) ?? [:]
+        allowFoldOfComments = try values.decodeIfPresent(Bool.self, forKey: .allowFoldOfComments) ?? false
+        foldCompact = try values.decodeIfPresent(Bool.self, forKey: .foldCompact) ?? false
+        forcePureLC = try values.decodeIfPresent(Int.self, forKey: .forcePureLC) ?? 0
         sourceXML = try values.decodeIfPresent(String.self, forKey: .sourceXML)
     }
 }
@@ -331,6 +361,7 @@ public final class NppWorkspace: ObservableObject {
         set { compactLanguageMenu = newValue }
     }
     @Published public var showUserDefineDialog: Bool = false
+    @Published public var isUserDefineDialogDocked: Bool = false
     @Published public var userDefinedLanguages: [NppUserDefineLanguage] = []
     @Published public var currentSearchResultIndex: Int = -1
     // Sprint 2: Incremental Search & Highlighting State (searching.md:380-410)
@@ -1489,6 +1520,17 @@ public final class NppWorkspace: ObservableObject {
         userDefinedLanguages = loaded
     }
 
+    public func rehighlightActiveDocument() {
+        if let document = activeDocument,
+           let language = userDefinedLanguage(named: document.language),
+           let textView = activeTextView, let storage = textView.textStorage {
+            NppSyntaxHighlighter.highlight(textStorage: storage, language: document.language,
+                                           isDarkMode: currentTheme.isDark,
+                                           baseFont: textView.font, theme: currentTheme,
+                                           userDefinedLanguage: language)
+        }
+    }
+
     public func saveUserDefinedLanguages(to storageDirectory: URL? = nil) {
         let directory = storageDirectory ?? Self.userDefinedLanguagesDirectory
         do {
@@ -1498,14 +1540,7 @@ public final class NppWorkspace: ObservableObject {
         } catch {
             NSLog("Failed to save user defined languages: %@", error.localizedDescription)
         }
-        if let document = activeDocument,
-           let language = userDefinedLanguage(named: document.language),
-           let textView = activeTextView, let storage = textView.textStorage {
-            NppSyntaxHighlighter.highlight(textStorage: storage, language: document.language,
-                                           isDarkMode: currentTheme.isDark,
-                                           baseFont: textView.font, theme: currentTheme,
-                                           userDefinedLanguage: language)
-        }
+        rehighlightActiveDocument()
     }
 
     public func userDefinedLanguage(for url: URL) -> NppUserDefineLanguage? {
