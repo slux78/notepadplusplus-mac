@@ -38,6 +38,24 @@ public struct NppMainWindowView: View {
                     Divider()
                 }
 
+                if workspace.showProjectPanel1 {
+                    NppProjectPanelView(workspace: workspace, panelIndex: 1)
+                        .frame(width: 220)
+                    Divider()
+                }
+
+                if workspace.showProjectPanel2 {
+                    NppProjectPanelView(workspace: workspace, panelIndex: 2)
+                        .frame(width: 220)
+                    Divider()
+                }
+
+                if workspace.showProjectPanel3 {
+                    NppProjectPanelView(workspace: workspace, panelIndex: 3)
+                        .frame(width: 220)
+                    Divider()
+                }
+
                 if workspace.showFunctionList {
                     NppFunctionListView(workspace: workspace)
                         .frame(width: 210)
@@ -744,5 +762,14 @@ public struct NppSplitterBarView: View {
                     workspace.splitRatio = max(0.15, min(0.85, newRatio))
                 }
         )
+        // MARK: - Authentic Notepad++ Splitter Context Menu (SplitterContainer.cpp:255-270, views.md:112)
+        .contextMenu {
+            Button(workspace.tr("Rotate to right")) {
+                workspace.rotateSplitterRight()
+            }
+            Button(workspace.tr("Rotate to left")) {
+                workspace.rotateSplitterLeft()
+            }
+        }
     }
 }

@@ -631,7 +631,43 @@ public struct NppLocalization {
         "Expand All": "모두 펼치기",
         "Clear All": "모두 지우기",
         "Find what:": "찾을 내용:",
-        "Replace with:": "바꿀 내용:"
+        "Replace with:": "바꿀 내용:",
+
+        // Splitter Context Menu & Rotation (views.md:112 & SplitterContainer.cpp:255-270)
+        "splitter-rotate-left": "왼쪽으로 회전",
+        "Rotate to left": "왼쪽으로 회전",
+        "splitter-rotate-right": "오른쪽으로 회전",
+        "Rotate to right": "오른쪽으로 회전",
+        "Move to Other View": "다른 보기 창으로 이동",
+        "Clone to Other View": "다른 보기 창으로 복제",
+
+        // Milestone 1: Project Panels 1~3 & Find in Projects (korean.xml <ProjectManager> & <Find>)
+        "Project Panels": "프로젝트 패널",
+        "Project Panel 1": "프로젝트 영역 1",
+        "Project Panel 2": "프로젝트 영역 2",
+        "Project Panel 3": "프로젝트 영역 3",
+        "Workspace": "작업 영역",
+        "New Workspace": "새 작업 영역",
+        "Open Workspace": "작업 영역 열기",
+        "Open Workspace...": "작업 영역 열기...",
+        "Reload Workspace": "작업 영역 다시 불러오기",
+        "Save Workspace": "저장",
+        "Add New Project": "새 프로젝트 추가",
+        "Project Name": "프로젝트 이름",
+        "Folder Name": "폴더 이름",
+        "Add Folder": "폴더 추가",
+        "Add Files...": "파일 추가...",
+        "Add Files from Directory...": "디렉토리에서 파일 추가...",
+        "Modify File Path": "파일 경로 수정",
+        "Find in Projects...": "프로젝트에서 찾기...",
+        "Find in Projects": "프로젝트에서 찾기",
+        "Find All in Projects": "프로젝트에서 모두 찾기",
+        "Replace in Projects": "프로젝트에서 바꾸기",
+        "Open in Editor": "편집기에서 열기",
+        "Workspace has been modified. Save changes?": "작업 영역이 변경되었습니다. 저장하시겠습니까?",
+        "Reload will discard all changes. Continue?": "작업 영역이 변경되었습니다. 다시 읽으면 모든 변경 사항이 취소됩니다. 계속하시겠습니까?",
+        "Are you sure?": "맞습니까?",
+        "Are you sure you want to replace all occurrences in the selected projects?": "선택한 프로젝트 영역의 모든 문서에서 바꾸시겠습니까?"
     ]
 
     public static let japaneseTable: [String: String] = [
@@ -642,7 +678,10 @@ public struct NppLocalization {
         "Save a Copy As...": "コピーを保存...", "Save All": "すべて保存", "Rename...": "名前を変更...",
         "Close": "閉じる", "Close All": "すべて閉じる", "Preferences...": "環境設定...",
         "Find...": "検索...", "Replace...": "置換...", "Find in Files...": "ファイルから検索...",
-        "Mark...": "マーク...", "Find": "検索", "Replace": "置換", "Find in Files": "ファイルから検索", "Mark": "マーク"
+        "Mark...": "マーク...", "Find": "検索", "Replace": "置換", "Find in Files": "ファイルから検索", "Mark": "マーク",
+        "splitter-rotate-left": "左回りに回す", "Rotate to left": "左回りに回す",
+        "splitter-rotate-right": "右回りに回す", "Rotate to right": "右回りに回す",
+        "Move to Other View": "もう一つの表示へ移動", "Clone to Other View": "もう一つの表示へ複製"
     ]
 
     public static let simplifiedChineseTable: [String: String] = [
@@ -653,7 +692,10 @@ public struct NppLocalization {
         "Save a Copy As...": "将副本另存为...", "Save All": "全部保存", "Rename...": "重命名...",
         "Close": "关闭", "Close All": "全部关闭", "Preferences...": "首选项...",
         "Find...": "查找...", "Replace...": "替换...", "Find in Files...": "在文件中查找...",
-        "Mark...": "标记...", "Find": "查找", "Replace": "替换", "Find in Files": "文件查找", "Mark": "标记"
+        "Mark...": "标记...", "Find": "查找", "Replace": "替换", "Find in Files": "文件查找", "Mark": "标记",
+        "splitter-rotate-left": "向左旋转", "Rotate to left": "向左旋转",
+        "splitter-rotate-right": "向右旋转", "Rotate to right": "向右旋转",
+        "Move to Other View": "移动到另一视图", "Clone to Other View": "复制到另一视图"
     ]
 
     public static let traditionalChineseTable: [String: String] = [
@@ -664,7 +706,10 @@ public struct NppLocalization {
         "Save a Copy As...": "將複本另存為...", "Save All": "全部儲存", "Rename...": "重新命名...",
         "Close": "關閉", "Close All": "全部關閉", "Preferences...": "偏好設定...",
         "Find...": "尋找...", "Replace...": "取代...", "Find in Files...": "在檔案中尋找...",
-        "Mark...": "標記...", "Find": "尋找", "Replace": "取代", "Find in Files": "在檔案中尋找", "Mark": "標記"
+        "Mark...": "標記...", "Find": "尋找", "Replace": "取代", "Find in Files": "在檔案中尋找", "Mark": "標記",
+        "splitter-rotate-left": "向左旋轉", "Rotate to left": "向左旋轉",
+        "splitter-rotate-right": "向右旋轉", "Rotate to right": "向右旋轉",
+        "Move to Other View": "移動到另一視圖", "Clone to Other View": "複製到另一視圖"
     ]
 
     public static let frenchTable: [String: String] = [
@@ -672,7 +717,10 @@ public struct NppLocalization {
         "Encoding": "Encodage", "Language": "Langage", "Settings": "Paramètres", "Tools": "Outils",
         "Macro": "Macro", "Run": "Exécution", "Plugins": "Extensions", "Window": "Fenêtre",
         "New": "Nouveau", "Open...": "Ouvrir...", "Save": "Enregistrer", "Save As...": "Enregistrer sous...",
-        "Rename...": "Renommer...", "Close": "Fermer", "Close All": "Tout fermer", "Preferences...": "Préférences..."
+        "Rename...": "Renommer...", "Close": "Fermer", "Close All": "Tout fermer", "Preferences...": "Préférences...",
+        "splitter-rotate-left": "Tourner vers la gauche", "Rotate to left": "Tourner vers la gauche",
+        "splitter-rotate-right": "Tourner vers la droite", "Rotate to right": "Tourner vers la droite",
+        "Move to Other View": "Déplacer vers l'autre vue", "Clone to Other View": "Dupliquer vers l'autre vue"
     ]
 
     public static let germanTable: [String: String] = [
@@ -680,7 +728,10 @@ public struct NppLocalization {
         "Encoding": "Kodierung", "Language": "Sprache", "Settings": "Einstellungen", "Tools": "Werkzeuge",
         "Macro": "Makro", "Run": "Ausführen", "Plugins": "Erweiterungen", "Window": "Fenster",
         "New": "Neu", "Open...": "Öffnen...", "Save": "Speichern", "Save As...": "Speichern unter...",
-        "Rename...": "Umbenennen...", "Close": "Schließen", "Close All": "Alle schließen", "Preferences...": "Einstellungen..."
+        "Rename...": "Umbenennen...", "Close": "Schließen", "Close All": "Alle schließen", "Preferences...": "Einstellungen...",
+        "splitter-rotate-left": "Nach links drehen", "Rotate to left": "Nach links drehen",
+        "splitter-rotate-right": "Nach rechts drehen", "Rotate to right": "Nach rechts drehen",
+        "Move to Other View": "In die andere Ansicht verschieben", "Clone to Other View": "In die andere Ansicht duplizieren"
     ]
 
     public static let spanishTable: [String: String] = [
@@ -688,7 +739,10 @@ public struct NppLocalization {
         "Encoding": "Codificación", "Language": "Lenguaje", "Settings": "Configuración", "Tools": "Herramientas",
         "Macro": "Macro", "Run": "Ejecutar", "Plugins": "Plugins", "Window": "Ventana",
         "New": "Nuevo", "Open...": "Abrir...", "Save": "Guardar", "Save As...": "Guardar como...",
-        "Rename...": "Renombrar...", "Close": "Cerrar", "Close All": "Cerrar todo", "Preferences...": "Preferencias..."
+        "Rename...": "Renombrar...", "Close": "Cerrar", "Close All": "Cerrar todo", "Preferences...": "Preferencias...",
+        "splitter-rotate-left": "Girar a la izquierda", "Rotate to left": "Girar a la izquierda",
+        "splitter-rotate-right": "Girar a la derecha", "Rotate to right": "Girar a la derecha",
+        "Move to Other View": "Mover a otra vista", "Clone to Other View": "Clonar a otra vista"
     ]
 
     public static let italianTable: [String: String] = [
@@ -696,6 +750,9 @@ public struct NppLocalization {
         "Encoding": "Formato", "Language": "Linguaggio", "Settings": "Impostazioni", "Tools": "Strumenti",
         "Macro": "Macro", "Run": "Esegui", "Plugins": "Plugin", "Window": "Finestra",
         "New": "Nuovo", "Open...": "Apri...", "Save": "Salva", "Save As...": "Salva con nome...",
-        "Rename...": "Rinomina...", "Close": "Chiudi", "Close All": "Chiudi tutti", "Preferences...": "Preferenze..."
+        "Rename...": "Rinomina...", "Close": "Chiudi", "Close All": "Chiudi tutti", "Preferences...": "Preferenze...",
+        "splitter-rotate-left": "Ruota a sinistra", "Rotate to left": "Ruota a sinistra",
+        "splitter-rotate-right": "Ruota a destra", "Rotate to right": "Ruota a destra",
+        "Move to Other View": "Sposta nell'altra vista", "Clone to Other View": "Clona nell'altra vista"
     ]
 }
