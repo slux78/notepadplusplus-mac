@@ -1,6 +1,37 @@
 import Foundation
 import NppCore
 
+// MARK: - Multi-Caret Selection Range (Scintilla Parity: anchor + caret)
+public struct NppSelectionRange: Equatable, Hashable {
+    public var anchor: Int
+    public var caret: Int
+
+    public init(anchor: Int, caret: Int) {
+        self.anchor = anchor
+        self.caret = caret
+    }
+
+    public init(location: Int, length: Int = 0) {
+        self.anchor = location
+        self.caret = location + length
+    }
+
+    public init(range: NSRange) {
+        self.anchor = range.location
+        self.caret = range.location + range.length
+    }
+
+    public var range: NSRange {
+        let loc = min(anchor, caret)
+        let len = abs(caret - anchor)
+        return NSRange(location: loc, length: len)
+    }
+
+    public var isEmpty: Bool {
+        return anchor == caret
+    }
+}
+
 public final class NppDocument: ObservableObject, Identifiable {
     public let id = UUID()
 
@@ -24,6 +55,25 @@ public final class NppDocument: ObservableObject, Identifiable {
     @Published public var cursorCol: Int = 1
     @Published public var cursorPos: Int = 0
     @Published public var selectionLength: Int = 0
+
+    // Multi-Caret Data Model (Scintilla / Notepad++ Parity)
+    @Published public var selectionRanges: [NppSelectionRange] = [NppSelectionRange(anchor: 0, caret: 0)]
+    @Published public var primarySelectionIndex: Int = 0
+
+    public var primarySelectionRange: NppSelectionRange {
+        if primarySelectionIndex < selectionRanges.count {
+            return selectionRanges[primarySelectionIndex]
+        }
+        return selectionRanges.first ?? NppSelectionRange(anchor: 0, caret: 0)
+    }
+
+    public func setSelectionRanges(_ ranges: [NSRange], primaryIndex: Int = 0) {
+        self.selectionRanges = ranges.isEmpty ? [NppSelectionRange(anchor: 0, caret: 0)] : ranges.map { NppSelectionRange(range: $0) }
+        self.primarySelectionIndex = max(0, min(primaryIndex, self.selectionRanges.count - 1))
+        let primary = self.selectionRanges[self.primarySelectionIndex].range
+        self.cursorPos = primary.location
+        self.selectionLength = primary.length
+    }
 
     public func toggleBookmark(line: Int) {
         if bookmarkedLines.contains(line) {

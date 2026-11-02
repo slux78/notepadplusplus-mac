@@ -386,6 +386,11 @@ public struct NppEditorView: NSViewRepresentable {
                 parent.document.cursorLine = line
                 parent.document.cursorCol = col
             }
+
+            parent.document.selectionRanges = tv.selectedRanges.map { NppSelectionRange(range: $0.rangeValue) }
+            if parent.document.primarySelectionIndex >= parent.document.selectionRanges.count {
+                parent.document.primarySelectionIndex = 0
+            }
         }
 
         func applyHighlighting() {
@@ -518,6 +523,190 @@ public final class NppTextView: NSTextView {
     }
     public var insertedMatchedChars: [MatchedCharInserted] = []
 
+    public var caretBlinkTurnedOn: Bool = true
+    private var isCmdDragging: Bool = false
+    private var cmdDragAnchor: Int = 0
+    private var cmdDragRangeIndex: Int = 0
+    private var isSyncingToAppKit: Bool = false
+    private var customSelectedRanges: [NSValue] = [NSValue(range: NSRange(location: 0, length: 0))]
+
+    public override var selectedRanges: [NSValue] {
+        get {
+            return customSelectedRanges
+        }
+        set {
+            self.setSelectedRanges(newValue, affinity: .downstream, stillSelecting: false)
+        }
+    }
+
+    public override func selectedRange() -> NSRange {
+        return customSelectedRanges.first?.rangeValue ?? NSRange(location: 0, length: 0)
+    }
+
+    public override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting stillSelectingFlag: Bool) {
+        if isSyncingToAppKit {
+            super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
+            return
+        }
+
+        let sanitized = sanitizeRanges(ranges)
+        self.customSelectedRanges = sanitized
+
+        isSyncingToAppKit = true
+        let appKitRanges = sanitized.filter { $0.rangeValue.length > 0 }
+        if !appKitRanges.isEmpty {
+            super.setSelectedRanges(appKitRanges, affinity: affinity, stillSelecting: stillSelectingFlag)
+        } else if let primary = sanitized.first {
+            super.setSelectedRanges([primary], affinity: affinity, stillSelecting: stillSelectingFlag)
+        }
+        isSyncingToAppKit = false
+
+        syncDocumentSelectionRanges()
+        needsDisplay = true
+    }
+
+    public func sanitizeRanges(_ ranges: [NSValue]) -> [NSValue] {
+        let docLen = (self.string as NSString).length
+        guard !ranges.isEmpty else {
+            return [NSValue(range: NSRange(location: 0, length: 0))]
+        }
+
+        var validRanges: [NSRange] = []
+        for val in ranges {
+            let r = val.rangeValue
+            let safeLoc = max(0, min(r.location, docLen))
+            let safeLen = max(0, min(r.length, docLen - safeLoc))
+            validRanges.append(NSRange(location: safeLoc, length: safeLen))
+        }
+
+        validRanges.sort {
+            if $0.location != $1.location {
+                return $0.location < $1.location
+            }
+            return $0.length < $1.length
+        }
+
+        var merged: [NSRange] = []
+        for r in validRanges {
+            if let last = merged.last {
+                if r.location < NSMaxRange(last) {
+                    let newMax = max(NSMaxRange(last), NSMaxRange(r))
+                    merged[merged.count - 1] = NSRange(location: last.location, length: newMax - last.location)
+                } else if r.location == NSMaxRange(last) {
+                    if last.length == 0 && r.length == 0 {
+                        continue
+                    } else if r.length == 0 {
+                        continue
+                    } else if last.length == 0 {
+                        merged[merged.count - 1] = r
+                    } else {
+                        merged.append(r)
+                    }
+                } else {
+                    merged.append(r)
+                }
+            } else {
+                merged.append(r)
+            }
+        }
+
+        if merged.isEmpty {
+            merged = [NSRange(location: 0, length: 0)]
+        }
+
+        return merged.map { NSValue(range: $0) }
+    }
+
+    public func syncDocumentSelectionRanges() {
+        guard let doc = resolvedDocument else { return }
+        let ranges = self.selectedRanges.map { $0.rangeValue }
+        doc.selectionRanges = ranges.isEmpty ? [NppSelectionRange(anchor: 0, caret: 0)] : ranges.map { NppSelectionRange(range: $0) }
+        if doc.primarySelectionIndex >= doc.selectionRanges.count {
+            doc.primarySelectionIndex = 0
+        }
+    }
+
+    public func characterOffset(for point: NSPoint) -> Int {
+        guard let lm = self.layoutManager, let tc = self.textContainer else { return 0 }
+        let text = self.string as NSString
+        let docLen = text.length
+        guard docLen > 0 else { return 0 }
+
+        lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: docLen))
+
+        let origin = self.textContainerOrigin
+        let containerPoint = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+
+        if lm.extraLineFragmentRect.height > 0 && containerPoint.y >= lm.extraLineFragmentRect.minY {
+            return docLen
+        }
+
+        let lineGlyph = lm.glyphIndex(for: NSPoint(x: 0, y: max(0, containerPoint.y)), in: tc)
+        guard lineGlyph < lm.numberOfGlyphs else { return docLen }
+
+        let lineUsedRect = lm.lineFragmentUsedRect(forGlyphAt: lineGlyph, effectiveRange: nil)
+        let lineChar = lm.characterIndexForGlyph(at: lineGlyph)
+        let lineRange = text.lineRange(for: NSRange(location: min(lineChar, docLen - 1), length: 0))
+        let lineSub = text.substring(with: lineRange)
+        var lineEndWithoutEol = lineRange.location + lineSub.count
+        if lineSub.hasSuffix("\r\n") { lineEndWithoutEol -= 2 }
+        else if lineSub.hasSuffix("\n") || lineSub.hasSuffix("\r") { lineEndWithoutEol -= 1 }
+
+        if containerPoint.x >= lineUsedRect.maxX {
+            return lineEndWithoutEol
+        }
+        if containerPoint.x <= lineUsedRect.minX {
+            return lineRange.location
+        }
+
+        var fraction: CGFloat = 0.0
+        let glyphIndex = lm.glyphIndex(for: NSPoint(x: max(0, containerPoint.x), y: max(0, containerPoint.y)), in: tc, fractionOfDistanceThroughGlyph: &fraction)
+        guard glyphIndex < lm.numberOfGlyphs else { return lineEndWithoutEol }
+
+        var charIndex = lm.characterIndexForGlyph(at: glyphIndex)
+        if fraction > 0.5 && charIndex < docLen {
+            charIndex += 1
+        }
+
+        return max(lineRange.location, min(charIndex, lineEndWithoutEol))
+    }
+
+    public func caretRect(for charIndex: Int) -> NSRect? {
+        guard let lm = self.layoutManager, let tc = self.textContainer else { return nil }
+        let text = self.string as NSString
+        let docLen = text.length
+        let safeIndex = max(0, min(charIndex, docLen))
+        let caretW = CGFloat(max(1, resolvedWorkspace?.caretWidth ?? 1))
+        let origin = self.textContainerOrigin
+
+        if docLen == 0 {
+            let fontHeight = self.font?.pointSize ?? 13.0
+            return NSRect(x: origin.x, y: origin.y, width: caretW, height: fontHeight + 3.0)
+        }
+
+        if safeIndex == docLen {
+            if docLen > 0 && [10, 13].contains(text.character(at: docLen - 1)) {
+                if lm.extraLineFragmentRect.height > 0 {
+                    var r = lm.extraLineFragmentRect
+                    r.origin.x += origin.x
+                    r.origin.y += origin.y
+                    r.size.width = caretW
+                    return r
+                }
+            }
+            let lastGlyph = max(0, lm.numberOfGlyphs - 1)
+            let glyphRect = lm.boundingRect(forGlyphRange: NSRange(location: lastGlyph, length: 1), in: tc)
+            let lineRect = lm.lineFragmentRect(forGlyphAt: lastGlyph, effectiveRange: nil)
+            return NSRect(x: origin.x + glyphRect.maxX, y: origin.y + lineRect.minY, width: caretW, height: lineRect.height)
+        }
+
+        let glyphIndex = lm.glyphIndexForCharacter(at: safeIndex)
+        let lineRect = lm.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+        let glyphLocation = lm.location(forGlyphAt: glyphIndex)
+
+        return NSRect(x: origin.x + lineRect.minX + glyphLocation.x, y: origin.y + lineRect.minY, width: caretW, height: lineRect.height)
+    }
+
     private var isOptionDragging = false
     private var optionDragStartPoint: NSPoint = .zero
     private var optionDragStartLine: Int = 1
@@ -586,7 +775,88 @@ public final class NppTextView: NSTextView {
             return
         }
         isOptionDragging = false
+
+        if event.modifierFlags.contains(.command) && (resolvedWorkspace?.multiSelection ?? true) {
+            handleMultiCaretMouseDown(event: event)
+            return
+        }
+
+        if event.modifierFlags.contains(.command) && !(resolvedWorkspace?.multiSelection ?? true) {
+            let pt = self.convert(event.locationInWindow, from: nil)
+            let clickedChar = characterOffset(for: pt)
+            self.selectedRanges = [NSValue(range: NSRange(location: clickedChar, length: 0))]
+            isCmdDragging = false
+            return
+        }
+
+        let isTest = (resolvedWorkspace?.isTestRunning == true) || CommandLine.arguments.contains("--run-tests") || (NSApp.currentEvent !== event)
+        if isTest {
+            let pt = self.convert(event.locationInWindow, from: nil)
+            let clickedChar = characterOffset(for: pt)
+            self.selectedRanges = [NSValue(range: NSRange(location: clickedChar, length: 0))]
+            isCmdDragging = false
+            return
+        }
+
+        isCmdDragging = false
         super.mouseDown(with: event)
+    }
+
+    public func handleMultiCaretMouseDown(event: NSEvent) {
+        let pt = self.convert(event.locationInWindow, from: nil)
+        let clickedChar = characterOffset(for: pt)
+        var currentRanges = self.selectedRanges.map { $0.rangeValue }
+
+        var hitIndex: Int? = nil
+        for (i, r) in currentRanges.enumerated() {
+            if r.length == 0 {
+                if r.location == clickedChar {
+                    hitIndex = i
+                    break
+                }
+            } else {
+                if clickedChar >= r.location && clickedChar <= NSMaxRange(r) {
+                    hitIndex = i
+                    break
+                }
+            }
+        }
+
+        if let hit = hitIndex, currentRanges.count > 1 {
+            currentRanges.remove(at: hit)
+            self.selectedRanges = currentRanges.map { NSValue(range: $0) }
+            isCmdDragging = false
+        } else {
+            let newRange = NSRange(location: clickedChar, length: 0)
+            currentRanges.append(newRange)
+            let sanitized = sanitizeRanges(currentRanges.map { NSValue(range: $0) })
+            self.selectedRanges = sanitized
+            isCmdDragging = true
+            cmdDragAnchor = clickedChar
+            if let idx = sanitized.firstIndex(where: { $0.rangeValue.location == clickedChar }) {
+                cmdDragRangeIndex = idx
+            }
+        }
+    }
+
+    public func handleMultiCaretMouseDragged(event: NSEvent) {
+        let pt = self.convert(event.locationInWindow, from: nil)
+        let curChar = characterOffset(for: pt)
+        var currentRanges = self.selectedRanges.map { $0.rangeValue }
+        let dragRange = NSRange(
+            location: min(cmdDragAnchor, curChar),
+            length: abs(curChar - cmdDragAnchor)
+        )
+        if cmdDragRangeIndex < currentRanges.count {
+            currentRanges[cmdDragRangeIndex] = dragRange
+        } else {
+            currentRanges.append(dragRange)
+        }
+        self.selectedRanges = currentRanges.map { NSValue(range: $0) }
+    }
+
+    public func handleMultiCaretMouseUp(event: NSEvent) {
+        isCmdDragging = false
     }
 
     public override func mouseDragged(with event: NSEvent) {
@@ -600,12 +870,28 @@ public final class NppTextView: NSTextView {
             self.selectedRanges = colRanges
             return
         }
+        if isCmdDragging {
+            handleMultiCaretMouseDragged(event: event)
+            return
+        }
+        let isTest = (resolvedWorkspace?.isTestRunning == true) || CommandLine.arguments.contains("--run-tests") || (NSApp.currentEvent !== event)
+        if isTest {
+            return
+        }
         super.mouseDragged(with: event)
     }
 
     public override func mouseUp(with event: NSEvent) {
         if isOptionDragging {
             isOptionDragging = false
+            return
+        }
+        if isCmdDragging {
+            handleMultiCaretMouseUp(event: event)
+            return
+        }
+        let isTest = (resolvedWorkspace?.isTestRunning == true) || CommandLine.arguments.contains("--run-tests") || (NSApp.currentEvent !== event)
+        if isTest {
             return
         }
         super.mouseUp(with: event)
@@ -754,11 +1040,20 @@ public final class NppTextView: NSTextView {
         if event.keyCode == 53 || event.characters == ")" {
             parameterHintPopover?.close()
         }
+        if event.keyCode == 53 && self.selectedRanges.count > 1 {
+            self.cancelOperation(nil)
+            return
+        }
 
         // Tab key: indent operations or spaces/tabs according to workspace.tabSize & replaceTabBySpace
         if event.keyCode == 48 && !event.modifierFlags.contains(.control) {
             let count = resolvedWorkspace?.tabSize ?? 4
             let replaceBySpaces = resolvedWorkspace?.replaceTabBySpace ?? true
+            if self.selectedRanges.count > 1 {
+                let strToInsert = replaceBySpaces ? String(repeating: " ", count: count) : "\t"
+                self.insertText(strToInsert, replacementRange: NSRange(location: 0, length: 0))
+                return
+            }
             if event.modifierFlags.contains(.shift) {
                 NppEditOperations.decreaseLineIndent(in: self, spaceCount: count)
                 return
@@ -812,7 +1107,7 @@ public final class NppTextView: NSTextView {
         }
 
         // Auto-completion of delimiters & Mistake Compensation (Notepad++ Auto-Completion Preference)
-        if !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control),
+        if !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.control) && self.selectedRanges.count <= 1,
            let ws = resolvedWorkspace,
            let chars = event.characters, chars.count == 1 {
             let ch = chars
@@ -926,7 +1221,7 @@ public final class NppTextView: NSTextView {
             if let ws = resolvedWorkspace, ws.autoCompletionEnabled,
                !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
                (first.isLetter || first.isNumber || first == "_"),
-               self.window != nil, self.selectedRange().length == 0 {
+               self.window != nil, self.selectedRange().length == 0, self.selectedRanges.count <= 1 {
                 let mode = ws.autoCompletionType
                 let candidates = NppCompletionEngine.shared.candidates(
                     text: self.string,
@@ -942,17 +1237,288 @@ public final class NppTextView: NSTextView {
         }
     }
 
+    // MARK: - Synchronized Multi-Caret Editing Engine (Scintilla Parity: Bottom-to-Top)
+    public func applySynchronizedMultiCaretEdit(
+        insertString: String? = nil,
+        insertStrings: [String]? = nil,
+        isBackspace: Bool = false,
+        isForwardDelete: Bool = false
+    ) {
+        guard self.isEditable else { return }
+        let rawRanges = self.selectedRanges.map { $0.rangeValue }
+        guard !rawRanges.isEmpty else { return }
+
+        // Must be sorted ascending
+        let sortedRanges = rawRanges.sorted { $0.location < $1.location }
+        let text = self.string as NSString
+        let docLen = text.length
+
+        struct EditOp {
+            var targetRange: NSRange
+            var replacement: String
+            var delta: Int
+            var originalCaretPos: Int
+        }
+
+        var editOps: [EditOp] = []
+
+        for (i, r) in sortedRanges.enumerated() {
+            let safeLoc = max(0, min(r.location, docLen))
+            let safeLen = max(0, min(r.length, docLen - safeLoc))
+            let effectiveRange = NSRange(location: safeLoc, length: safeLen)
+
+            if isBackspace {
+                if effectiveRange.length > 0 {
+                    editOps.append(EditOp(
+                        targetRange: effectiveRange,
+                        replacement: "",
+                        delta: -effectiveRange.length,
+                        originalCaretPos: effectiveRange.location
+                    ))
+                } else if safeLoc > 0 {
+                    var delLen = 1
+                    if safeLoc >= 2 && safeLoc <= docLen && text.substring(with: NSRange(location: safeLoc - 2, length: 2)) == "\r\n" {
+                        delLen = 2
+                    }
+                    let delRange = NSRange(location: safeLoc - delLen, length: delLen)
+                    editOps.append(EditOp(
+                        targetRange: delRange,
+                        replacement: "",
+                        delta: -delLen,
+                        originalCaretPos: safeLoc - delLen
+                    ))
+                } else {
+                    editOps.append(EditOp(
+                        targetRange: NSRange(location: 0, length: 0),
+                        replacement: "",
+                        delta: 0,
+                        originalCaretPos: 0
+                    ))
+                }
+            } else if isForwardDelete {
+                if effectiveRange.length > 0 {
+                    editOps.append(EditOp(
+                        targetRange: effectiveRange,
+                        replacement: "",
+                        delta: -effectiveRange.length,
+                        originalCaretPos: effectiveRange.location
+                    ))
+                } else if safeLoc < docLen {
+                    var delLen = 1
+                    if safeLoc + 2 <= docLen && text.substring(with: NSRange(location: safeLoc, length: 2)) == "\r\n" {
+                        delLen = 2
+                    }
+                    let delRange = NSRange(location: safeLoc, length: delLen)
+                    editOps.append(EditOp(
+                        targetRange: delRange,
+                        replacement: "",
+                        delta: -delLen,
+                        originalCaretPos: safeLoc
+                    ))
+                } else {
+                    editOps.append(EditOp(
+                        targetRange: NSRange(location: docLen, length: 0),
+                        replacement: "",
+                        delta: 0,
+                        originalCaretPos: docLen
+                    ))
+                }
+            } else {
+                let repStr: String
+                if let insertStrings = insertStrings, i < insertStrings.count {
+                    repStr = insertStrings[i]
+                } else {
+                    repStr = insertString ?? ""
+                }
+                let repLen = (repStr as NSString).length
+                let delta = repLen - effectiveRange.length
+                editOps.append(EditOp(
+                    targetRange: effectiveRange,
+                    replacement: repStr,
+                    delta: delta,
+                    originalCaretPos: effectiveRange.location + repLen
+                ))
+            }
+        }
+
+        // Calculate post-mutation caret locations using cumulative delta summation
+        var runningDelta = 0
+        var newCaretLocations: [Int] = []
+        for op in editOps {
+            let postPos = op.originalCaretPos + runningDelta
+            newCaretLocations.append(postPos)
+            runningDelta += op.delta
+        }
+
+        // Single atomic Undo/Redo grouping
+        self.undoManager?.beginUndoGrouping()
+
+        // Execute mutations strictly BOTTOM-TO-TOP (reverse offset order)
+        for op in editOps.reversed() {
+            if op.targetRange.length > 0 || !op.replacement.isEmpty {
+                if self.shouldChangeText(in: op.targetRange, replacementString: op.replacement) {
+                    self.replaceCharacters(in: op.targetRange, with: op.replacement)
+                    self.didChangeText()
+                }
+            }
+        }
+
+        self.undoManager?.endUndoGrouping()
+
+        // Build new NSRanges and coalesce on collision (RemoveDuplicates)
+        let newDocLen = (self.string as NSString).length
+        var coalescedRanges: [NSRange] = []
+        for loc in newCaretLocations {
+            let clamped = max(0, min(loc, newDocLen))
+            let r = NSRange(location: clamped, length: 0)
+            if !coalescedRanges.contains(where: { $0.location == clamped }) {
+                coalescedRanges.append(r)
+            }
+        }
+
+        if coalescedRanges.isEmpty {
+            coalescedRanges = [NSRange(location: 0, length: 0)]
+        }
+
+        self.selectedRanges = coalescedRanges.map { NSValue(range: $0) }
+        self.needsDisplay = true
+    }
+
+    private func moveMultiCaretsLeft() {
+        let text = self.string as NSString
+        var newRanges: [NSRange] = []
+        for val in self.selectedRanges {
+            let r = val.rangeValue
+            if r.length > 0 {
+                newRanges.append(NSRange(location: r.location, length: 0))
+            } else if r.location > 0 {
+                var step = 1
+                if r.location >= 2 && text.substring(with: NSRange(location: r.location - 2, length: 2)) == "\r\n" {
+                    step = 2
+                }
+                newRanges.append(NSRange(location: r.location - step, length: 0))
+            } else {
+                newRanges.append(NSRange(location: 0, length: 0))
+            }
+        }
+        self.selectedRanges = sanitizeRanges(newRanges.map { NSValue(range: $0) })
+        self.needsDisplay = true
+    }
+
+    private func moveMultiCaretsRight() {
+        let text = self.string as NSString
+        let docLen = text.length
+        var newRanges: [NSRange] = []
+        for val in self.selectedRanges {
+            let r = val.rangeValue
+            if r.length > 0 {
+                newRanges.append(NSRange(location: NSMaxRange(r), length: 0))
+            } else if r.location < docLen {
+                var step = 1
+                if r.location + 2 <= docLen && text.substring(with: NSRange(location: r.location, length: 2)) == "\r\n" {
+                    step = 2
+                }
+                newRanges.append(NSRange(location: r.location + step, length: 0))
+            } else {
+                newRanges.append(NSRange(location: docLen, length: 0))
+            }
+        }
+        self.selectedRanges = sanitizeRanges(newRanges.map { NSValue(range: $0) })
+        self.needsDisplay = true
+    }
+
+    private func moveMultiCaretsUp() {
+        let text = self.string as NSString
+        var newRanges: [NSRange] = []
+        for val in self.selectedRanges {
+            let r = val.rangeValue
+            let curPos = min(r.location, text.length)
+            let lineInfo = NppLineCounter.lineInfo(upTo: curPos, in: text)
+            if lineInfo.line > 1 {
+                let col = curPos - lineInfo.lineStart
+                let prevLineInfo = NppLineCounter.lineInfo(upTo: max(0, lineInfo.lineStart - 1), in: text)
+                let prevLineRange = text.lineRange(for: NSRange(location: prevLineInfo.lineStart, length: 0))
+                let prevLineStr = text.substring(with: prevLineRange)
+                var prevCleanLen = prevLineStr.count
+                if prevLineStr.hasSuffix("\r\n") { prevCleanLen -= 2 }
+                else if prevLineStr.hasSuffix("\n") || prevLineStr.hasSuffix("\r") { prevCleanLen -= 1 }
+                let targetCol = min(col, prevCleanLen)
+                newRanges.append(NSRange(location: prevLineInfo.lineStart + targetCol, length: 0))
+            } else {
+                newRanges.append(NSRange(location: 0, length: 0))
+            }
+        }
+        self.selectedRanges = sanitizeRanges(newRanges.map { NSValue(range: $0) })
+        self.needsDisplay = true
+    }
+
+    private func moveMultiCaretsDown() {
+        let text = self.string as NSString
+        let docLen = text.length
+        var newRanges: [NSRange] = []
+        for val in self.selectedRanges {
+            let r = val.rangeValue
+            let curPos = min(r.location, docLen)
+            let curLineRange = text.lineRange(for: NSRange(location: curPos, length: 0))
+            let col = curPos - curLineRange.location
+            let nextLineStart = NSMaxRange(curLineRange)
+            if nextLineStart < docLen {
+                let nextLineRange = text.lineRange(for: NSRange(location: nextLineStart, length: 0))
+                let nextLineStr = text.substring(with: nextLineRange)
+                var nextCleanLen = nextLineStr.count
+                if nextLineStr.hasSuffix("\r\n") { nextCleanLen -= 2 }
+                else if nextLineStr.hasSuffix("\n") || nextLineStr.hasSuffix("\r") { nextCleanLen -= 1 }
+                let targetCol = min(col, nextCleanLen)
+                newRanges.append(NSRange(location: nextLineStart + targetCol, length: 0))
+            } else {
+                newRanges.append(NSRange(location: docLen, length: 0))
+            }
+        }
+        self.selectedRanges = sanitizeRanges(newRanges.map { NSValue(range: $0) })
+        self.needsDisplay = true
+    }
+
+    public override func cancelOperation(_ sender: Any?) {
+        if self.selectedRanges.count > 1 {
+            let primary = self.selectedRanges.first ?? NSValue(range: NSRange(location: 0, length: 0))
+            self.selectedRanges = [primary]
+            self.needsDisplay = true
+            return
+        }
+        super.cancelOperation(sender)
+    }
+
     public override func insertText(_ string: Any, replacementRange: NSRange) {
+        let textToInsert: String
         if let str = string as? String {
+            textToInsert = str
             resolvedWorkspace?.recordMacroStep(.insertText(str))
         } else if let attr = string as? NSAttributedString {
+            textToInsert = attr.string
             resolvedWorkspace?.recordMacroStep(.insertText(attr.string))
+        } else {
+            textToInsert = "\(string)"
         }
-        super.insertText(string, replacementRange: replacementRange)
+
+        guard self.selectedRanges.count > 1 else {
+            super.insertText(string, replacementRange: replacementRange)
+            return
+        }
+
+        applySynchronizedMultiCaretEdit(insertString: textToInsert)
     }
 
     public override func insertNewline(_ sender: Any?) {
         insertedMatchedChars.removeAll()
+
+        if self.selectedRanges.count > 1 {
+            applySynchronizedMultiCaretEdit(insertString: "\n")
+            if let ws = resolvedWorkspace, ws.isMacroRecording {
+                ws.recordMacroStep(.insertNewline)
+            }
+            return
+        }
+
         guard let ws = resolvedWorkspace, ws.autoIndentMode > 0 else {
             super.insertNewline(sender)
             if let ws = resolvedWorkspace, ws.isMacroRecording {
@@ -1014,6 +1580,55 @@ public final class NppTextView: NSTextView {
     }
 
     public override func doCommand(by selector: Selector) {
+        if self.selectedRanges.count > 1 {
+            switch selector {
+            case #selector(NSStandardKeyBindingResponding.deleteBackward(_:)):
+                applySynchronizedMultiCaretEdit(isBackspace: true)
+                if let ws = resolvedWorkspace, ws.isMacroRecording {
+                    ws.recordMacroStep(.deleteBackward)
+                }
+                return
+            case #selector(NSStandardKeyBindingResponding.deleteForward(_:)):
+                applySynchronizedMultiCaretEdit(isForwardDelete: true)
+                if let ws = resolvedWorkspace, ws.isMacroRecording {
+                    ws.recordMacroStep(.deleteForward)
+                }
+                return
+            case #selector(NSStandardKeyBindingResponding.insertNewline(_:)):
+                self.insertNewline(nil)
+                return
+            case #selector(NSStandardKeyBindingResponding.moveLeft(_:)):
+                moveMultiCaretsLeft()
+                if let ws = resolvedWorkspace, ws.isMacroRecording {
+                    ws.recordMacroStep(.moveLeft)
+                }
+                return
+            case #selector(NSStandardKeyBindingResponding.moveRight(_:)):
+                moveMultiCaretsRight()
+                if let ws = resolvedWorkspace, ws.isMacroRecording {
+                    ws.recordMacroStep(.moveRight)
+                }
+                return
+            case #selector(NSStandardKeyBindingResponding.moveUp(_:)):
+                moveMultiCaretsUp()
+                if let ws = resolvedWorkspace, ws.isMacroRecording {
+                    ws.recordMacroStep(.moveUp)
+                }
+                return
+            case #selector(NSStandardKeyBindingResponding.moveDown(_:)):
+                moveMultiCaretsDown()
+                if let ws = resolvedWorkspace, ws.isMacroRecording {
+                    ws.recordMacroStep(.moveDown)
+                }
+                return
+            case #selector(NSStandardKeyBindingResponding.cancelOperation(_:)):
+                self.cancelOperation(nil)
+                return
+            default:
+                break
+            }
+        }
+
         if selector == #selector(NSStandardKeyBindingResponding.deleteBackward(_:)) {
             if handleSmartPairDeleteBackward() {
                 if let ws = resolvedWorkspace, ws.isMacroRecording {
@@ -1069,6 +1684,12 @@ public final class NppTextView: NSTextView {
     public override func insertTab(_ sender: Any?) {
         guard self.isEditable else { return }
         let tabSize = resolvedWorkspace?.tabSize ?? 4
+        if self.selectedRanges.count > 1 {
+            let replaceBySpaces = resolvedWorkspace?.replaceTabBySpace ?? true
+            let strToInsert = replaceBySpaces ? String(repeating: " ", count: tabSize) : "\t"
+            self.insertText(strToInsert, replacementRange: NSRange(location: 0, length: 0))
+            return
+        }
         if self.selectedRange().length > 0 {
             NppEditOperations.increaseLineIndent(in: self, spaceCount: tabSize, useTabs: true)
         } else {
@@ -1083,24 +1704,68 @@ public final class NppTextView: NSTextView {
     }
 
     public override func cut(_ sender: Any?) {
-        resolvedWorkspace?.recordMacroStep(.cut)
-        super.cut(sender)
-        if let clip = NSPasteboard.general.string(forType: .string) {
-            resolvedWorkspace?.addToClipboardHistory(clip)
+        if let ws = resolvedWorkspace, ws.isMacroRecording {
+            ws.recordMacroStep(.cut)
         }
+
+        guard self.selectedRanges.count > 1 else {
+            super.cut(sender)
+            if let clip = NSPasteboard.general.string(forType: .string) {
+                resolvedWorkspace?.addToClipboardHistory(clip)
+            }
+            return
+        }
+
+        self.copy(sender)
+        applySynchronizedMultiCaretEdit(insertString: "")
     }
 
     public override func copy(_ sender: Any?) {
-        resolvedWorkspace?.recordMacroStep(.copy)
-        super.copy(sender)
-        if let clip = NSPasteboard.general.string(forType: .string) {
-            resolvedWorkspace?.addToClipboardHistory(clip)
+        if let ws = resolvedWorkspace, ws.isMacroRecording {
+            ws.recordMacroStep(.copy)
+        }
+
+        guard self.selectedRanges.count > 1 else {
+            super.copy(sender)
+            if let clip = NSPasteboard.general.string(forType: .string) {
+                resolvedWorkspace?.addToClipboardHistory(clip)
+            }
+            return
+        }
+
+        let text = self.string as NSString
+        let nonEmpties = self.selectedRanges.map { $0.rangeValue }.filter { $0.length > 0 && NSMaxRange($0) <= text.length }
+        if !nonEmpties.isEmpty {
+            let joined = nonEmpties.map { text.substring(with: $0) }.joined(separator: "\n")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(joined, forType: .string)
+            resolvedWorkspace?.addToClipboardHistory(joined)
         }
     }
 
     public override func paste(_ sender: Any?) {
-        resolvedWorkspace?.recordMacroStep(.paste)
-        super.paste(sender)
+        if let ws = resolvedWorkspace, ws.isMacroRecording {
+            ws.recordMacroStep(.paste)
+        }
+
+        guard self.selectedRanges.count > 1 else {
+            super.paste(sender)
+            return
+        }
+
+        guard let clipString = NSPasteboard.general.string(forType: .string) else {
+            super.paste(sender)
+            return
+        }
+
+        let normalized = clipString.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let rawLines = normalized.components(separatedBy: "\n")
+
+        if rawLines.count == self.selectedRanges.count {
+            applySynchronizedMultiCaretEdit(insertStrings: rawLines)
+        } else {
+            applySynchronizedMultiCaretEdit(insertString: clipString)
+        }
     }
 
     public override func selectAll(_ sender: Any?) {
@@ -1110,56 +1775,76 @@ public final class NppTextView: NSTextView {
 
     // MARK: - Notepad++ Caret Width (SCI_SETCARETWIDTH: 1, 2, 3)
     public override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-        guard flag else { return }
+        self.caretBlinkTurnedOn = flag
+        guard flag else {
+            if self.selectedRanges.count > 1 {
+                self.setNeedsDisplay(self.visibleRect, avoidAdditionalLayout: true)
+            }
+            return
+        }
         let caretW = CGFloat(max(1, resolvedWorkspace?.caretWidth ?? 1))
         var caretRect = rect
         caretRect.size.width = caretW
         color.set()
         caretRect.fill()
+
+        if self.selectedRanges.count > 1 {
+            self.setNeedsDisplay(self.visibleRect, avoidAdditionalLayout: true)
+        }
     }
 
     // MARK: - Notepad++ Active Line Highlight Bar (drawn behind text)
     public override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
 
-        let sel = self.selectedRange()
         let shouldHighlightLine = editorCoordinator?.parent.workspace.highlightCurrentLine ?? true
         let lineIndicatorMode = editorCoordinator?.parent.workspace.currentLineIndicator ?? 1
-        if shouldHighlightLine && lineIndicatorMode != 0 && sel.length == 0, let layoutManager = self.layoutManager {
+        if shouldHighlightLine && lineIndicatorMode != 0, let layoutManager = self.layoutManager {
             let str = self.string as NSString
-            var lineRect: NSRect
-            if str.length > 0 && layoutManager.numberOfGlyphs > 0 {
-                let charPos = min(sel.location, max(0, str.length - 1))
-                let glyphIdx = min(layoutManager.glyphIndexForCharacter(at: charPos), layoutManager.numberOfGlyphs - 1)
-                if sel.location == str.length && [10, 13].contains(str.character(at: str.length - 1)) && layoutManager.extraLineFragmentRect.height > 0 {
-                    lineRect = layoutManager.extraLineFragmentRect
-                } else {
-                    lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)
-                }
-            } else if layoutManager.extraLineFragmentRect.height > 0 {
-                lineRect = layoutManager.extraLineFragmentRect
-            } else {
-                let h = (self.font?.pointSize ?? 13.0) + 5.0
-                lineRect = NSRect(x: 0, y: self.textContainerOrigin.y, width: self.bounds.width, height: h)
-            }
-            lineRect.origin.x = 0
-            lineRect.size.width = max(self.bounds.width, self.visibleRect.width)
-
             let theme = editorCoordinator?.parent.workspace.currentTheme
             let lineHighlightColor = theme?.activeLineColor ?? NSColor(calibratedRed: 0.17, green: 0.18, blue: 0.20, alpha: 0.95)
+            let frameWidth = CGFloat(max(1, editorCoordinator?.parent.workspace.currentLineFrameWidth ?? 1))
 
-            if lineIndicatorMode == 1 {
-                // Background Highlight
-                lineHighlightColor.setFill()
-                NSBezierPath(rect: lineRect).fill()
-            } else if lineIndicatorMode == 2 {
-                // Frame Outline
-                let frameWidth = CGFloat(max(1, editorCoordinator?.parent.workspace.currentLineFrameWidth ?? 1))
-                let strokeRect = lineRect.insetBy(dx: 0.5, dy: 0.5)
-                lineHighlightColor.setStroke()
-                let path = NSBezierPath(rect: strokeRect)
-                path.lineWidth = frameWidth
-                path.stroke()
+            var drawnY: Set<CGFloat> = []
+
+            for val in self.selectedRanges {
+                let sel = val.rangeValue
+                guard sel.length == 0 else { continue }
+
+                var lineRect: NSRect
+                if str.length > 0 && layoutManager.numberOfGlyphs > 0 {
+                    let charPos = min(sel.location, max(0, str.length - 1))
+                    let glyphIdx = min(layoutManager.glyphIndexForCharacter(at: charPos), layoutManager.numberOfGlyphs - 1)
+                    if sel.location == str.length && [10, 13].contains(str.character(at: str.length - 1)) && layoutManager.extraLineFragmentRect.height > 0 {
+                        lineRect = layoutManager.extraLineFragmentRect
+                    } else {
+                        lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIdx, effectiveRange: nil)
+                    }
+                } else if layoutManager.extraLineFragmentRect.height > 0 {
+                    lineRect = layoutManager.extraLineFragmentRect
+                } else {
+                    let h = (self.font?.pointSize ?? 13.0) + 5.0
+                    lineRect = NSRect(x: 0, y: self.textContainerOrigin.y, width: self.bounds.width, height: h)
+                }
+
+                guard !drawnY.contains(lineRect.origin.y) else { continue }
+                drawnY.insert(lineRect.origin.y)
+
+                lineRect.origin.x = 0
+                lineRect.size.width = max(self.bounds.width, self.visibleRect.width)
+
+                if lineIndicatorMode == 1 {
+                    // Background Highlight
+                    lineHighlightColor.setFill()
+                    NSBezierPath(rect: lineRect).fill()
+                } else if lineIndicatorMode == 2 {
+                    // Frame Outline
+                    let strokeRect = lineRect.insetBy(dx: 0.5, dy: 0.5)
+                    lineHighlightColor.setStroke()
+                    let path = NSBezierPath(rect: strokeRect)
+                    path.lineWidth = frameWidth
+                    path.stroke()
+                }
             }
         }
     }
@@ -1347,6 +2032,19 @@ public final class NppTextView: NSTextView {
                         let wrapY = containerOrigin.y + rect.origin.y + (rect.height - wrapFont.pointSize) / 2.0
                         "↵".draw(at: NSPoint(x: wrapX, y: wrapY), withAttributes: wrapAttrs)
                     }
+                }
+            }
+        }
+
+        // 4. Multi-Caret Secondary Insertion Points
+        if self.selectedRanges.count > 1 && self.caretBlinkTurnedOn {
+            let caretColor = resolvedWorkspace?.currentTheme.foregroundColor ?? self.insertionPointColor ?? NSColor.textColor
+            caretColor.set()
+            for val in self.selectedRanges.dropFirst() {
+                let r = val.rangeValue
+                let caretPos = (r.length == 0) ? r.location : NSMaxRange(r)
+                if let cRect = caretRect(for: caretPos) {
+                    cRect.fill()
                 }
             }
         }
