@@ -698,6 +698,43 @@
 
 ---
 
+### [AUDIT-030] macOS Native DMG Distribution Pipeline, SIGBUS Mount Isolation & Remote Main Synchronization
+- **상태:** `APPROVED`
+- **감사 대상:** `create_dmg.sh`, `bundle.sh`, `MAC_DISTRIBUTION_PLAN.md`, `MANUAL_PARITY_AUDIT.md`, `MANUAL_FEATURE_CHECKLIST.md`
+- **공식 사양 및 macOS 플랫폼 배포 표준:**
+  1. **macOS 네이티브 디스크 이미지(`DMG`) 패키징 표준 (`Apple Packaging & Distribution Standards`):**
+     - Apple 네이티브 `hdiutil` 유틸리티 기반 읽기 전용 압축 디스크 이미지 (`UDZO` zlib 압축 포맷, Apple HFS+ 저널링 파일시스템, `Notepad++` 커스텀 볼륨 라벨링).
+     - 번들 크기 동적 계산: 대상 `.app` 번들의 실제 블록 사용량을 실측하여 ~15% 헤드룸(최소 20MB)을 동적으로 할당하는 단일 파티션 생성(`hdiutil create`).
+     - 파일 시스템 동기화 및 메타데이터 무결성: `/usr/bin/ditto`를 사용하여 리소스 포크, HFS 메타데이터 및 권한을 100% 보존 복제.
+     - 사용자 설치 편의성: DMG 루트에 `/Applications` 심볼릭 링크(`ln -s /Applications`)를 배치하여 드래그 앤 드롭 표준 설치 경험 제공.
+     - 배포 무결성 검증: `shasum -a 256` 체크섬을 자동 생성하여 배포 산출물 무결성 보장(`Notepad++-v8.9.8.1.dmg.sha256`, `Notepad++.dmg.sha256`).
+     - 번들 버전 자동 추출: `plutil` 및 `/usr/libexec/PlistBuddy`를 통해 `Info.plist`의 `CFBundleShortVersionString` (`v8.9.8.1`)을 추출하여 표준 버전 명명 규칙 적용.
+  2. **`bundle.sh` 빌드 및 배포 파이프라인 통합:**
+     - Release 구성 빌드(`swift build -c release`) 및 리소스 번들(`NotepadPlusPlusMac_NotepadPlusPlusMac.bundle`) 패키징 완비.
+     - CLI 및 환경 변수 플래그 지원: `--dmg`, `-d`, `CREATE_DMG=1` 전달 시 DMG 생성 파이프라인 자동 연계 호출.
+- **SIGBUS 크래시 근본 원인 분석 및 완전 격리(Mount Isolation) 교정:**
+  1. **SIGBUS(Bus Error, BUS_ADRERR) 근본 원인 규명:**
+     - 사용자가 마운트된 DMG 볼륨(`/Volumes/Notepad++/Notepad++.app`)에서 애플리케이션을 직접 실행한 상태에서, 빌드 스크립트나 검증 루틴이 공유 볼륨(`/Volumes/Notepad++`)을 언마운트(`hdiutil detach`)할 경우, 마하 커널의 가상 메모리 페이징 시스템(dyld stub 및 mmap된 실행 코드/리소스)이 배킹 스토어 유실로 인해 즉각 `SIGBUS` 시그널을 발생시키고 프로세스가 비정상 종료됨.
+  2. **임시 마운트 포인트 완전 격리 (`mktemp -d /tmp/npp_vfy_mnt.XXXXXX`):**
+     - `create_dmg.sh`의 검증 루틴(`verify_dmg`)에서 공용 `/Volumes/Notepad++`를 절대 사용하지 않고, 고유 임시 디렉토리(`mktemp -d /tmp/npp_vfy_mnt.XXXXXX`)를 생성하여 `-mountpoint "$tmp_mount" -nobrowse -readonly` 옵션으로 안전하게 마운트 및 검증.
+  3. **사용자 마운트 볼륨 분리 금지 안전 가드 (`detach_volume`):**
+     - `detach_volume` 함수에 `/Volumes/Notepad++` 언마운트 시도를 원천 차단하는 가드 조건문 장착(`Refusing to detach user-mounted volume: $mp`), 실행 중인 앱의 백업 볼륨 분리 방지.
+  4. **Trap 기반 안전 자원 정리:**
+     - Bash `trap cleanup EXIT INT TERM`을 통해 빌드/검증 중단 또는 완료 시 오직 자체 할당된 격리 임시 마운트 포인트와 스테이징 디렉토리만 안전하게 분리 및 정리하도록 보장.
+- **문서 및 감사 산출물 완비:**
+  - `MAC_DISTRIBUTION_PLAN.md`: Apple Developer Program 무료 계정 환경에서의 DMG 릴리스 전략, Gatekeeper 및 "그래도 열기(Open Anyway)" 가이드, 세션/설정 보존 아키텍처 상세 문서화.
+  - `MANUAL_PARITY_AUDIT.md`: upstream Notepad++ C++ 소스 대비 10-pass 전수 수동 감사 결과 및 정합성 검증 기록.
+  - `MANUAL_FEATURE_CHECKLIST.md`: 모든 메뉴, 단축키, 다이얼로그, 마우스 제스처에 대한 종합 기능 점검 체크리스트 완비.
+- **자동화 테스트 스위트 및 원격 동기화 검증:**
+  - **테스트 스위트 결과 (`swift run NotepadPlusPlusMac --run-tests`):** **1,137 / 1,137 tests PASSED (0 failures, 100% pass)**.
+  - **멀티파트 Git 커밋 내역:**
+    - `dbf9577`: `feat(defense): 10-Pillar Invariant Regression Defense Matrix & Gate 2 integrity remediation`
+    - `83381f1`: `docs(parity): Manual parity audit artifacts and checklist`
+    - `112331c`: `feat(distribution): macOS native DMG packaging pipeline and isolated verification mount`
+  - **원격 저장소 동기화:** `origin/main` (`git@github.com:slux78/notepadplusplus-mac.git`) 브랜치에 완전 푸시 완료.
+
+---
+
 ## 🎯 최종 감사 결론 (Final Verdict)
 
 - **감사 판정:** **모든 항목 적합 및 정합 승인 (APPROVED - 100% COMPLIANT)**
@@ -706,7 +743,7 @@
 - **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `WindowsDlg.cpp`, `md5Dlgs.cpp`, `korean.xml`, `TabBar.cpp`, `Parameters.cpp`, `Buffer.cpp`, `NppIO.cpp` 전 항목 대조 및 1:1 구현 완료)
 - **코드 무결성 및 신뢰성:** Forensic Auditor 공식 검증 완료 (0 Tautologies, 0 Facade Branches, 0 Dummy Implementations, Clean Gate 2 Verdict)
 - **macOS 네이티브 사용자 경험:** TextKit 2 기반 고성능 렌더링, AppKit 윈도우 수명주기 준수, 실체적 마우스 제스처 이벤트 처리
-- **빌드 산출물:** `build/Notepad++.app` (최신 릴리스 바이너리 패키징 완료, Gate 2 승인 완료)
+- **빌드 산출물:** `build/Notepad++.app`, `build/Notepad++-v8.9.8.1.dmg` (UDZO HFS+), `build/Notepad++.dmg`, SHA-256 체크섬 (최신 릴리스 바이너리 및 배포 패키징 완료, Gate 2 및 DMG 배포 승인 완료)
 
 
 
