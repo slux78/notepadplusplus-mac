@@ -1467,6 +1467,12 @@ final class NppAutomatedTestSuite {
             // Milestone 2: Multi-Editing Advanced Carets Suite
             runMultiEditingAdvancedCaretsTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
+            // Challenger 1: Multi-Editing Advanced Carets Empirical Stress Suite
+            runChallenger1MultiEditingEmpiricalStressTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
+            // Challenger 2: Multi-Caret Clipboard & Column Interactions Stress Suite
+            runChallenger2MultiCaretClipboardAndColumnStressSuite(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -8958,6 +8964,720 @@ final class NppAutomatedTestSuite {
         tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
         assertTest("M2.Regression.7.2: Single-caret backspace preserves 100% native behavior",
                    tv.string == "Hello World" && tv.selectedRange().location == 5)
+
+        // ---------------------------------------------------------------------
+        // SUITE 8: Remediation Verification (setSelectedRange Overrides & Codable)
+        // ---------------------------------------------------------------------
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)), NSValue(range: NSRange(location: 5, length: 0))]
+        tv.setSelectedRange(NSRange(location: 2, length: 0))
+        assertTest("M2.Remediation.8.1: setSelectedRange collapses multi-carets to single caret at 2",
+                   tv.selectedRanges.count == 1 && tv.selectedRange().location == 2 && (ws.activeDocument?.selectionRanges.count ?? 0) == 1)
+
+        tv.selectedRanges = [NSValue(range: NSRange(location: 0, length: 0)), NSValue(range: NSRange(location: 5, length: 0))]
+        tv.setSelectedRange(NSRange(location: 4, length: 2), affinity: .downstream, stillSelecting: false)
+        assertTest("M2.Remediation.8.2: setSelectedRange with affinity collapses multi-carets to single range 4..6",
+                   tv.selectedRanges.count == 1 && tv.selectedRange() == NSRange(location: 4, length: 2))
+
+        let originalRange = NppSelectionRange(anchor: 12, caret: 34)
+        let encodedRange = try? JSONEncoder().encode(originalRange)
+        let decodedRange = encodedRange != nil ? try? JSONDecoder().decode(NppSelectionRange.self, from: encodedRange!) : nil
+        assertTest("M2.Remediation.8.3: NppSelectionRange conforms to Codable with lossless round-trip",
+                   decodedRange == originalRange && decodedRange?.anchor == 12 && decodedRange?.caret == 34)
+    }
+
+    // =========================================================================
+    // CHALLENGER 1: MULTI-EDITING ADVANCED CARETS EMPIRICAL STRESS TEST SUITE
+    // =========================================================================
+    static func runChallenger1MultiEditingEmpiricalStressTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: @escaping (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("⚔️ CHALLENGER 1: MULTI-EDITING ADVANCED CARETS EMPIRICAL STRESS SUITE")
+        print("========================================================")
+
+        ws.closeAll(force: true)
+        ws.newDocument()
+        guard let tv = ws.activeTextView as? NppTextView else {
+            assertTest("Challenger 1 [Setup]: Active NppTextView is initialized", false)
+            return
+        }
+
+        let savedMultiSelection = ws.multiSelection
+        let savedColumnToMultiEditing = ws.columnToMultiEditing
+        defer {
+            ws.multiSelection = savedMultiSelection
+            ws.columnToMultiEditing = savedColumnToMultiEditing
+        }
+        ws.multiSelection = true
+        ws.columnToMultiEditing = true
+
+        // ---------------------------------------------------------------------
+        // SUITE 1: Caret Collision, Convergence & Coalescing Under Rapid Edits
+        // ---------------------------------------------------------------------
+        // 1.1: Converging multi-caret backspace in a compact string
+        tv.string = "1 2 3 4 5"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 1, length: 0)),
+            NSValue(range: NSRange(location: 3, length: 0)),
+            NSValue(range: NSRange(location: 5, length: 0)),
+            NSValue(range: NSRange(location: 7, length: 0)),
+            NSValue(range: NSRange(location: 9, length: 0))
+        ]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("Challenger 1 [Suite 1.1]: Converging backspace deletes all digits and adjusts carets to remaining spaces",
+                   tv.string == "    " && tv.selectedRanges.map { $0.rangeValue.location } == [0, 1, 2, 3, 4])
+
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("Challenger 1 [Suite 1.2]: Second backspace completely collapses 5 carets at offset 0 into 1 coalesced caret",
+                   tv.string == "" && tv.selectedRanges.count == 1 && tv.selectedRange().location == 0)
+
+        tv.insertText("A", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("Challenger 1 [Suite 1.3]: Post-coalescing typing inserts exactly 1 character with 1 caret",
+                   tv.string == "A" && tv.selectedRanges.count == 1 && tv.selectedRange().location == 1)
+
+        tv.string = "ABCDE"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 1, length: 0)),
+            NSValue(range: NSRange(location: 2, length: 0)),
+            NSValue(range: NSRange(location: 3, length: 0)),
+            NSValue(range: NSRange(location: 4, length: 0))
+        ]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteForward(_:)))
+        assertTest("Challenger 1 [Suite 1.4]: Forward delete at all positions clears string and coalesces carets to 0",
+                   tv.string == "" && tv.selectedRanges.count == 1 && tv.selectedRange().location == 0)
+
+        tv.string = "The quick brown fox jumps over the lazy dog"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 3, length: 0)),
+            NSValue(range: NSRange(location: 10, length: 0)),
+            NSValue(range: NSRange(location: 20, length: 0)),
+            NSValue(range: NSRange(location: 30, length: 0))
+        ]
+        for _ in 1...35 {
+            tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveLeft(_:)))
+        }
+        assertTest("Challenger 1 [Suite 1.5]: Rapid moveLeft past start coalesces all 4 carets into single caret at offset 0",
+                   tv.selectedRanges.count == 1 && tv.selectedRange().location == 0)
+
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 5, length: 0)),
+            NSValue(range: NSRange(location: 15, length: 0))
+        ]
+        let docLen = (tv.string as NSString).length
+        for _ in 1...50 {
+            tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveRight(_:)))
+        }
+        assertTest("Challenger 1 [Suite 1.6]: Rapid moveRight past EOF coalesces all carets into single caret at EOF",
+                   tv.selectedRanges.count == 1 && tv.selectedRange().location == docLen)
+
+        tv.string = "Line 1\nLine 2\nLine 3"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 7, length: 0)),
+            NSValue(range: NSRange(location: 14, length: 0))
+        ]
+        for _ in 1...5 {
+            tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveUp(_:)))
+        }
+        assertTest("Challenger 1 [Suite 1.7]: Rapid moveUp past line 1 coalesces carets at offset 0",
+                   tv.selectedRanges.count == 1 && tv.selectedRange().location == 0)
+
+        // ---------------------------------------------------------------------
+        // SUITE 2: Mixed CRLF / LF Line Endings with Multi-Caret Deletions
+        // ---------------------------------------------------------------------
+        tv.string = "CRLF_1\r\nLF_2\nCRLF_3\r\nLF_4\nEND"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 8, length: 0)),
+            NSValue(range: NSRange(location: 13, length: 0)),
+            NSValue(range: NSRange(location: 21, length: 0)),
+            NSValue(range: NSRange(location: 26, length: 0))
+        ]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("Challenger 1 [Suite 2.1]: Multi-backspace across mixed CRLF and LF deletes linebreaks cleanly without orphan \\r",
+                   tv.string == "CRLF_1LF_2CRLF_3LF_4END" && !tv.string.contains("\r") && !tv.string.contains("\n"))
+        assertTest("Challenger 1 [Suite 2.2]: Caret offsets accurately placed at joined line boundaries after mixed EOL deletion",
+                   tv.selectedRanges.map { $0.rangeValue.location } == [6, 10, 16, 20])
+
+        tv.string = "AAA\r\nBBB\nCCC\r\nDDD\nEEE"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 3, length: 0)),
+            NSValue(range: NSRange(location: 8, length: 0)),
+            NSValue(range: NSRange(location: 12, length: 0)),
+            NSValue(range: NSRange(location: 17, length: 0))
+        ]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteForward(_:)))
+        assertTest("Challenger 1 [Suite 2.3]: Forward delete across mixed CRLF/LF removes 2-byte and 1-byte breaks atomically",
+                   tv.string == "AAABBBCCCDDDEEE" && !tv.string.contains("\r") && !tv.string.contains("\n"))
+        assertTest("Challenger 1 [Suite 2.4]: Post forward-delete caret offsets match boundaries [3, 6, 9, 12]",
+                   tv.selectedRanges.map { $0.rangeValue.location } == [3, 6, 9, 12])
+
+        tv.string = "A\r\nB\r\nC"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 1, length: 0)),
+            NSValue(range: NSRange(location: 4, length: 0))
+        ]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveRight(_:)))
+        assertTest("Challenger 1 [Suite 2.5]: moveRight steps 2 bytes atomically across CRLF",
+                   tv.selectedRanges.map { $0.rangeValue.location } == [3, 6])
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveLeft(_:)))
+        assertTest("Challenger 1 [Suite 2.6]: moveLeft steps 2 bytes atomically back across CRLF",
+                   tv.selectedRanges.map { $0.rangeValue.location } == [1, 4])
+
+        // ---------------------------------------------------------------------
+        // SUITE 3: Edge-of-Buffer Carets (Empty Buffer, Single Char, Clamping)
+        // ---------------------------------------------------------------------
+        tv.string = ""
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 5, length: 0)),
+            NSValue(range: NSRange(location: 10, length: 0))
+        ]
+        assertTest("Challenger 1 [Suite 3.1]: Out-of-bounds carets on empty document clamp and coalesce to [0]",
+                   tv.selectedRanges.count == 1 && tv.selectedRange().location == 0)
+
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteForward(_:)))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveLeft(_:)))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveRight(_:)))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveUp(_:)))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.moveDown(_:)))
+        assertTest("Challenger 1 [Suite 3.2]: Empty buffer withstands all commands without crash and stays at offset 0",
+                   tv.string == "" && tv.selectedRange().location == 0)
+
+        tv.string = "X"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 1, length: 0))
+        ]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("Challenger 1 [Suite 3.3]: Backspace on single-char document with carets at 0 and 1 clears buffer and coalesces to 0",
+                   tv.string == "" && tv.selectedRanges.count == 1 && tv.selectedRange().location == 0)
+
+        tv.string = "Y"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 1, length: 0))
+        ]
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteForward(_:)))
+        assertTest("Challenger 1 [Suite 3.4]: Forward delete on single-char document with carets at 0 and 1 clears buffer and coalesces to 0",
+                   tv.string == "" && tv.selectedRanges.count == 1 && tv.selectedRange().location == 0)
+
+        tv.string = "Hello"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: -50, length: 0)),
+            NSValue(range: NSRange(location: 2, length: 0)),
+            NSValue(range: NSRange(location: 99999, length: 100))
+        ]
+        assertTest("Challenger 1 [Suite 3.5]: Extreme negative and positive ranges clamped cleanly to [0..0, 2..0, 5..0]",
+                   tv.selectedRanges.map { $0.rangeValue } == [NSRange(location: 0, length: 0), NSRange(location: 2, length: 0), NSRange(location: 5, length: 0)])
+
+        tv.string = "123\n1234567890\n\n12345"
+        let raggedColRanges = tv.computeColumnRanges(fromLine: 1, fromCol: 6, toLine: 4, toCol: 8)
+        tv.selectedRanges = raggedColRanges
+        tv.insertText("X", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("Challenger 1 [Suite 3.6]: Column typing on ragged lines with col beyond line bounds clamps cleanly",
+                   tv.string == "123X\n123456X90\nX\n12345X")
+
+        // ---------------------------------------------------------------------
+        // SUITE 4: Rapid Cmd+Z / Cmd+Shift+Z Undo/Redo Stacks with Multi-Carets
+        // ---------------------------------------------------------------------
+        tv.undoManager?.removeAllActions()
+        tv.string = "apple\nbanana\ncherry"
+        tv.undoManager?.removeAllActions()
+        let originalText = tv.string
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 6, length: 0)),
+            NSValue(range: NSRange(location: 13, length: 0))
+        ]
+        tv.insertText("FRUIT_", replacementRange: NSRange(location: 0, length: 0))
+        let modifiedText = tv.string
+        assertTest("Challenger 1 [Suite 4.1.A]: Prefix inserted across 3 carets",
+                   modifiedText == "FRUIT_apple\nFRUIT_banana\nFRUIT_cherry")
+
+        tv.undoManager?.undo()
+        assertTest("Challenger 1 [Suite 4.1.B]: Undo reverts multi-caret insertion atomically to exact initial text",
+                   tv.string == originalText)
+
+        tv.undoManager?.redo()
+        assertTest("Challenger 1 [Suite 4.1.C]: Redo re-applies multi-caret insertion atomically",
+                   tv.string == modifiedText)
+
+        tv.undoManager?.removeAllActions()
+        tv.undoManager?.groupsByEvent = false
+        tv.string = "one\ntwo\nthree"
+        let step0 = tv.string
+
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 4, length: 0)),
+            NSValue(range: NSRange(location: 8, length: 0))
+        ]
+        tv.insertText("[", replacementRange: NSRange(location: 0, length: 0))
+        let step1 = tv.string
+
+        let l1 = (tv.string as NSString).range(of: "one").location + 3
+        let l2 = (tv.string as NSString).range(of: "two").location + 3
+        let l3 = (tv.string as NSString).range(of: "three").location + 5
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: l1, length: 0)),
+            NSValue(range: NSRange(location: l2, length: 0)),
+            NSValue(range: NSRange(location: l3, length: 0))
+        ]
+        tv.insertText("]", replacementRange: NSRange(location: 0, length: 0))
+        let step2 = tv.string
+
+        let e1 = (tv.string as NSString).range(of: "]").location + 1
+        let e2 = (tv.string as NSString).range(of: "two]").location + 4
+        let e3 = (tv.string as NSString).range(of: "three]").location + 6
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: e1, length: 0)),
+            NSValue(range: NSRange(location: e2, length: 0)),
+            NSValue(range: NSRange(location: e3, length: 0))
+        ]
+        tv.insertNewline(nil)
+        let step3 = tv.string
+
+        tv.undoManager?.undo()
+        assertTest("Challenger 1 [Suite 4.2.A]: Undo step 3 (newline) restores step 2 state", tv.string == step2)
+        tv.undoManager?.undo()
+        assertTest("Challenger 1 [Suite 4.2.B]: Undo step 2 (suffix) restores step 1 state", tv.string == step1)
+        tv.undoManager?.undo()
+        assertTest("Challenger 1 [Suite 4.2.C]: Undo step 1 (prefix) restores initial document state", tv.string == step0)
+
+        tv.undoManager?.redo()
+        assertTest("Challenger 1 [Suite 4.2.D]: Redo step 1 restores step 1 state", tv.string == step1)
+        tv.undoManager?.redo()
+        assertTest("Challenger 1 [Suite 4.2.E]: Redo step 2 restores step 2 state", tv.string == step2)
+        tv.undoManager?.redo()
+        assertTest("Challenger 1 [Suite 4.2.F]: Redo step 3 restores step 3 state", tv.string == step3)
+        tv.undoManager?.groupsByEvent = true
+
+        // ---------------------------------------------------------------------
+        // SUITE 5: Large Caret Count Stress (100 Simultaneous Carets)
+        // ---------------------------------------------------------------------
+        var lines100: [String] = []
+        for i in 1...100 {
+            lines100.append(String(format: "row_%03d: test_data", i))
+        }
+        tv.string = lines100.joined(separator: "\n")
+        var carets100: [NSValue] = []
+        var pos = 0
+        let ns100 = tv.string as NSString
+        for _ in 1...100 {
+            carets100.append(NSValue(range: NSRange(location: pos, length: 0)))
+            let lineRange = ns100.lineRange(for: NSRange(location: pos, length: 0))
+            pos = NSMaxRange(lineRange)
+        }
+        tv.selectedRanges = carets100
+        assertTest("Challenger 1 [Suite 5.1]: 100 simultaneous active carets initialized across 100 lines",
+                   tv.selectedRanges.count == 100)
+
+        let startStamp = CFAbsoluteTimeGetCurrent()
+        tv.insertText(">> ", replacementRange: NSRange(location: 0, length: 0))
+        let elapsed = CFAbsoluteTimeGetCurrent() - startStamp
+
+        let all100HavePrefix = (1...100).allSatisfy { i in
+            tv.string.contains(String(format: ">> row_%03d", i))
+        }
+        assertTest("Challenger 1 [Suite 5.2]: Synchronized insertion across 100 carets completes accurately (\(String(format: "%.2f", elapsed * 1000))ms)",
+                   all100HavePrefix && tv.selectedRanges.count == 100 && elapsed < 0.5)
+
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        let all100Reverted = (1...100).allSatisfy { i in
+            tv.string.contains(String(format: "row_%03d: test_data", i)) && !tv.string.contains(String(format: ">> row_%03d", i))
+        }
+        assertTest("Challenger 1 [Suite 5.3]: Synchronized 3-character backspace across 100 carets restores original lines cleanly",
+                   all100Reverted && tv.selectedRanges.count == 100)
+
+        var clipLines: [String] = []
+        for i in 1...100 {
+            clipLines.append(String(format: "[TAG_%03d] ", i))
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(clipLines.joined(separator: "\n"), forType: .string)
+        tv.paste(nil)
+        let all100HaveIndividualTags = (1...100).allSatisfy { i in
+            tv.string.contains(String(format: "[TAG_%03d] row_%03d", i, i))
+        }
+        assertTest("Challenger 1 [Suite 5.4]: Multi-paste distributes 100 unique lines to 100 matching carets in 1-to-1 correspondence",
+                   all100HaveIndividualTags && tv.selectedRanges.count == 100)
+
+        tv.cancelOperation(nil)
+        assertTest("Challenger 1 [Suite 5.5]: Escape key instantly collapses 100 active carets down to exactly 1 primary caret",
+                   tv.selectedRanges.count == 1 && tv.selectedRange().location == 10)
+
+        // ---------------------------------------------------------------------
+        // SUITE 6: NppSelectionRange Data Model Invariants & Document Binding
+        // ---------------------------------------------------------------------
+        let invertedRange = NppSelectionRange(anchor: 15, caret: 8)
+        assertTest("Challenger 1 [Suite 6.1]: NppSelectionRange with anchor > caret normalizes range to location: 8, length: 7",
+                   invertedRange.range.location == 8 && invertedRange.range.length == 7 && !invertedRange.isEmpty)
+
+        let rangeA = NppSelectionRange(anchor: 10, caret: 20)
+        let rangeB = NppSelectionRange(anchor: 10, caret: 20)
+        let rangeC = NppSelectionRange(anchor: 20, caret: 10)
+        assertTest("Challenger 1 [Suite 6.2]: NppSelectionRange Hashable & Equatable differentiate identical bounds from reversed anchors",
+                   rangeA == rangeB && rangeA != rangeC)
+
+        let emptyRange = NppSelectionRange(anchor: 5, caret: 5)
+        assertTest("Challenger 1 [Suite 6.3]: NppSelectionRange empty check returns true when anchor == caret",
+                   emptyRange.isEmpty && emptyRange.range.length == 0 && emptyRange.range.location == 5)
+
+        let testDoc = NppDocument(title: "SelectionTest", content: "Line 1\nLine 2\nLine 3")
+        testDoc.setSelectionRanges([NSRange(location: 0, length: 3), NSRange(location: 7, length: 4)], primaryIndex: 999)
+        assertTest("Challenger 1 [Suite 6.4]: NppDocument setSelectionRanges clamps out-of-bounds primaryIndex to valid last index",
+                   testDoc.primarySelectionIndex == 1 && testDoc.primarySelectionRange.range == NSRange(location: 7, length: 4))
+
+        testDoc.setSelectionRanges([])
+        assertTest("Challenger 1 [Suite 6.5]: NppDocument setSelectionRanges with empty array resets to single default caret at 0",
+                   testDoc.selectionRanges.count == 1 && testDoc.selectionRanges[0].range == NSRange(location: 0, length: 0) && testDoc.primarySelectionIndex == 0)
+    }
+
+    // =========================================================================
+    // CHALLENGER 2: MULTI-CARET CLIPBOARD & COLUMN INTERACTIONS STRESS SUITE
+    // =========================================================================
+    static func runChallenger2MultiCaretClipboardAndColumnStressSuite(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: @escaping (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("⚔️ CHALLENGER 2: MULTI-CARET CLIPBOARD & COLUMN STRESS SUITE")
+        print("========================================================")
+
+        ws.closeAll(force: true)
+        ws.newDocument()
+        guard let tv = ws.activeTextView as? NppTextView else {
+            assertTest("Challenger 2 [Setup]: Active NppTextView is initialized", false)
+            return
+        }
+
+        let savedMultiSelection = ws.multiSelection
+        let savedColumnToMultiEditing = ws.columnToMultiEditing
+        defer {
+            ws.multiSelection = savedMultiSelection
+            ws.columnToMultiEditing = savedColumnToMultiEditing
+            ws.closeAll(force: true)
+        }
+        ws.multiSelection = true
+        ws.columnToMultiEditing = true
+
+        // ---------------------------------------------------------------------
+        // SUITE 1: Multi-Paste 1-to-1 Distribution vs Broadcast (SC_MULTIPASTE_EACH)
+        // ---------------------------------------------------------------------
+        // 1.1: 1-to-1 paste with exactly matching line count
+        tv.string = "var a = 0;\nvar b = 0;\nvar c = 0;\nvar d = 0;"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 8, length: 1)),
+            NSValue(range: NSRange(location: 19, length: 1)),
+            NSValue(range: NSRange(location: 30, length: 1)),
+            NSValue(range: NSRange(location: 41, length: 1))
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("100\n200\n300\n400", forType: .string)
+        tv.paste(nil)
+        assertTest("Challenger 2 [Suite 1.1]: 1-to-1 paste distributes matching line count across 4 carets",
+                   tv.string == "var a = 100;\nvar b = 200;\nvar c = 300;\nvar d = 400;")
+
+        // 1.2: 1-to-1 paste with Windows CRLF clipboard content
+        tv.string = "item1\nitem2\nitem3"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 6, length: 0)),
+            NSValue(range: NSRange(location: 12, length: 0))
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("ALPHA_\r\nBETA_\r\nGAMMA_", forType: .string)
+        tv.paste(nil)
+        assertTest("Challenger 2 [Suite 1.2]: 1-to-1 paste normalizes CRLF and distributes lines cleanly without orphan \\r",
+                   tv.string == "ALPHA_item1\nBETA_item2\nGAMMA_item3" && !tv.string.contains("\r"))
+
+        // 1.3: 1-to-1 paste with empty lines in clipboard
+        tv.string = "line1\nline2\nline3"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 6, length: 0)),
+            NSValue(range: NSRange(location: 12, length: 0))
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("FIRST_\n\nTHIRD_", forType: .string)
+        tv.paste(nil)
+        assertTest("Challenger 2 [Suite 1.3]: 1-to-1 paste with empty line leaves middle caret untouched",
+                   tv.string == "FIRST_line1\nline2\nTHIRD_line3")
+
+        // 1.4: Broadcast paste with single-line clipboard (SC_MULTIPASTE_EACH)
+        tv.string = "entryA\nentryB\nentryC"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 7, length: 0)),
+            NSValue(range: NSRange(location: 14, length: 0))
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("TAG_", forType: .string)
+        tv.paste(nil)
+        assertTest("Challenger 2 [Suite 1.4]: Broadcast paste replicates single line to all carets",
+                   tv.string == "TAG_entryA\nTAG_entryB\nTAG_entryC")
+
+        // 1.5: Broadcast paste with fewer clipboard lines than carets (2 lines vs 4 carets)
+        tv.string = "k1: 0\nk2: 0\nk3: 0\nk4: 0"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 4, length: 1)),
+            NSValue(range: NSRange(location: 10, length: 1)),
+            NSValue(range: NSRange(location: 16, length: 1)),
+            NSValue(range: NSRange(location: 22, length: 1))
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("multi\nline", forType: .string)
+        tv.paste(nil)
+        let countMulti = tv.string.components(separatedBy: "multi\nline").count - 1
+        assertTest("Challenger 2 [Suite 1.5]: Mismatched line count (< carets) broadcasts full clipboard content to all 4 carets",
+                   countMulti == 4)
+
+        // 1.6: Broadcast paste with more clipboard lines than carets (4 lines vs 2 carets)
+        tv.string = "slot1\nslot2"
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 6, length: 0))
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("1\n2\n3\n4", forType: .string)
+        tv.paste(nil)
+        let count1234 = tv.string.components(separatedBy: "1\n2\n3\n4").count - 1
+        assertTest("Challenger 2 [Suite 1.6]: Mismatched line count (> carets) broadcasts full clipboard content to all 2 carets",
+                   count1234 == 2)
+
+        // 1.7: 1-to-1 paste over non-zero selections of varying lengths
+        tv.string = "short: A\nmedium: BBB\nlong: CCCCCCC"
+        let rA = (tv.string as NSString).range(of: "A")
+        let rB = (tv.string as NSString).range(of: "BBB")
+        let rC = (tv.string as NSString).range(of: "CCCCCCC")
+        tv.selectedRanges = [NSValue(range: rA), NSValue(range: rB), NSValue(range: rC)]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("11111\n22\n3333333333", forType: .string)
+        tv.paste(nil)
+        assertTest("Challenger 2 [Suite 1.7]: 1-to-1 paste replaces variable-length selections and positions carets accurately",
+                   tv.string == "short: 11111\nmedium: 22\nlong: 3333333333")
+
+        // 1.8: Atomic Undo reverts 1-to-1 paste
+        tv.undoManager?.removeAllActions()
+        tv.string = "baseA\nbaseB\nbaseC"
+        tv.undoManager?.removeAllActions()
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 6, length: 0)),
+            NSValue(range: NSRange(location: 12, length: 0))
+        ]
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("X_\nY_\nZ_", forType: .string)
+        tv.paste(nil)
+        assertTest("Challenger 2 [Suite 1.8.A]: 1-to-1 paste applied before undo",
+                   tv.string == "X_baseA\nY_baseB\nZ_baseC")
+        tv.undoManager?.undo()
+        assertTest("Challenger 2 [Suite 1.8.B]: Single Undo completely reverts 1-to-1 multi-paste in one step",
+                   tv.string == "baseA\nbaseB\nbaseC")
+
+        // ---------------------------------------------------------------------
+        // SUITE 2: Multi-Copy / Multi-Cut Concatenation and Formatting
+        // ---------------------------------------------------------------------
+        // 2.1: Multi-copy of multiple disjoint selections formats with newline separator
+        tv.string = "const alpha = 1;\nconst beta = 2;\nconst gamma = 3;\nconst delta = 4;"
+        let selAlpha = (tv.string as NSString).range(of: "alpha")
+        let selBeta = (tv.string as NSString).range(of: "beta")
+        let selGamma = (tv.string as NSString).range(of: "gamma")
+        let selDelta = (tv.string as NSString).range(of: "delta")
+        tv.selectedRanges = [NSValue(range: selAlpha), NSValue(range: selBeta), NSValue(range: selGamma), NSValue(range: selDelta)]
+        tv.copy(nil)
+        let copiedStr = NSPasteboard.general.string(forType: .string)
+        assertTest("Challenger 2 [Suite 2.1]: Multi-copy joins disjoint selections with newline",
+                   copiedStr == "alpha\nbeta\ngamma\ndelta")
+
+        // 2.2: Multi-copy records into clipboard history
+        assertTest("Challenger 2 [Suite 2.2]: Multi-copy records joined string in workspace clipboardHistory",
+                   ws.clipboardHistory.first?.text == "alpha\nbeta\ngamma\ndelta")
+
+        // 2.3: Multi-cut removes selected ranges and updates clipboard
+        tv.string = "[FIRST] content\n[SECOND] content\n[THIRD] content"
+        let rFirst = (tv.string as NSString).range(of: "[FIRST]")
+        let rSecond = (tv.string as NSString).range(of: "[SECOND]")
+        let rThird = (tv.string as NSString).range(of: "[THIRD]")
+        tv.selectedRanges = [NSValue(range: rFirst), NSValue(range: rSecond), NSValue(range: rThird)]
+        tv.cut(nil)
+        let cutClip = NSPasteboard.general.string(forType: .string)
+        assertTest("Challenger 2 [Suite 2.3.A]: Multi-cut removes selected ranges from buffer",
+                   tv.string == " content\n content\n content")
+        assertTest("Challenger 2 [Suite 2.3.B]: Multi-cut places joined text on clipboard",
+                   cutClip == "[FIRST]\n[SECOND]\n[THIRD]")
+        assertTest("Challenger 2 [Suite 2.3.C]: Multi-cut leaves 3 active carets at cut locations",
+                   tv.selectedRanges.count == 3 && tv.selectedRanges.allSatisfy { $0.rangeValue.length == 0 })
+
+        // 2.4: Immediate multi-paste roundtrip after multi-cut
+        tv.paste(nil)
+        assertTest("Challenger 2 [Suite 2.4]: Immediate multi-paste after multi-cut restores 1-to-1 text",
+                   tv.string == "[FIRST] content\n[SECOND] content\n[THIRD] content")
+
+        // 2.5: Multi-copy with zero-length carets does not overwrite clipboard
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("PRESERVED_CLIP", forType: .string)
+        tv.selectedRanges = [
+            NSValue(range: NSRange(location: 0, length: 0)),
+            NSValue(range: NSRange(location: 5, length: 0)),
+            NSValue(range: NSRange(location: 10, length: 0))
+        ]
+        tv.copy(nil)
+        assertTest("Challenger 2 [Suite 2.5]: Multi-copy with 0-length carets preserves clipboard contents",
+                   NSPasteboard.general.string(forType: .string) == "PRESERVED_CLIP")
+
+        // 2.6: Multi-cut with zero-length carets is a safe no-op
+        let stringBeforeZeroCut = tv.string
+        tv.cut(nil)
+        assertTest("Challenger 2 [Suite 2.6]: Multi-cut with 0-length carets does not alter buffer or clipboard",
+                   tv.string == stringBeforeZeroCut && NSPasteboard.general.string(forType: .string) == "PRESERVED_CLIP")
+
+        // 2.7: Multi-copy with mixed selections (some 0-length, some >0) filters out empties
+        tv.string = "line1: red\nline2: green\nline3: blue"
+        let rRed = (tv.string as NSString).range(of: "red")
+        let rBlue = (tv.string as NSString).range(of: "blue")
+        tv.selectedRanges = [
+            NSValue(range: rRed),
+            NSValue(range: NSRange(location: 11, length: 0)),
+            NSValue(range: rBlue)
+        ]
+        tv.copy(nil)
+        assertTest("Challenger 2 [Suite 2.7]: Multi-copy with mixed selections omits zero-length carets without extra newlines",
+                   NSPasteboard.general.string(forType: .string) == "red\nblue")
+
+        // 2.8: Single Undo completely reverts Multi-cut
+        tv.undoManager?.removeAllActions()
+        tv.string = "AAA 1\nBBB 2\nCCC 3"
+        tv.undoManager?.removeAllActions()
+        let rAAA = (tv.string as NSString).range(of: "AAA")
+        let rBBB = (tv.string as NSString).range(of: "BBB")
+        let rCCC = (tv.string as NSString).range(of: "CCC")
+        tv.selectedRanges = [NSValue(range: rAAA), NSValue(range: rBBB), NSValue(range: rCCC)]
+        tv.cut(nil)
+        assertTest("Challenger 2 [Suite 2.8.A]: Multi-cut cuts AAA, BBB, CCC",
+                   tv.string == " 1\n 2\n 3")
+        tv.undoManager?.undo()
+        assertTest("Challenger 2 [Suite 2.8.B]: Single Undo completely reverts Multi-cut",
+                   tv.string == "AAA 1\nBBB 2\nCCC 3")
+
+        // ---------------------------------------------------------------------
+        // SUITE 3: Option+Drag Column Mode Conversion on Uneven Line Lengths
+        // ---------------------------------------------------------------------
+        // 3.1: 0-width column selection across jagged lines (lengths 10, 3, 0, 8) at column 5
+        tv.string = "1234567890\n123\n\n12345678"
+        let raggedColCarets = tv.computeColumnRanges(fromLine: 1, fromCol: 5, toLine: 4, toCol: 5)
+        tv.selectedRanges = raggedColCarets
+        let cLocs = tv.selectedRanges.map { $0.rangeValue.location }
+        assertTest("Challenger 2 [Suite 3.1]: 0-width column selection clamps col 5 cleanly to [5, 14, 15, 21]",
+                   cLocs == [5, 14, 15, 21] && tv.selectedRanges.allSatisfy { $0.rangeValue.length == 0 })
+
+        // 3.2: Synchronized typing across uneven column carets
+        tv.insertText("X", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("Challenger 2 [Suite 3.2]: Synchronized typing on jagged column carets inserts without corruption",
+                   tv.string == "12345X67890\n123X\nX\n12345X678")
+
+        // 3.3: Non-zero width column selection across uneven lines (col 2 to col 6, width 4)
+        tv.string = "ABCDEFGHIJ\nABC\n\nABCDEFGH"
+        let raggedBoxRanges = tv.computeColumnRanges(fromLine: 1, fromCol: 2, toLine: 4, toCol: 6)
+        tv.selectedRanges = raggedBoxRanges
+        let lens = tv.selectedRanges.map { $0.rangeValue.length }
+        assertTest("Challenger 2 [Suite 3.3]: Non-zero column selection on uneven lines yields lengths [4, 1, 0, 4]",
+                   lens == [4, 1, 0, 4])
+
+        // 3.4: Synchronized replacement of non-zero uneven column selection
+        tv.insertText("---", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("Challenger 2 [Suite 3.4]: Synchronized replacement of uneven column selections inserts '---' across all rows",
+                   tv.string == "AB---GHIJ\nAB---\n---\nAB---GH")
+
+        // 3.5: Synchronized backspace across uneven column carets without crash
+        tv.string = "1234567890\n123\n\n12345678"
+        let colCaretsForDel = tv.computeColumnRanges(fromLine: 1, fromCol: 3, toLine: 4, toCol: 3)
+        tv.selectedRanges = colCaretsForDel
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("Challenger 2 [Suite 3.5]: Synchronized backspace across uneven column carets executes safely",
+                   tv.string.hasPrefix("1245") && tv.selectedRanges.count >= 2)
+
+        // 3.6: Synchronized forward delete across uneven column carets
+        tv.string = "1234567890\n123\n\n12345678"
+        let colCaretsForFwd = tv.computeColumnRanges(fromLine: 1, fromCol: 2, toLine: 4, toCol: 2)
+        tv.selectedRanges = colCaretsForFwd
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteForward(_:)))
+        assertTest("Challenger 2 [Suite 3.6]: Synchronized forward delete across uneven column carets executes safely",
+                   tv.string.hasPrefix("1245") && tv.selectedRanges.count >= 2)
+
+        // 3.7: Inverted column drag coordinates (bottom-right to top-left) produce identical sorted ranges
+        tv.string = "AAAAAA\nBBBBBB\nCCCCCC"
+        let normalRanges = tv.computeColumnRanges(fromLine: 1, fromCol: 1, toLine: 3, toCol: 4)
+        let invertedRanges = tv.computeColumnRanges(fromLine: 3, fromCol: 4, toLine: 1, toCol: 1)
+        assertTest("Challenger 2 [Suite 3.7]: Inverted column coordinates produce identical sorted range slices",
+                   normalRanges.map { $0.rangeValue } == invertedRanges.map { $0.rangeValue })
+
+        // 3.8: Column mode conversion on Windows CRLF document does not split CRLF bytes
+        tv.string = "CRLF1_LONG\r\nCRLF2_SHORT\r\nCRLF3_LONG"
+        let crlfColRanges = tv.computeColumnRanges(fromLine: 1, fromCol: 20, toLine: 3, toCol: 20)
+        tv.selectedRanges = crlfColRanges
+        var splitDetected = false
+        for r in tv.selectedRanges {
+            let loc = r.rangeValue.location
+            let nsText = tv.string as NSString
+            if loc > 0 && loc < nsText.length {
+                let charBefore = nsText.substring(with: NSRange(location: loc - 1, length: 1))
+                let charAt = nsText.substring(with: NSRange(location: loc, length: 1))
+                if charBefore == "\r" && charAt == "\n" {
+                    splitDetected = true
+                }
+            }
+        }
+        assertTest("Challenger 2 [Suite 3.8]: Carets do not land between \\r and \\n in CRLF document",
+                   !splitDetected)
+
+        // ---------------------------------------------------------------------
+        // SUITE 4: Single-Caret Editing Regression Checks
+        // ---------------------------------------------------------------------
+        // 4.1: Single-caret standard typing and cursor advance
+        tv.string = "Original single caret"
+        tv.setSelectedRange(NSRange(location: 9, length: 0))
+        tv.insertText("EXTRA ", replacementRange: NSRange(location: 9, length: 0))
+        assertTest("Challenger 2 [Suite 4.1]: Single-caret typing advances cursor accurately",
+                   tv.string == "Original EXTRA single caret" && tv.selectedRange().location == 15)
+
+        // 4.2: Single-caret selection replacement
+        let rExtra = (tv.string as NSString).range(of: "EXTRA")
+        tv.setSelectedRange(rExtra)
+        tv.insertText("NEW", replacementRange: rExtra)
+        assertTest("Challenger 2 [Suite 4.2]: Single-caret selection replacement replaces text",
+                   tv.string == "Original NEW single caret")
+
+        // 4.3: Single-caret cut, copy, paste
+        let rNew = (tv.string as NSString).range(of: "NEW")
+        tv.setSelectedRange(rNew)
+        tv.cut(nil)
+        assertTest("Challenger 2 [Suite 4.3.A]: Single-caret cut removes selection",
+                   tv.string == "Original  single caret")
+
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        tv.undoManager?.removeAllActions()
+        tv.paste(nil)
+        assertTest("Challenger 2 [Suite 4.3.B]: Single-caret paste inserts clipboard content at single cursor",
+                   tv.string == "NEWOriginal  single caret")
+
+        // 4.4: Single-caret undo / redo stack
+        assertTest("Challenger 2 [Suite 4.4.A]: Single-caret undo stack has recorded paste action",
+                   tv.undoManager?.canUndo == true)
+        tv.undoManager?.undo()
+        assertTest("Challenger 2 [Suite 4.4.B]: Single-caret undo rolls back paste",
+                   tv.string == "Original  single caret")
+        tv.undoManager?.redo()
+        assertTest("Challenger 2 [Suite 4.4.C]: Single-caret redo restores paste",
+                   tv.string == "NEWOriginal  single caret")
     }
 
     static func captureCustomScreenshot(appDelegate: AppDelegate, setup: @escaping (NppWorkspace) -> Void, filename: String) {

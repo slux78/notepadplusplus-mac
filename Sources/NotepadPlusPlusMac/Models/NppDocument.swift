@@ -2,7 +2,7 @@ import Foundation
 import NppCore
 
 // MARK: - Multi-Caret Selection Range (Scintilla Parity: anchor + caret)
-public struct NppSelectionRange: Equatable, Hashable {
+public struct NppSelectionRange: Equatable, Hashable, Codable {
     public var anchor: Int
     public var caret: Int
 

@@ -565,6 +565,14 @@ public final class NppTextView: NSTextView {
         needsDisplay = true
     }
 
+    public override func setSelectedRange(_ charRange: NSRange) {
+        self.setSelectedRanges([NSValue(range: charRange)], affinity: .downstream, stillSelecting: false)
+    }
+
+    public override func setSelectedRange(_ charRange: NSRange, affinity: NSSelectionAffinity, stillSelecting stillSelectingFlag: Bool) {
+        self.setSelectedRanges([NSValue(range: charRange)], affinity: affinity, stillSelecting: stillSelectingFlag)
+    }
+
     public func sanitizeRanges(_ ranges: [NSValue]) -> [NSValue] {
         let docLen = (self.string as NSString).length
         guard !ranges.isEmpty else {
