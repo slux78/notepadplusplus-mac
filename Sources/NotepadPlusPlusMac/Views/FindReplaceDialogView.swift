@@ -78,7 +78,8 @@ public struct NppFindReplaceDialogView: View {
                 tabButton(workspace.tr("Find"), tag: 0)
                 tabButton(workspace.tr("Replace"), tag: 1)
                 tabButton(workspace.tr("Find in Files"), tag: 2)
-                tabButton(workspace.tr("Mark"), tag: 3)
+                tabButton(workspace.tr("Find in Projects"), tag: 3)
+                tabButton(workspace.tr("Mark"), tag: 4)
                 Spacer()
             }
             .padding(.horizontal, 10)
@@ -90,7 +91,7 @@ public struct NppFindReplaceDialogView: View {
             // Dialog Main Body
             HStack(alignment: .top, spacing: 12) {
                 // Left Area: Inputs & Options (width ~ 460)
-                VStack(alignment: .leading, spacing: workspace.findReplaceTab == 2 ? 4 : 8) {
+                VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 4 : 8) {
                     // Find What Row
                     HStack(spacing: 8) {
                         Text(workspace.tr("Find what :"))
@@ -105,8 +106,8 @@ public struct NppFindReplaceDialogView: View {
                             }
                     }
 
-                    // Replace With Row (shown in Replace & Find in Files)
-                    if workspace.findReplaceTab == 1 || workspace.findReplaceTab == 2 {
+                    // Replace With Row (shown in Replace, Find in Files & Find in Projects)
+                    if workspace.findReplaceTab == 1 || workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3 {
                         HStack(spacing: 8) {
                             Text(workspace.tr("Replace with :"))
                                 .font(.system(size: 11))
@@ -191,8 +192,33 @@ public struct NppFindReplaceDialogView: View {
                         }
                     }
 
-                    // Mark specific options
+                    // Find in Projects specific rows: Filters & Project Panel Checkboxes
                     if workspace.findReplaceTab == 3 {
+                        HStack(spacing: 8) {
+                            Text(workspace.tr("Filters :"))
+                                .font(.system(size: 11))
+                                .frame(width: 80, alignment: .trailing)
+                            TextField("", text: $workspace.filterText)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .font(.system(size: 12, design: .monospaced))
+                        }
+
+                        HStack(spacing: 12) {
+                            Spacer().frame(width: 80)
+                            Toggle(workspace.tr("Project Panel 1"), isOn: $workspace.findInProjectsPanel1)
+                                .font(.system(size: 10))
+                                .toggleStyle(CheckboxToggleStyle())
+                            Toggle(workspace.tr("Project Panel 2"), isOn: $workspace.findInProjectsPanel2)
+                                .font(.system(size: 10))
+                                .toggleStyle(CheckboxToggleStyle())
+                            Toggle(workspace.tr("Project Panel 3"), isOn: $workspace.findInProjectsPanel3)
+                                .font(.system(size: 10))
+                                .toggleStyle(CheckboxToggleStyle())
+                        }
+                    }
+
+                    // Mark specific options
+                    if workspace.findReplaceTab == 4 {
                         HStack(spacing: 16) {
                             Spacer().frame(width: 80)
                             Toggle(workspace.tr("Bookmark line"), isOn: $workspace.bookmarkLine)
@@ -206,22 +232,22 @@ public struct NppFindReplaceDialogView: View {
 
                     // Checkboxes Row: Match case, Whole word, Wrap around
                     HStack(alignment: .top, spacing: 20) {
-                        VStack(alignment: .leading, spacing: workspace.findReplaceTab == 2 ? 4 : 6) {
+                        VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 4 : 6) {
                             Toggle(workspace.tr("Match whole word only"), isOn: $workspace.matchWholeWord)
                                 .font(.system(size: 11))
                                 .toggleStyle(CheckboxToggleStyle())
                             Toggle(workspace.tr("Match case"), isOn: $workspace.matchCase)
                                 .font(.system(size: 11))
                                 .toggleStyle(CheckboxToggleStyle())
-                            if workspace.findReplaceTab != 2 {
+                            if workspace.findReplaceTab != 2 && workspace.findReplaceTab != 3 {
                                 Toggle(workspace.tr("Wrap around"), isOn: $workspace.wrapAround)
                                     .font(.system(size: 11))
                                     .toggleStyle(CheckboxToggleStyle())
                             }
                         }
 
-                        VStack(alignment: .leading, spacing: workspace.findReplaceTab == 2 ? 4 : 6) {
-                            if workspace.findReplaceTab != 2 {
+                        VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 4 : 6) {
+                            if workspace.findReplaceTab != 2 && workspace.findReplaceTab != 3 {
                                 Toggle(workspace.tr("Backward direction"), isOn: $workspace.searchBackward)
                                     .font(.system(size: 11))
                                     .toggleStyle(CheckboxToggleStyle())
@@ -287,6 +313,51 @@ public struct NppFindReplaceDialogView: View {
                             statusMessage = "Replace in Files: \(res.replacements) occurrences replaced in \(res.filesModified) files."
                         }
                     } else if workspace.findReplaceTab == 3 {
+                        // Find in Projects Tab Buttons
+                        let hasAnyPanel = workspace.findInProjectsPanel1 || workspace.findInProjectsPanel2 || workspace.findInProjectsPanel3
+                        actionBtn(workspace.tr("Find All in Projects"), isDefault: true) {
+                            var panels: [Int] = []
+                            if workspace.findInProjectsPanel1 { panels.append(1) }
+                            if workspace.findInProjectsPanel2 { panels.append(2) }
+                            if workspace.findInProjectsPanel3 { panels.append(3) }
+                            workspace.findAllInProjects(
+                                query: processedQuery(),
+                                filter: workspace.filterText.isEmpty ? "*.*" : workspace.filterText,
+                                panels: panels,
+                                matchCase: matchCase,
+                                wholeWord: matchWholeWord,
+                                useRegex: searchMode == 2
+                            )
+                            let total = workspace.searchFileGroups.reduce(0) { $0 + $1.matches.count }
+                            statusMessage = "Find in Projects: \(total) hits in \(workspace.searchFileGroups.count) files."
+                        }
+                        .disabled(!hasAnyPanel)
+
+                        actionBtn(workspace.tr("Replace in Projects")) {
+                            let alert = NSAlert()
+                            alert.messageText = workspace.tr("Are you sure?")
+                            alert.informativeText = workspace.tr("Are you sure you want to replace all occurrences in the selected projects?")
+                            alert.addButton(withTitle: workspace.tr("OK"))
+                            alert.addButton(withTitle: workspace.tr("Cancel"))
+                            if alert.runModal() == .alertFirstButtonReturn {
+                                var panels: [Int] = []
+                                if workspace.findInProjectsPanel1 { panels.append(1) }
+                                if workspace.findInProjectsPanel2 { panels.append(2) }
+                                if workspace.findInProjectsPanel3 { panels.append(3) }
+                                let res = workspace.replaceInProjects(
+                                    query: processedQuery(),
+                                    replacement: processedReplacement(),
+                                    filter: workspace.filterText.isEmpty ? "*.*" : workspace.filterText,
+                                    panels: panels,
+                                    matchCase: matchCase,
+                                    wholeWord: matchWholeWord,
+                                    useRegex: searchMode == 2
+                                )
+                                statusMessage = "Replace in Projects: \(res.replacements) occurrences replaced in \(res.filesModified) files."
+                            }
+                        }
+                        .disabled(!hasAnyPanel)
+                    } else if workspace.findReplaceTab == 4 {
                         // Mark Tab Buttons
                         findNextButtonCluster
                         actionBtn(workspace.tr("Mark All")) { runMarkAll() }

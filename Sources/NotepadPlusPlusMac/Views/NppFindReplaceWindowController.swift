@@ -110,7 +110,8 @@ public final class NppFindReplaceWindowController: NSObject, NSWindowDelegate {
         case 0: panel.title = ws.tr("Find")
         case 1: panel.title = ws.tr("Replace")
         case 2: panel.title = ws.tr("Find in Files")
-        case 3: panel.title = ws.tr("Mark")
+        case 3: panel.title = ws.tr("Find in Projects")
+        case 4: panel.title = ws.tr("Mark")
         default: panel.title = ws.tr("Find")
         }
     }
