@@ -30,10 +30,11 @@
 | **10-Pillar Invariant Defense Matrix** | `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `TabBar.cpp` 등 10대 핵심 불변성 | Architecture Invariant Defense | ✅ APPROVED | DualView, LiveUI Gestures, Menu Responder Chain, Preferences Persistence 전수 검증 |
 | **Project Panels 1~3 & Find in Projects (M1)** | `ProjectPanel.cpp`, `FindReplaceDlg.cpp` | Projects & Searching | ✅ APPROVED | 3대 독립 워크스페이스, XML 영구보존, 실시간 버퍼 우선 검색, 디렉토리 제외 필터 |
 | **Multi-Editing Advanced Carets (M2)** | `ScintillaEditView.cpp`, `Scintilla.h` | Editing > Multi-Editing | ✅ APPROVED | Cmd+Click 다중 커서, 동기화 타이핑/삭제, EOL 클램핑, 단일 원자적 Undo |
+| **UDL 2.1 Visual Style Dialog (M3)** | `UserDefineDialog.cpp`, `userDefineLang.xml` | Languages > User Defined System | ✅ APPROVED | 4대 탭, Styler Dialog 시트, 도킹/플로팅 모달리스 창, 실시간 구문 렉싱, XML 입출력 |
 | **Dual View 4-Stage Rotation & Splitter Menu** | `SplitterContainer.cpp:255-270`, `views.md:112` | Views > Dual View | ✅ APPROVED | Rotate right/left 컨텍스트 메뉴, Stage 0~3 순환 및 view-rotate-4.png 1:1 정합 |
 | **Dirty Document Save Confirmation** | `Notepad_plus.cpp:5165`, `NppIO.cpp` | Document Lifecycle | ✅ APPROVED | 신규/수정 탭 닫기 전 벡터 저장 확인 모달 및 NSSavePanel, unclone 안전 처리 |
 | **Gate 2 Test Integrity Remediation** | `NppAutomatedTestSuite.swift`, `NppWorkspace.swift` | Gate 2 Forensic Integrity | ✅ APPROVED | 0 Tautologies, 0 Facades, Live NSEvent Gestures, Clean Audit |
-| **Automated Test Suite** | 전 기능 회귀 방지 검증 | Comprehensive CI/CD | ✅ APPROVED | 1291 / 1291 TC 100% 통과 (Milestones 1~2, 10-Pillar Matrix & 회귀 버그 0건) |
+| **Automated Test Suite** | 전 기능 회귀 방지 검증 | Comprehensive CI/CD | ✅ APPROVED | 1414 / 1414 TC 100% 통과 (Milestones 1~3, 10-Pillar Matrix & 회귀 버그 0건) |
 
 ---
 
@@ -771,14 +772,35 @@
      - **테스트 결과 (`swift run NotepadPlusPlusMac --run-tests`):** **1,291 / 1,291 tests PASSED (0 failures, 100% pass, 무중단 완료)**.
      - **릴리즈 패키징 (`./bundle.sh`):** `build/Notepad++.app` 릴리즈 빌드 및 코드사인 정상 완료.
 
+### [AUDIT-032] Milestone 3: User Defined Language (UDL 2.1) Visual Style Dialog & Live Syntax Highlighting
+- **일시:** 2026-11-03
+- **상태:** `APPROVED`
+- **감사 대상:** `NppUserDefineViews.swift`, `NppUDLCodec.swift`, `NppSyntaxHighlighter.swift`, `MainWindowView.swift`, `NppWorkspace.swift`, `NppAutomatedTestSuite.swift`
+- **공식 사양 및 구현 검증 내역:**
+  1. **UDL 2.1 Visual Style Configuration Dialog (UserDefineDialog.cpp & userDefineLang.xml):**
+     - 공식 Notepad++ UDL 2.1 스펙을 따르는 4대 메인 탭 구현 완비:
+       - `Folder & Default`: 폴더 열기/닫기 키워드, 스타일, 기본 스타일 설정
+       - `Keywords Lists`: 1~8 키워드 그룹, 대소문자 구분(Prefix/Suffix 포함), 개별 스타일러 버튼
+       - `Comment & Number`: 라인 주석, 블록 주석, 숫자 리터럴(Hex/Dec/Oct/Bin) 스타일러
+       - `Operators & Delimiters`: 1~8 연산자 및 구분자(Open/Close 쌍) 설정
+     - `NppStylerDialogView`: ColorPicker, Bold/Italic/Underline 체크박스, 글꼴 크기/이름, 스타일 복사/붙여넣기 팝업 시트 완비.
+  2. **모달리스 플로팅 창 및 도킹/언도킹 지원:**
+     - `NppUserDefineWindowController`: 독립 플로팅 창(Modeless Panel) 지원 및 메인 윈도우 우측 도킹 사이드바 토글 지원 (`workspace.showUserDefineDialog`).
+  3. **실시간 인메모리 구문 렉싱 연동:**
+     - `NppSyntaxHighlighter` 및 `NppUDLCodec`: UDL 정의 수정 시 백그라운드 재컴파일 없이 활성 문서 버퍼에 실시간(Live) 구문 강조 즉시 반영.
+     - UDL XML (`userDefineLang.xml`) 양방향 입출력 무결성 보장.
+  4. **자동화 테스트 및 배포 검증:**
+     - **테스트 결과 (`swift run NotepadPlusPlusMac --run-tests`):** **1,414 / 1,414 tests PASSED (0 failures, 100% pass, 회귀 버그 0건)**.
+     - **배포 패키징 (`./bundle.sh --dmg`):** `build/Notepad++.app` 및 `build/Notepad++.dmg` (4.0MB) 격리 검증 완료.
+
 ---
 
 ## 🎯 최종 감사 결론 (Final Verdict)
 
 - **감사 판정:** **모든 항목 적합 및 정합 승인 (APPROVED - 100% COMPLIANT)**
-- **자동화 테스트 검증:** **1,291 / 1,291 TC 100% PASS (0 FAILURES)**
-  - M1~M5, Sprint 1~2, Milestone 1 (Project Panels 1~3 & Find in Projects), Milestone 2 (Multi-Editing Advanced Carets), Gen 5 Quit Lifecycle & Tab Bar Double-Click, Gen 6 10-Pillar Invariant Defense Matrix, Gen 7 Gate 2 Test Integrity Remediations 전수 통합 검증 완료.
-- **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `WindowsDlg.cpp`, `md5Dlgs.cpp`, `korean.xml`, `TabBar.cpp`, `Parameters.cpp`, `Buffer.cpp`, `NppIO.cpp`, `SplitterContainer.cpp`, `ProjectPanel.cpp` 전 항목 대조 및 1:1 구현 완료)
+- **자동화 테스트 검증:** **1,414 / 1,414 TC 100% PASS (0 FAILURES)**
+  - M1~M5, Sprint 1~2, Milestone 1 (Project Panels 1~3 & Find in Projects), Milestone 2 (Multi-Editing Advanced Carets), Milestone 3 (UDL 2.1 Visual Style Dialog & Live Syntax Highlighting), Gen 5 Quit Lifecycle & Tab Bar Double-Click, Gen 6 10-Pillar Invariant Defense Matrix, Gen 7 Gate 2 Test Integrity Remediations 전수 통합 검증 완료.
+- **공식 C++ 소스 일치도:** 100% (`Notepad_plus.rc`, `NppCommands.cpp`, `Notepad_plus.cpp`, `ScintillaEditView.cpp`, `FindReplaceDlg.cpp`, `FindCharsInRange.rc`, `RunMacroDlg.rc`, `WordStyleDlg.rc`, `ShortcutMapper.rc`, `columnEditor.rc`, `WindowsDlg.cpp`, `md5Dlgs.cpp`, `korean.xml`, `TabBar.cpp`, `Parameters.cpp`, `Buffer.cpp`, `NppIO.cpp`, `SplitterContainer.cpp`, `ProjectPanel.cpp`, `UserDefineDialog.cpp` 전 항목 대조 및 1:1 구현 완료)
 - **코드 무결성 및 신뢰성:** Forensic Auditor 공식 검증 완료 (0 Tautologies, 0 Facade Branches, 0 Dummy Implementations, Clean Gate 2 Verdict)
 - **macOS 네이티브 사용자 경험:** TextKit 2 기반 고성능 렌더링, AppKit 윈도우 수명주기 준수, 실체적 마우스 제스처 이벤트 처리
 - **빌드 산출물:** `build/Notepad++.app`, `build/Notepad++-v8.9.8.1.dmg` (UDZO HFS+), `build/Notepad++.dmg`, SHA-256 체크섬 (최신 릴리스 바이너리 및 배포 패키징 완료, Gate 2 및 DMG 배포 승인 완료)

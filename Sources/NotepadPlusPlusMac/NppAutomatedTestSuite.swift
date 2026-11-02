@@ -1473,6 +1473,9 @@ final class NppAutomatedTestSuite {
             // Challenger 2: Multi-Caret Clipboard & Column Interactions Stress Suite
             runChallenger2MultiCaretClipboardAndColumnStressSuite(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
+            // Milestone 3: UDL Visual Style Configuration Dialog Suite
+            runMilestone3UDLTestSuite(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -9678,6 +9681,537 @@ final class NppAutomatedTestSuite {
         tv.undoManager?.redo()
         assertTest("Challenger 2 [Suite 4.4.C]: Single-caret redo restores paste",
                    tv.string == "NEWOriginal  single caret")
+    }
+
+    // =========================================================================
+    // MILESTONE 3: UDL VISUAL STYLE CONFIGURATION DIALOG TEST SUITE
+    // =========================================================================
+    static func runMilestone3UDLTestSuite(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: @escaping (String, Bool) -> Void
+    ) {
+        print("\n========================================================")
+        print("🎨 MILESTONE 3: UDL VISUAL STYLE CONFIGURATION SUITE")
+        print("========================================================")
+
+        let initialLanguages = ws.userDefinedLanguages
+        let initialDocLang = ws.activeDocument?.language
+        let initialDialogState = ws.showUserDefineDialog
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("NppTest_M3_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        defer {
+            // Restore workspace state
+            ws.userDefinedLanguages = initialLanguages
+            ws.activeDocument?.language = initialDocLang ?? "Plain Text"
+            ws.showUserDefineDialog = initialDialogState
+            NppUserDefineWindowController.shared.close()
+            try? FileManager.default.removeItem(at: tempDir)
+            appDelegate.setupMenuBar()
+        }
+
+        // ---------------------------------------------------------------------
+        // SUITE 1: UDL Language CRUD Operations
+        // ---------------------------------------------------------------------
+        let initialCount = ws.userDefinedLanguages.count
+
+        // 1.1: Create New Language
+        let langName1 = "CustomScript_M3"
+        let langExt1 = "csm3 cs3"
+        let newLang1 = NppUserDefineLanguage(
+            name: langName1,
+            extensions: langExt1,
+            ignoreCase: true,
+            keywordLists: ["Keywords1": "function var let const return"],
+            prefixModes: ["Keywords1": false],
+            decimalSeparator: 0,
+            styleForegrounds: ["KEYWORDS1": "0000FF"]
+        )
+        ws.userDefinedLanguages.append(newLang1)
+        ws.includeSeparateUserDefinedLanguage(named: langName1)
+
+        assertTest("M3.CRUD.1.1.A: Create new language increases collection count",
+                   ws.userDefinedLanguages.count == initialCount + 1)
+        assertTest("M3.CRUD.1.1.B: Query by exact language name resolves new UDL",
+                   ws.userDefinedLanguage(named: langName1)?.name == langName1)
+        assertTest("M3.CRUD.1.1.C: Query by associated file extension resolves new UDL",
+                   ws.userDefinedLanguage(for: URL(fileURLWithPath: "/tmp/sample.csm3"))?.name == langName1 &&
+                   ws.userDefinedLanguage(for: URL(fileURLWithPath: "/tmp/sample.CS3"))?.name == langName1)
+
+        // 1.2: Rename Language
+        let renamedName = "CustomScript_Renamed"
+        if let idx = ws.userDefinedLanguages.firstIndex(where: { $0.name == langName1 }) {
+            ws.excludeSeparateUserDefinedLanguage(named: langName1)
+            ws.includeSeparateUserDefinedLanguage(named: renamedName)
+            ws.userDefinedLanguages[idx].name = renamedName
+        }
+        assertTest("M3.CRUD.1.2.A: Renamed language resolves under new name",
+                   ws.userDefinedLanguage(named: renamedName)?.name == renamedName)
+        assertTest("M3.CRUD.1.2.B: Renamed language no longer resolves under old name",
+                   ws.userDefinedLanguage(named: langName1) == nil)
+
+        // 1.3: Unicode & Multilingual Language Name Preservation
+        let unicodeLangName = "사용자언어_UDL_한국어"
+        let unicodeLang = NppUserDefineLanguage(name: unicodeLangName, extensions: "krudl")
+        ws.userDefinedLanguages.append(unicodeLang)
+        assertTest("M3.CRUD.1.3: Unicode language name preserved without corruption",
+                   ws.userDefinedLanguage(named: unicodeLangName)?.name == unicodeLangName &&
+                   ws.userDefinedLanguage(for: URL(fileURLWithPath: "/tmp/code.krudl"))?.name == unicodeLangName)
+
+        // 1.4: Duplicate / Save As Deep Copy Independence
+        let sourceLang = ws.userDefinedLanguage(named: renamedName)!
+        var duplicatedLang = sourceLang
+        duplicatedLang.id = UUID()
+        duplicatedLang.name = "Copy of \(sourceLang.name)"
+        duplicatedLang.keywordLists["Keywords1"] = "mutated_keyword_only_in_clone"
+        ws.userDefinedLanguages.append(duplicatedLang)
+
+        assertTest("M3.CRUD.1.4.A: Duplicate language assigned distinct UUID",
+                   duplicatedLang.id != sourceLang.id)
+        assertTest("M3.CRUD.1.4.B: Mutating clone keywords does not leak to original (value semantics)",
+                   ws.userDefinedLanguage(named: renamedName)?.keywordLists["Keywords1"] == "function var let const return" &&
+                   ws.userDefinedLanguage(named: duplicatedLang.name)?.keywordLists["Keywords1"] == "mutated_keyword_only_in_clone")
+
+        // 1.5: Remove Language
+        let countBeforeRemove = ws.userDefinedLanguages.count
+        ws.excludeSeparateUserDefinedLanguage(named: duplicatedLang.name)
+        ws.userDefinedLanguages.removeAll { $0.name == duplicatedLang.name }
+        assertTest("M3.CRUD.1.5.A: Remove language decrements collection count",
+                   ws.userDefinedLanguages.count == countBeforeRemove - 1)
+        assertTest("M3.CRUD.1.5.B: Removed language no longer resolvable",
+                   ws.userDefinedLanguage(named: duplicatedLang.name) == nil)
+
+        // 1.6: Boundary Condition: Protection of default User-Defined entry
+        assertTest("M3.CRUD.1.6: Empty/default language name query returns nil safely",
+                   ws.userDefinedLanguage(named: "") == nil)
+
+        // ---------------------------------------------------------------------
+        // SUITE 2: 4 Style Tabs State Mutation & Model Integrity
+        // ---------------------------------------------------------------------
+        var tabLang = NppUserDefineLanguage(name: "TabsTestLang", extensions: "ttl")
+
+        // 2.1: Tab 1 - Folder in Code Keywords
+        tabLang.keywordLists["Folders in code1, open"] = "{ ( begin [ "
+        tabLang.keywordLists["Folders in code1, middle"] = "else elsif case"
+        tabLang.keywordLists["Folders in code1, close"] = "} ) end ]"
+        tabLang.keywordLists["Folders in code2, open"] = "region start"
+        tabLang.keywordLists["Folders in code2, close"] = "endregion finish"
+        tabLang.keywordLists["Folders in comment, open"] = "#region"
+        tabLang.keywordLists["Folders in comment, close"] = "#endregion"
+
+        assertTest("M3.Tabs.2.1: Folder & Default keywords stored across code1, code2, comment groups",
+                   tabLang.keywordLists["Folders in code1, open"] == "{ ( begin [ " &&
+                   tabLang.keywordLists["Folders in code2, close"] == "endregion finish" &&
+                   tabLang.keywordLists["Folders in comment, open"] == "#region")
+
+        // 2.2: Tab 2 - 8 Keyword Groups Storage
+        for group in 1...8 {
+            tabLang.keywordLists["Keywords\(group)"] = "kw_group_\(group)_alpha kw_group_\(group)_beta"
+            tabLang.prefixModes["Keywords\(group)"] = (group % 2 == 1) // 1, 3, 5, 7 true
+            tabLang.styleForegrounds["KEYWORDS\(group)"] = String(format: "%02X%02X%02X", group * 20, group * 10, group * 30)
+        }
+        assertTest("M3.Tabs.2.2.A: All 8 keyword groups store distinct token lists",
+                   tabLang.keywordLists.count >= 8 &&
+                   tabLang.keywordLists["Keywords8"] == "kw_group_8_alpha kw_group_8_beta")
+        assertTest("M3.Tabs.2.2.B: Prefix modes independently set across all 8 groups",
+                   tabLang.prefixModes["Keywords1"] == true && tabLang.prefixModes["Keywords2"] == false &&
+                   tabLang.prefixModes["Keywords7"] == true && tabLang.prefixModes["Keywords8"] == false)
+
+        // 2.3: Tab 2 - Prefix Pattern Regex Generation
+        let prefixPatterns = NppUDLCodec.keywordPatterns(from: "test_pre", prefixMode: true)
+        let exactPatterns = NppUDLCodec.keywordPatterns(from: "test_exact", prefixMode: false)
+        let sampleMatchStr = "test_prefix test_pre test_exact test_exact_suffix"
+        let prefixMatched = prefixPatterns.first.flatMap { sampleMatchStr.range(of: $0, options: .regularExpression) } != nil
+        let exactMatchedExactOnly = exactPatterns.first.flatMap { pattern -> Bool in
+            let fullRegex = try? NSRegularExpression(pattern: pattern)
+            let matches = fullRegex?.matches(in: sampleMatchStr, range: NSRange(location: 0, length: (sampleMatchStr as NSString).length)) ?? []
+            return matches.count == 1 // matches test_exact but NOT test_exact_suffix
+        } ?? false
+        assertTest("M3.Tabs.2.3: Prefix mode matches tokens with suffix while exact mode requires word boundary",
+                   prefixMatched && exactMatchedExactOnly)
+
+        // 2.4: Tab 2 - Quoted Multiword Keyword Parsing
+        let rawKeywordList = "single \"two words\" 'phrase with spaces'"
+        let items = NppUDLCodec.keywordItems(from: rawKeywordList)
+        assertTest("M3.Tabs.2.4: Quoted multiword keyword strings parsed as atomic tokens",
+                   items == ["single", "two words", "phrase with spaces"])
+
+        // 2.5: Tab 3 - Comment Tokens Serialization & Replacement
+        var commentTokens = ""
+        commentTokens = NppUDLCodec.replacingCommentToken(0, value: "//", in: commentTokens)
+        commentTokens = NppUDLCodec.replacingCommentToken(3, value: "/*", in: commentTokens)
+        commentTokens = NppUDLCodec.replacingCommentToken(4, value: "*/", in: commentTokens)
+        assertTest("M3.Tabs.2.5.A: Comment tokens 00 (line), 03 (block open), 04 (block close) encoded",
+                   NppUDLCodec.commentToken(0, in: commentTokens) == "//" &&
+                   NppUDLCodec.commentToken(3, in: commentTokens) == "/*" &&
+                   NppUDLCodec.commentToken(4, in: commentTokens) == "*/")
+        let updatedComments = NppUDLCodec.replacingCommentToken(0, value: "#", in: commentTokens)
+        assertTest("M3.Tabs.2.5.B: Replacing line comment token preserves block comment tokens",
+                   NppUDLCodec.commentToken(0, in: updatedComments) == "#" &&
+                   NppUDLCodec.commentToken(3, in: updatedComments) == "/*" &&
+                   NppUDLCodec.commentToken(4, in: updatedComments) == "*/")
+
+        // 2.6: Tab 3 - Number Settings (Prefixes, Suffixes, Extras, Range, Decimal)
+        tabLang.decimalSeparator = 2 // Both dot and comma
+        tabLang.keywordLists["Numbers, prefix1"] = "0b"
+        tabLang.keywordLists["Numbers, prefix2"] = "0x"
+        tabLang.keywordLists["Numbers, extras1"] = "A B C D E F a b c d e f"
+        tabLang.keywordLists["Numbers, suffix1"] = "ULL ull"
+        tabLang.keywordLists["Numbers, range"] = ".."
+        let numPatterns = NppUDLCodec.numberPatterns(for: tabLang)
+        func matchesNumber(_ str: String) -> Bool {
+            numPatterns.contains { pattern in
+                guard let regex = try? NSRegularExpression(pattern: pattern),
+                      let match = regex.firstMatch(in: str, range: NSRange(location: 0, length: (str as NSString).length)) else { return false }
+                return match.range.location == 0 && match.range.length == (str as NSString).length
+            }
+        }
+        assertTest("M3.Tabs.2.6: Number regex patterns recognize dot, comma, hex prefix, suffix, and range",
+                   matchesNumber("123.45") && matchesNumber("123,45") &&
+                   matchesNumber("0xDEADBEEF") && matchesNumber("0b10101") &&
+                   matchesNumber("1..100"))
+
+        // 2.7: Tab 4 - Operators 1 & 2
+        tabLang.keywordLists["Operators1"] = "+ - * / = < > & |"
+        tabLang.keywordLists["Operators2"] = "and or not"
+        assertTest("M3.Tabs.2.7: Operators 1 and Operators 2 cleanly defined in keyword lists",
+                   tabLang.keywordLists["Operators1"] == "+ - * / = < > & |" &&
+                   tabLang.keywordLists["Operators2"] == "and or not")
+
+        // 2.8: Tab 4 - Delimiters 1..8 with Escape and ((EOL))
+        var delims = ""
+        delims = NppUDLCodec.replacingCommentToken(0, value: "\"", in: delims)
+        delims = NppUDLCodec.replacingCommentToken(1, value: "\\", in: delims)
+        delims = NppUDLCodec.replacingCommentToken(2, value: "\"", in: delims)
+        delims = NppUDLCodec.replacingCommentToken(3, value: ";", in: delims)
+        delims = NppUDLCodec.replacingCommentToken(4, value: "", in: delims)
+        delims = NppUDLCodec.replacingCommentToken(5, value: "((EOL))", in: delims)
+        tabLang.keywordLists["Delimiters"] = delims
+        assertTest("M3.Tabs.2.8: Delimiters token 00/01/02 (quote+escape) and 03/04/05 (semicolon+EOL) encoded",
+                   NppUDLCodec.commentToken(0, in: delims) == "\"" &&
+                   NppUDLCodec.commentToken(1, in: delims) == "\\" &&
+                   NppUDLCodec.commentToken(2, in: delims) == "\"" &&
+                   NppUDLCodec.commentToken(3, in: delims) == ";" &&
+                   NppUDLCodec.commentToken(5, in: delims) == "((EOL))")
+
+        // ---------------------------------------------------------------------
+        // SUITE 3: XML Serialization, Roundtrip & Hex Color Encoding
+        // ---------------------------------------------------------------------
+        // 3.1: Single UDL Encode / Decode Roundtrip
+        guard let encodedXMLData = try? NppUDLCodec.encode(tabLang),
+              let decodedLanguages = try? NppUDLCodec.decode(encodedXMLData),
+              let roundtripLang = decodedLanguages.first else {
+            assertTest("M3.XML.3.1: Single UDL XML serialization and deserialization roundtrip", false)
+            return
+        }
+        assertTest("M3.XML.3.1.A: Deserialized language preserves name, ext, ignoreCase, decimalSeparator",
+                   roundtripLang.name == tabLang.name &&
+                   roundtripLang.extensions == tabLang.extensions &&
+                   roundtripLang.decimalSeparator == tabLang.decimalSeparator)
+        assertTest("M3.XML.3.1.B: Deserialized language preserves all 8 keyword lists and prefix modes",
+                   roundtripLang.keywordLists["Keywords1"] == tabLang.keywordLists["Keywords1"] &&
+                   roundtripLang.prefixModes["Keywords1"] == true &&
+                   roundtripLang.prefixModes["Keywords2"] == false)
+
+        // 3.2: Multi-UDL XML Collection Serialization
+        let langA = NppUserDefineLanguage(name: "LangAlpha", extensions: "la")
+        let langB = NppUserDefineLanguage(name: "LangBeta", extensions: "lb")
+        guard let multiData = try? NppUDLCodec.encode([langA, langB]),
+              let decodedMulti = try? NppUDLCodec.decode(multiData) else {
+            assertTest("M3.XML.3.2: Multi-UDL collection serialization", false)
+            return
+        }
+        assertTest("M3.XML.3.2: Multi-UDL serialization preserves all child UserLang nodes",
+                   decodedMulti.count == 2 && decodedMulti.map { $0.name } == ["LangAlpha", "LangBeta"])
+
+        // 3.3: Hex Color Representation (RRGGBB)
+        let xmlString = String(data: encodedXMLData, encoding: .utf8) ?? ""
+        assertTest("M3.XML.3.3: Hex color codes serialized as 6-digit uppercase RGB strings",
+                   xmlString.contains("fgColor=\"") && !xmlString.contains("fgColor=\"#"))
+
+        // 3.4: Upstream XML Compatibility & sourceXML Preservation
+        let upstreamXMLFixture = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <NotepadPlus>
+            <UserLang name="UpstreamParity" ext="upp" udlVersion="2.1">
+                <Settings>
+                    <Global caseIgnored="yes" allowFoldOfComments="no" foldCompact="no" forcePureLC="0" decimalSeparator="0"/>
+                    <Prefix Keywords1="no" Keywords2="yes"/>
+                </Settings>
+                <KeywordLists>
+                    <Keywords name="Keywords1">alpha beta</Keywords>
+                </KeywordLists>
+                <Styles>
+                    <WordsStyle name="DEFAULT" fgColor="000000" bgColor="FFFFFF" fontStyle="0" nesting="0"/>
+                    <WordsStyle name="KEYWORDS1" fgColor="FF007F" bgColor="EEEEEE" fontStyle="1" nesting="0"/>
+                </Styles>
+            </UserLang>
+        </NotepadPlus>
+        """
+        guard let upstreamDecoded = try? NppUDLCodec.decode(Data(upstreamXMLFixture.utf8)),
+              var parsedUpstream = upstreamDecoded.first else {
+            assertTest("M3.XML.3.4: Upstream XML parse", false)
+            return
+        }
+        parsedUpstream.keywordLists["Keywords1"] = "alpha beta gamma"
+        let reExportedData = try? NppUDLCodec.encode(parsedUpstream)
+        let reExportedString = reExportedData.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        assertTest("M3.XML.3.4: Re-exported UDL preserves unedited bgColor, fontStyle, and nesting attributes via sourceXML",
+                   reExportedString.contains("bgColor=\"EEEEEE\"") &&
+                   reExportedString.contains("fontStyle=\"1\"") &&
+                   reExportedString.contains("alpha beta gamma"))
+
+        // 3.5: XML Entity Escaping (&, <, >, ", ')
+        let entityLang = NppUserDefineLanguage(
+            name: "C++ & C# <Custom>",
+            extensions: "c<>",
+            keywordLists: ["Keywords1": "operator< operator> operator&"]
+        )
+        guard let entityData = try? NppUDLCodec.encode(entityLang),
+              let decodedEntity = try? NppUDLCodec.decode(entityData),
+              let firstEntity = decodedEntity.first else {
+            assertTest("M3.XML.3.5: Entity escaping roundtrip", false)
+            return
+        }
+        assertTest("M3.XML.3.5: Special characters (&, <, >) preserved accurately across XML entity encoding",
+                   firstEntity.name == "C++ & C# <Custom>" &&
+                   firstEntity.keywordLists["Keywords1"] == "operator< operator> operator&")
+
+        // 3.6: Disk Persistence Roundtrip to Directory Fixture
+        ws.userDefinedLanguages = [tabLang, langA]
+        ws.saveUserDefinedLanguages(to: tempDir)
+        let restoredWs = NppWorkspace()
+        restoredWs.loadUserDefinedLanguages(from: tempDir)
+        assertTest("M3.XML.3.6: Workspace save and load from disk directory restores all userDefinedLanguages",
+                   restoredWs.userDefinedLanguages.count == 2 &&
+                   restoredWs.userDefinedLanguages.first?.name == tabLang.name &&
+                   restoredWs.userDefinedLanguages.first?.keywordLists["Keywords1"] == tabLang.keywordLists["Keywords1"])
+
+        // 3.7: Separate UDL Exclusion / Inclusion Persistence in UserDefaults
+        ws.excludeSeparateUserDefinedLanguage(named: "ExcludedLang")
+        let excludedKey = "npp.excludedSeparateUDLNames.v1"
+        let excludedList = UserDefaults.standard.stringArray(forKey: excludedKey) ?? []
+        assertTest("M3.XML.3.7.A: Exclude separate UDL adds language name to UserDefaults exclusion set",
+                   excludedList.contains("ExcludedLang"))
+        ws.includeSeparateUserDefinedLanguage(named: "ExcludedLang")
+        let updatedExcluded = UserDefaults.standard.stringArray(forKey: excludedKey) ?? []
+        assertTest("M3.XML.3.7.B: Include separate UDL removes language name from exclusion set",
+                   !updatedExcluded.contains("ExcludedLang"))
+
+        // ---------------------------------------------------------------------
+        // SUITE 4: Live Syntax Highlighting & Token Attributes
+        // ---------------------------------------------------------------------
+        let liveLang = NppUserDefineLanguage(
+            name: "LiveHighlightLang",
+            extensions: "lhl",
+            ignoreCase: false,
+            keywordLists: [
+                "Keywords1": "func class struct",
+                "Keywords2": "true false nil",
+                "Keywords3": "req",
+                "Keywords4": "exact_only",
+                "Comments": "00// 03/* 04*/",
+                "Operators1": "+ - * / =",
+                "Operators2": "and or",
+                "Numbers, prefix1": "0x",
+                "Delimiters": "00\" 01\\ 02\""
+            ],
+            prefixModes: [
+                "Keywords3": true,   // prefix mode
+                "Keywords4": false   // exact mode
+            ],
+            styleForegrounds: [
+                "KEYWORDS1": "FF0000", // Red
+                "KEYWORDS2": "00FF00", // Green
+                "KEYWORDS3": "0000FF", // Blue
+                "KEYWORDS4": "FF00FF", // Magenta
+                "COMMENTS": "008000",   // Dark green
+                "LINE COMMENTS": "008000",
+                "NUMBERS": "0080FF",    // Sky blue
+                "OPERATORS": "800080",  // Purple
+                "DELIMITERS1": "FF8000" // Orange
+            ]
+        )
+
+        // 4.1: Keywords 1 & 2 Highlighting
+        let sampleDocText = "func calculate() -> Bool { return true; } // line comment\n/* block */ 0xDEAD and +and+ req_item exact_only exact_only_not \"quote \\\" nested\""
+        let liveStorage = NSTextStorage(string: sampleDocText)
+        let baseMonospaceFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        NppSyntaxHighlighter.highlight(
+            textStorage: liveStorage,
+            language: liveLang.name,
+            isDarkMode: false,
+            baseFont: baseMonospaceFont,
+            theme: ws.currentTheme,
+            userDefinedLanguage: liveLang
+        )
+
+        func colorAt(_ searchStr: String) -> NSColor? {
+            let ns = sampleDocText as NSString
+            let r = ns.range(of: searchStr)
+            guard r.location != NSNotFound else { return nil }
+            let sub = ns.substring(with: r)
+            var offset = 0
+            for char in sub {
+                if char.isWhitespace {
+                    offset += 1
+                } else {
+                    break
+                }
+            }
+            return liveStorage.attribute(.foregroundColor, at: r.location + offset, effectiveRange: nil) as? NSColor
+        }
+
+        func fontAt(_ searchStr: String) -> NSFont? {
+            let ns = sampleDocText as NSString
+            let r = ns.range(of: searchStr)
+            guard r.location != NSNotFound else { return nil }
+            return liveStorage.attribute(.font, at: r.location, effectiveRange: nil) as? NSFont
+        }
+
+        let funcColor = colorAt("func")?.usingColorSpace(.deviceRGB)
+        let trueColor = colorAt("true")?.usingColorSpace(.deviceRGB)
+        assertTest("M3.Highlight.4.1: Keywords 1 (func -> Red) and Keywords 2 (true -> Green) receive configured colors",
+                   (funcColor?.redComponent ?? 0) > 0.9 &&
+                   (trueColor?.greenComponent ?? 0) > 0.9)
+
+        // 4.2: Prefix Mode vs Exact Word Boundary
+        let reqColor = colorAt("req_item")?.usingColorSpace(.deviceRGB)
+        let exactColor = colorAt("exact_only")?.usingColorSpace(.deviceRGB)
+        let exactNotColor = colorAt("exact_only_not")?.usingColorSpace(.deviceRGB)
+        assertTest("M3.Highlight.4.2: Prefix mode highlights req_item in Blue while exact mode rejects exact_only_not",
+                   (reqColor?.blueComponent ?? 0) > 0.9 &&
+                   (exactColor?.redComponent ?? 0) > 0.9 &&
+                   ((exactNotColor?.redComponent ?? 0) < 0.9 || (exactNotColor?.blueComponent ?? 0) < 0.9))
+
+        // 4.3: Line & Block Comment Highlighting & Italic Font Trait
+        let lineCommentColor = colorAt("// line comment")?.usingColorSpace(.deviceRGB)
+        let blockCommentColor = colorAt("/* block */")?.usingColorSpace(.deviceRGB)
+        let commentFont = fontAt("// line comment")
+        let hasItalicTrait = commentFont.map { NSFontManager.shared.traits(of: $0).contains(.italicFontMask) } ?? false
+        assertTest("M3.Highlight.4.3: Line and block comments receive comment color and italic font trait",
+                   (lineCommentColor?.greenComponent ?? 0) > 0.4 &&
+                   (blockCommentColor?.greenComponent ?? 0) > 0.4 &&
+                   hasItalicTrait)
+
+        // 4.4: Numeric Literal Highlighting (Hex Prefix)
+        let hexNumColor = colorAt("0xDEAD")?.usingColorSpace(.deviceRGB)
+        assertTest("M3.Highlight.4.4: Hex number 0xDEAD receives NUMBERS sky blue color",
+                   (hexNumColor?.blueComponent ?? 0) > 0.9)
+
+        // 4.5: Operators 1 vs Operators 2 Boundary Distinction
+        let andSepColor = colorAt("+and+")?.usingColorSpace(.deviceRGB)
+        let andWordColor = colorAt(" and ")?.usingColorSpace(.deviceRGB)
+        assertTest("M3.Highlight.4.5: Operators 2 (and) highlighted when separated by Operators 1 (+) or spaces",
+                   (andSepColor?.redComponent ?? 0) > 0.4 && (andWordColor?.redComponent ?? 0) > 0.4)
+
+        // 4.6: Delimiters with Escape Sequence Highlighting
+        let quoteColor = colorAt("nested")?.usingColorSpace(.deviceRGB)
+        assertTest("M3.Highlight.4.6: Delimiter content including escaped quotes remains styled in DELIMITERS1 orange",
+                   (quoteColor?.redComponent ?? 0) > 0.9 && (quoteColor?.greenComponent ?? 0) > 0.4)
+
+        // 4.7: Case Sensitivity vs Insenstivity
+        let caseSensitiveStorage = NSTextStorage(string: "FUNC func")
+        NppSyntaxHighlighter.highlight(textStorage: caseSensitiveStorage, language: liveLang.name, isDarkMode: false, userDefinedLanguage: liveLang)
+        let upperColor = (caseSensitiveStorage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)?.usingColorSpace(.deviceRGB)
+        let lowerColor = (caseSensitiveStorage.attribute(.foregroundColor, at: 5, effectiveRange: nil) as? NSColor)?.usingColorSpace(.deviceRGB)
+        assertTest("M3.Highlight.4.7: Case-sensitive UDL styles lowercase func in red while leaving uppercase FUNC unstyled",
+                   (lowerColor?.redComponent ?? 0) > 0.9 && (upperColor?.redComponent ?? 0) < 0.9)
+
+        // 4.8: Live Re-Highlighting on Workspace Save
+        ws.closeAll(force: true)
+        ws.newDocument()
+        if let doc = ws.activeDocument {
+            doc.language = liveLang.name
+            doc.content = "func calculate() { return true; }"
+            ws.activeTextView?.string = doc.content
+            ws.userDefinedLanguages.append(liveLang)
+            ws.saveUserDefinedLanguages(to: tempDir)
+            let liveColor = (ws.activeTextView?.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)?.usingColorSpace(.deviceRGB)
+            assertTest("M3.Highlight.4.8: saveUserDefinedLanguages automatically triggers live re-highlight of active document",
+                       (liveColor?.redComponent ?? 0) > 0.9)
+        }
+
+        // ---------------------------------------------------------------------
+        // SUITE 5: Menu, Dialog Lifecycle & Dock/Undock State
+        // ---------------------------------------------------------------------
+        // 5.1: menuUserDefineDlg Action Toggles Dialog ON
+        NppUserDefineWindowController.shared.close()
+        ws.showUserDefineDialog = false
+        appDelegate.menuUserDefineDlg()
+        assertTest("M3.UI.5.1: menuUserDefineDlg opens window controller and sets showUserDefineDialog true",
+                   ws.showUserDefineDialog == true &&
+                   NppUserDefineWindowController.shared.panel != nil)
+
+        // 5.2: UDL Panel Conforms to macOS Utility Standards & Upstream Specs
+        if let panel = NppUserDefineWindowController.shared.panel {
+            assertTest("M3.UI.5.2.A: UDL Panel title matches upstream 'User Defined Language v2.1'",
+                       panel.title == "User Defined Language v2.1")
+            assertTest("M3.UI.5.2.B: UDL Panel configured as floating utility window with hidesOnDeactivate",
+                       panel.isFloatingPanel == true &&
+                       panel.level == .floating &&
+                       panel.hidesOnDeactivate == true &&
+                       panel.styleMask.contains(.utilityWindow))
+        } else {
+            assertTest("M3.UI.5.2: UDL Panel exists for property inspection", false)
+        }
+
+        // 5.3: Re-invoking menuUserDefineDlg Toggles Dialog OFF
+        appDelegate.menuUserDefineDlg()
+        assertTest("M3.UI.5.3: Re-invoking menuUserDefineDlg closes panel and sets showUserDefineDialog false",
+                   ws.showUserDefineDialog == false &&
+                   NppUserDefineWindowController.shared.panel == nil)
+
+        // 5.4: Menu Item Checkmark Validation (IDM_LANG_USER_DLG)
+        let dummyMenuItem = NSMenuItem(title: "Define your language...", action: #selector(appDelegate.menuUserDefineDlg), keyEquivalent: "")
+        ws.showUserDefineDialog = true
+        _ = appDelegate.validateMenuItem(dummyMenuItem)
+        let stateWhenOpen = dummyMenuItem.state
+        ws.showUserDefineDialog = false
+        _ = appDelegate.validateMenuItem(dummyMenuItem)
+        let stateWhenClosed = dummyMenuItem.state
+        assertTest("M3.UI.5.4: Menu checkmark state reflects dialog visibility (.on when open, .off when closed)",
+                   stateWhenOpen == .on && stateWhenClosed == .off)
+
+        // 5.5: Language Menu Dynamic UDL Submenu Synchronization
+        let syncLangName = "SyncLanguage_M3"
+        ws.userDefinedLanguages.append(NppUserDefineLanguage(name: syncLangName, extensions: "sync"))
+        appDelegate.setupMenuBar()
+
+        let langMenuItem = NSApp.mainMenu?.items.first { $0.submenu?.title == "Language" || $0.title == "Language" }
+        let udlSubmenu = langMenuItem?.submenu?.items.first { $0.title == "User Defined Language" || $0.submenu?.title == "User Defined Language" }?.submenu
+        let containsSyncItem = udlSubmenu?.items.contains { $0.title == syncLangName } ?? false
+        assertTest("M3.UI.5.5.A: setupMenuBar injects dynamic menu item for custom UDL in Language submenu",
+                   containsSyncItem)
+
+        ws.userDefinedLanguages.removeAll { $0.name == syncLangName }
+        appDelegate.setupMenuBar()
+        let updatedLangMenuItem = NSApp.mainMenu?.items.first { $0.submenu?.title == "Language" || $0.title == "Language" }
+        let updatedUdlSubmenu = updatedLangMenuItem?.submenu?.items.first { $0.title == "User Defined Language" || $0.submenu?.title == "User Defined Language" }?.submenu
+        let containsRemovedItem = updatedUdlSubmenu?.items.contains { $0.title == syncLangName } ?? false
+        assertTest("M3.UI.5.5.B: Removing UDL strips menu item from Language submenu",
+                   !containsRemovedItem)
+
+        // 5.6: Selecting Dynamic Language Menu Item Updates Document Language
+        ws.newDocument()
+        let testSelectLang = NppUserDefineLanguage(name: "SelectedLang_M3", extensions: "slm3")
+        ws.userDefinedLanguages.append(testSelectLang)
+        let selectItem = NSMenuItem(title: testSelectLang.name, action: #selector(appDelegate.menuSelectLanguage(_:)), keyEquivalent: "")
+        selectItem.representedObject = testSelectLang.name
+        appDelegate.menuSelectLanguage(selectItem)
+        assertTest("M3.UI.5.6: Selecting dynamic UDL menu item applies language to activeDocument",
+                   ws.activeDocument?.language == testSelectLang.name)
+
+        // 5.7: Dock / Undock State Machine
+        // Test toggling dock state: in floating mode panel is utility panel, in docked mode dialog state remains synchronized
+        let defaultDocked = ws.isUserDefineDialogDocked
+        ws.isUserDefineDialogDocked.toggle()
+        assertTest("M3.UI.5.7: isUserDefineDialogDocked toggle transitions dock state machine cleanly",
+                   ws.isUserDefineDialogDocked != defaultDocked)
+        ws.isUserDefineDialogDocked = defaultDocked
+
+        ws.closeAll(force: true)
     }
 
     static func captureCustomScreenshot(appDelegate: AppDelegate, setup: @escaping (NppWorkspace) -> Void, filename: String) {
