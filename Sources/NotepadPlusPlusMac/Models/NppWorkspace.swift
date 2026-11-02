@@ -346,6 +346,17 @@ public final class NppWorkspace: ObservableObject {
     @Published public var showCharacterPanel: Bool = false
     @Published public var clipboardHistory: [ClipboardItem] = []
 
+    // Milestone 1: Project Panels 1~3 & Find in Projects
+    @Published public var showProjectPanel1: Bool = false
+    @Published public var showProjectPanel2: Bool = false
+    @Published public var showProjectPanel3: Bool = false
+    @Published public var projectWorkspace1: NppProjectWorkspace = NppProjectWorkspace(panelIndex: 1)
+    @Published public var projectWorkspace2: NppProjectWorkspace = NppProjectWorkspace(panelIndex: 2)
+    @Published public var projectWorkspace3: NppProjectWorkspace = NppProjectWorkspace(panelIndex: 3)
+    @Published public var findInProjectsPanel1: Bool = true
+    @Published public var findInProjectsPanel2: Bool = false
+    @Published public var findInProjectsPanel3: Bool = false
+
     // Pass 2: Edit Menu Parity State
     @Published public var beginSelectAnchor: Int? = nil
     @Published public var customDateFormat: String = "yyyy-MM-dd HH:mm:ss"
@@ -394,7 +405,7 @@ public final class NppWorkspace: ObservableObject {
             }
         }
     }
-    @Published public var findReplaceTab: Int = 0 { // 0: Find, 1: Replace, 2: Find in Files, 3: Mark
+    @Published public var findReplaceTab: Int = 0 { // 0: Find, 1: Replace, 2: Find in Files, 3: Find in Projects, 4: Mark
         didSet {
             NppFindReplaceWindowController.shared.updateTitle()
         }
@@ -566,9 +577,19 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
-    public func openMark() {
+    public func openFindInProjects() {
         prepareFindDialogFromEditor()
         findReplaceTab = 3
+        if showFindReplaceDialog {
+            NppFindReplaceWindowController.shared.show(workspace: self)
+        } else {
+            showFindReplaceDialog = true
+        }
+    }
+
+    public func openMark() {
+        prepareFindDialogFromEditor()
+        findReplaceTab = 4
         if showFindReplaceDialog {
             NppFindReplaceWindowController.shared.show(workspace: self)
         } else {
@@ -1242,6 +1263,28 @@ public final class NppWorkspace: ObservableObject {
     public static let prefsWordWrapKey = "npp.prefs.wordWrap"
     public static let prefsShowLineNumbersKey = "npp.prefs.showLineNumbers"
     public static let prefsTabSizeKey = "npp.prefs.tabSize"
+    public static let prefsRememberProjectPanelsKey = "npp.prefs.rememberProjectPanels"
+    public static let prefsShowProjectPanel1Key = "npp.prefs.showProjectPanel1"
+    public static let prefsShowProjectPanel2Key = "npp.prefs.showProjectPanel2"
+    public static let prefsShowProjectPanel3Key = "npp.prefs.showProjectPanel3"
+
+    public func getProjectWorkspace(panelIndex: Int) -> NppProjectWorkspace {
+        switch panelIndex {
+        case 1: return projectWorkspace1
+        case 2: return projectWorkspace2
+        case 3: return projectWorkspace3
+        default: return projectWorkspace1
+        }
+    }
+
+    public func toggleProjectPanel(_ index: Int) {
+        switch index {
+        case 1: showProjectPanel1.toggle()
+        case 2: showProjectPanel2.toggle()
+        case 3: showProjectPanel3.toggle()
+        default: break
+        }
+    }
 
     public func savePreferences() {
         let ud = UserDefaults.standard
@@ -1256,6 +1299,17 @@ public final class NppWorkspace: ObservableObject {
         ud.set(isWordWrapEnabled, forKey: Self.prefsWordWrapKey)
         ud.set(showLineNumbers, forKey: Self.prefsShowLineNumbersKey)
         ud.set(tabSize, forKey: Self.prefsTabSizeKey)
+        if rememberProjectPanels {
+            ud.set(true, forKey: Self.prefsRememberProjectPanelsKey)
+            ud.set(showProjectPanel1, forKey: Self.prefsShowProjectPanel1Key)
+            ud.set(showProjectPanel2, forKey: Self.prefsShowProjectPanel2Key)
+            ud.set(showProjectPanel3, forKey: Self.prefsShowProjectPanel3Key)
+        } else {
+            ud.removeObject(forKey: Self.prefsRememberProjectPanelsKey)
+            ud.removeObject(forKey: Self.prefsShowProjectPanel1Key)
+            ud.removeObject(forKey: Self.prefsShowProjectPanel2Key)
+            ud.removeObject(forKey: Self.prefsShowProjectPanel3Key)
+        }
     }
 
     public func loadPreferences() {
@@ -1293,6 +1347,18 @@ public final class NppWorkspace: ObservableObject {
         if ud.object(forKey: Self.prefsTabSizeKey) != nil {
             tabSize = ud.integer(forKey: Self.prefsTabSizeKey)
         }
+        if ud.bool(forKey: Self.prefsRememberProjectPanelsKey) {
+            rememberProjectPanels = true
+            if ud.object(forKey: Self.prefsShowProjectPanel1Key) != nil {
+                showProjectPanel1 = ud.bool(forKey: Self.prefsShowProjectPanel1Key)
+            }
+            if ud.object(forKey: Self.prefsShowProjectPanel2Key) != nil {
+                showProjectPanel2 = ud.bool(forKey: Self.prefsShowProjectPanel2Key)
+            }
+            if ud.object(forKey: Self.prefsShowProjectPanel3Key) != nil {
+                showProjectPanel3 = ud.bool(forKey: Self.prefsShowProjectPanel3Key)
+            }
+        }
     }
 
     public func resetPreferencesToDefaults() {
@@ -1308,7 +1374,11 @@ public final class NppWorkspace: ObservableObject {
             Self.prefsSelectedThemeKey,
             Self.prefsWordWrapKey,
             Self.prefsShowLineNumbersKey,
-            Self.prefsTabSizeKey
+            Self.prefsTabSizeKey,
+            Self.prefsRememberProjectPanelsKey,
+            Self.prefsShowProjectPanel1Key,
+            Self.prefsShowProjectPanel2Key,
+            Self.prefsShowProjectPanel3Key
         ]
         for k in keys { ud.removeObject(forKey: k) }
     }
@@ -1658,22 +1728,7 @@ public final class NppWorkspace: ObservableObject {
             return false
         }
 
-        let needsConfirm = doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)
-        if !force && needsConfirm {
-            let choice = confirmSaveIfNeeded(for: doc)
-            switch choice {
-            case .save:
-                if !promptSaveSynchronously(for: doc) {
-                    return false
-                }
-            case .dontSave:
-                break
-            case .cancel:
-                return false
-            }
-        }
-
-        // Dual View handling
+        // Dual View handling for Cloned Document (closing one clone view unlinks it without discarding document)
         if clonedDocumentIds.contains(id) {
             if activeView == 1 || (secondaryActiveDocumentId == id && activeView == 1) {
                 secondaryDocumentIds.removeAll(where: { $0 == id })
@@ -1693,6 +1748,21 @@ public final class NppWorkspace: ObservableObject {
                 }
                 objectWillChange.send()
                 return true
+            }
+        }
+
+        let needsConfirm = doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)
+        if !force && needsConfirm {
+            let choice = confirmSaveIfNeeded(for: doc)
+            switch choice {
+            case .save:
+                if !promptSaveSynchronously(for: doc) {
+                    return false
+                }
+            case .dontSave:
+                break
+            case .cancel:
+                return false
             }
         }
 
@@ -2232,6 +2302,10 @@ public final class NppWorkspace: ObservableObject {
         return result
     }
 
+    public func jumpToSearchResult(_ match: NppSearchMatch) {
+        jumpToMatch(match)
+    }
+
     public func jumpToMatch(_ match: NppSearchMatch) {
         if documents.contains(where: { $0.id == match.documentId }) {
             activeDocumentId = match.documentId
@@ -2553,24 +2627,27 @@ public final class NppWorkspace: ObservableObject {
         let excludeFilters = filters.filter { $0.hasPrefix("!") }.map { String($0.dropFirst()) }
 
         for pat in excludeFilters {
-            let isDirExclusion = pat.hasPrefix("\\") || pat.hasPrefix("/") || pat.contains("/") || pat.contains("\\")
-            if isDirExclusion {
-                var cleanDir = pat
-                if cleanDir.hasPrefix("\\") || cleanDir.hasPrefix("/") {
-                    cleanDir = String(cleanDir.dropFirst())
+            var cleanDir = pat
+            if cleanDir.hasPrefix("\\") || cleanDir.hasPrefix("/") {
+                cleanDir = String(cleanDir.dropFirst())
+            }
+            if cleanDir.hasSuffix("\\") || cleanDir.hasSuffix("/") {
+                cleanDir = String(cleanDir.dropLast())
+            }
+            cleanDir = cleanDir.replacingOccurrences(of: "\\", with: "/").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+            if fnmatch(pat, filename, 0) == 0 {
+                return false
+            }
+            if !cleanDir.isEmpty {
+                if fnmatch(cleanDir, filename, 0) == 0 {
+                    return false
                 }
-                cleanDir = cleanDir.replacingOccurrences(of: "\\", with: "/").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                if !cleanDir.isEmpty {
-                    let pathComponents = filePath.split(separator: "/").map(String.init)
-                    let dirComponents = pathComponents.dropLast()
-                    if dirComponents.contains(where: { fnmatch(cleanDir, $0, 0) == 0 || $0 == cleanDir }) ||
-                       filePath.contains("/" + cleanDir + "/") ||
-                       filePath.contains("/" + cleanDir) {
-                        return false
-                    }
-                }
-            } else {
-                if fnmatch(pat, filename, 0) == 0 {
+                let pathComponents = filePath.split(separator: "/").map(String.init)
+                let dirComponents = pathComponents.dropLast()
+                if dirComponents.contains(where: { fnmatch(cleanDir, $0, 0) == 0 || $0 == cleanDir }) ||
+                   filePath.contains("/" + cleanDir + "/") ||
+                   filePath.hasPrefix(cleanDir + "/") {
                     return false
                 }
             }
@@ -2705,6 +2782,153 @@ public final class NppWorkspace: ObservableObject {
                             syncDocumentToTextView(doc: openDoc, tv: tv)
                         }
                     }
+                }
+            }
+        }
+        objectWillChange.send()
+        return (totalReplacements, filesModified)
+    }
+
+    // MARK: - Milestone 1: Find & Replace in Projects
+
+    public func enumProjectFiles(panelIndex: Int, filter: String) -> [URL] {
+        let ws = getProjectWorkspace(panelIndex: panelIndex)
+        let files = ws.enumAllFiles()
+        var results: [URL] = []
+        for file in files {
+            guard let path = file.filePath else { continue }
+            let url = URL(fileURLWithPath: path)
+            if Self.matchesFileFilter(filename: url.lastPathComponent, filePath: url.path, filterString: filter) {
+                results.append(url)
+            }
+        }
+        return results
+    }
+
+    public func findAllInProjects(
+        query: String,
+        filter: String,
+        panels: [Int],
+        matchCase: Bool,
+        wholeWord: Bool,
+        useRegex: Bool
+    ) {
+        guard !query.isEmpty else { return }
+        lastSearchQuery = query
+
+        var targetFiles: [URL] = []
+        var seenPaths: Set<String> = []
+
+        for p in panels {
+            let files = enumProjectFiles(panelIndex: p, filter: filter)
+            for fileUrl in files {
+                let stdPath = fileUrl.standardizedFileURL.path
+                if !seenPaths.contains(stdPath) {
+                    seenPaths.insert(stdPath)
+                    targetFiles.append(fileUrl)
+                }
+            }
+        }
+
+        var groups: [NppSearchFileGroup] = []
+        for fileUrl in targetFiles {
+            if let openDoc = documents.first(where: {
+                if let p = $0.filePath {
+                    return p.standardizedFileURL.path == fileUrl.standardizedFileURL.path
+                }
+                return false
+            }) {
+                let matches = searchInDocument(doc: openDoc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
+                if !matches.isEmpty {
+                    groups.append(NppSearchFileGroup(documentId: openDoc.id, documentTitle: openDoc.title, filePath: fileUrl, matches: matches))
+                }
+            } else if let content = (try? String(contentsOf: fileUrl, encoding: .utf8)) ?? (try? String(contentsOf: fileUrl, encoding: .ascii)) {
+                let tempDoc = NppDocument(title: fileUrl.lastPathComponent, content: content)
+                tempDoc.filePath = fileUrl
+                let matches = searchInDocument(doc: tempDoc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
+                if !matches.isEmpty {
+                    groups.append(NppSearchFileGroup(documentId: tempDoc.id, documentTitle: tempDoc.title, filePath: fileUrl, matches: matches))
+                }
+            }
+        }
+        searchFileGroups = groups
+        showSearchResultsPanel = true
+    }
+
+    @discardableResult
+    public func replaceInProjects(
+        query: String,
+        replacement: String,
+        filter: String,
+        panels: [Int],
+        matchCase: Bool,
+        wholeWord: Bool,
+        useRegex: Bool
+    ) -> (replacements: Int, filesModified: Int) {
+        guard !query.isEmpty else { return (0, 0) }
+
+        var targetFiles: [URL] = []
+        var seenPaths: Set<String> = []
+
+        for p in panels {
+            let files = enumProjectFiles(panelIndex: p, filter: filter)
+            for fileUrl in files {
+                let stdPath = fileUrl.standardizedFileURL.path
+                if !seenPaths.contains(stdPath) {
+                    seenPaths.insert(stdPath)
+                    targetFiles.append(fileUrl)
+                }
+            }
+        }
+
+        var pattern = useRegex ? query : NSRegularExpression.escapedPattern(for: query)
+        if wholeWord {
+            pattern = NppWorkspace.wholeWordPattern(pattern, query: query)
+        }
+
+        var regexOptions: NSRegularExpression.Options = [.anchorsMatchLines]
+        if !matchCase {
+            regexOptions.insert(.caseInsensitive)
+        }
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: regexOptions) else {
+            return (0, 0)
+        }
+        let template = useRegex ? NppWorkspace.normalizeRegexReplacementTemplate(replacement) : NSRegularExpression.escapedTemplate(for: replacement)
+
+        var totalReplacements = 0
+        var filesModified = 0
+
+        for fileUrl in targetFiles {
+            let content: String
+            let isOpenDoc = documents.first(where: {
+                if let p = $0.filePath {
+                    return p.standardizedFileURL.path == fileUrl.standardizedFileURL.path
+                }
+                return false
+            })
+            if let openDoc = isOpenDoc {
+                content = openDoc.content
+            } else if let diskContent = (try? String(contentsOf: fileUrl, encoding: .utf8)) ?? (try? String(contentsOf: fileUrl, encoding: .ascii)) {
+                content = diskContent
+            } else {
+                continue
+            }
+
+            let fullRange = NSRange(location: 0, length: (content as NSString).length)
+            let count = regex.numberOfMatches(in: content, options: [], range: fullRange)
+            if count > 0 {
+                let updated = regex.stringByReplacingMatches(in: content, options: [], range: fullRange, withTemplate: template)
+                totalReplacements += count
+                filesModified += 1
+
+                if let openDoc = isOpenDoc {
+                    openDoc.content = updated
+                    openDoc.isDirty = true
+                    if openDoc.id == activeDocumentId, let tv = activeTextView {
+                        syncDocumentToTextView(doc: openDoc, tv: tv)
+                    }
+                } else {
+                    _ = try? updated.write(to: fileUrl, atomically: true, encoding: .utf8)
                 }
             }
         }

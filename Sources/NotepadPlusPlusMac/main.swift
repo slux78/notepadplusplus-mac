@@ -626,6 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let fifItem = NSMenuItem(title: tr("Find in Files..."), action: #selector(menuFindInFiles), keyEquivalent: "F")
         fifItem.keyEquivalentModifierMask = [.command, .shift]
         searchMenu.addItem(fifItem)
+        searchMenu.addItem(withTitle: tr("Find in Projects..."), action: #selector(menuFindInProjects), keyEquivalent: "")
 
         let findNextItem = NSMenuItem(title: tr("Find Next"), action: #selector(menuFindNext), keyEquivalent: f3Key)
         findNextItem.keyEquivalentModifierMask = []
@@ -831,6 +832,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         viewMenu.addItem(NSMenuItem.separator())
         viewMenu.addItem(withTitle: tr("Document List"), action: #selector(menuToggleDocumentList), keyEquivalent: "")
         viewMenu.addItem(withTitle: tr("Folder as Workspace"), action: #selector(menuToggleFolderAsWorkspace), keyEquivalent: "")
+
+        let projectPanelsSubMenu = NSMenu(title: tr("Project Panels"))
+        projectPanelsSubMenu.addItem(withTitle: tr("Project Panel 1"), action: #selector(menuToggleProjectPanel1), keyEquivalent: "")
+        projectPanelsSubMenu.addItem(withTitle: tr("Project Panel 2"), action: #selector(menuToggleProjectPanel2), keyEquivalent: "")
+        projectPanelsSubMenu.addItem(withTitle: tr("Project Panel 3"), action: #selector(menuToggleProjectPanel3), keyEquivalent: "")
+        let projectPanelsItem = NSMenuItem(title: tr("Project Panels"), action: nil, keyEquivalent: "")
+        projectPanelsItem.submenu = projectPanelsSubMenu
+        viewMenu.addItem(projectPanelsItem)
+
         viewMenu.addItem(withTitle: tr("Function List"), action: #selector(menuToggleFunctionList), keyEquivalent: "")
         viewMenu.addItem(withTitle: tr("Document Map"), action: #selector(menuToggleDocumentMap), keyEquivalent: "")
         viewMenu.addItem(NSMenuItem.separator())
@@ -1318,6 +1328,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc func menuToggleDocumentList() { workspace.showDocumentList.toggle() }
     @objc func menuToggleFolderAsWorkspace() { workspace.showFolderAsWorkspace.toggle() }
+    @objc func menuToggleProjectPanel1() { workspace.showProjectPanel1.toggle() }
+    @objc func menuToggleProjectPanel2() { workspace.showProjectPanel2.toggle() }
+    @objc func menuToggleProjectPanel3() { workspace.showProjectPanel3.toggle() }
+    @objc func menuFindInProjects() { workspace.openFindInProjects() }
     @objc func menuToggleFunctionList() { workspace.showFunctionList.toggle() }
     @objc func menuToggleDocumentMap() { workspace.showDocumentMap.toggle() }
     @objc func menuFindAllCurrent() {
@@ -2632,6 +2646,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if menuItem.action == #selector(menuToggleFolderAsWorkspace) {
             menuItem.state = workspace.showFolderAsWorkspace ? .on : .off
+            return true
+        }
+        if menuItem.action == #selector(menuToggleProjectPanel1) {
+            menuItem.state = workspace.showProjectPanel1 ? .on : .off
+            return true
+        }
+        if menuItem.action == #selector(menuToggleProjectPanel2) {
+            menuItem.state = workspace.showProjectPanel2 ? .on : .off
+            return true
+        }
+        if menuItem.action == #selector(menuToggleProjectPanel3) {
+            menuItem.state = workspace.showProjectPanel3 ? .on : .off
+            return true
+        }
+        if menuItem.action == #selector(menuFindInProjects) {
             return true
         }
         if menuItem.action == #selector(menuToggleFunctionList) {
