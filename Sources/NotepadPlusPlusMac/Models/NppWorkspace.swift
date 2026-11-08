@@ -988,6 +988,8 @@ public final class NppWorkspace: ObservableObject {
     @Published public var periodicBackupEnabled: Bool = true
     @Published public var periodicBackupIntervalSeconds: Int = 7
     @Published public var periodicBackupPath: String = ""
+    /// Why the last `saveSession` failed (nil when it succeeded); used by the quit diagnostics.
+    public var lastSessionError: String?
     /// Test hook: where the automatic session and backups live instead of Application Support.
     public var supportDirectoryOverride: URL?
     @Published public var keepAbsentFilesInSession: Bool = true
@@ -3456,6 +3458,7 @@ public final class NppWorkspace: ObservableObject {
         }
         var referencedBackups = Set<String>()
         var allBackupsSucceeded = true
+        lastSessionError = nil
         if let dir = backupDirectory {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }
@@ -3509,6 +3512,7 @@ public final class NppWorkspace: ObservableObject {
         xml += "    </Session>\n</NotepadPlus>\n"
 
         guard backupDirectory == nil || allBackupsSucceeded else {
+            lastSessionError = "could not write one or more backup files into \(backupDirectory?.path ?? "?")"
             return false
         }
 
@@ -3523,6 +3527,7 @@ public final class NppWorkspace: ObservableObject {
             }
             return true
         } catch {
+            lastSessionError = "writing \(url.path) failed: \(error.localizedDescription)"
             return false
         }
     }
@@ -3530,6 +3535,10 @@ public final class NppWorkspace: ObservableObject {
     // MARK: - Session snapshot & periodic backup (Preferences > Backup)
     public var sessionSupportDirectory: URL {
         if let override = supportDirectoryOverride { return override }
+        // Never let automated test runs touch the user's real session and unsaved-document backups.
+        if CommandLine.arguments.contains("--run-tests") {
+            return FileManager.default.temporaryDirectory.appendingPathComponent("NotepadPlusPlusMac-tests-\(getpid())", isDirectory: true)
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         let primaryDir = base.appendingPathComponent("NotepadPlusPlusMac", isDirectory: true)
@@ -3567,13 +3576,27 @@ public final class NppWorkspace: ObservableObject {
     @discardableResult
     public func prepareForTermination() -> Bool {
         savePreferences()
+        let dirtyCount = documents.filter { $0.isDirty || ($0.filePath == nil && !$0.content.isEmpty) }.count
+        func log(_ text: String) {
+            let line = "\(ISO8601DateFormatter().string(from: Date())) quit: dirtyDocs=\(dirtyCount) remember=\(rememberSession) backup=\(periodicBackupEnabled) \(text)\n"
+            let url = sessionSupportDirectory.appendingPathComponent("quit.log")
+            try? FileManager.default.createDirectory(at: sessionSupportDirectory, withIntermediateDirectories: true)
+            if let h = try? FileHandle(forWritingTo: url) {
+                h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
+            } else {
+                try? Data(line.utf8).write(to: url)
+            }
+        }
         if canRestoreUnsavedOnLaunch {
             if snapshotSession() {
+                log("-> snapshot saved, no prompt")
                 return true
             }
+            log("-> snapshot FAILED (\(lastSessionError ?? "unknown")); falling back to save prompts")
             // Fallback if snapshot failed (e.g. disk write failure)
             return promptSaveDirtyDocumentsBeforeQuit()
         } else {
+            log("-> backup mode off, asking to save")
             guard promptSaveDirtyDocumentsBeforeQuit() else { return false }
             if rememberSession {
                 _ = saveSession(to: autoSessionURL, backupDirectory: nil)
