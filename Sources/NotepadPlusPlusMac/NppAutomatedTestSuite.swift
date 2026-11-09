@@ -1436,6 +1436,8 @@ final class NppAutomatedTestSuite {
             runCommentIndentRegressionTests(assertTest: assertTest)
             runSessionTabRegressionTests(assertTest: assertTest)
             runUnsavedBackupRestoreTests(assertTest: assertTest)
+            assertTest("Quit: main window is not over-released on close (crash on closing the last window)",
+                       appDelegate.window.isReleasedWhenClosed == false)
             runResourceBundleTests(assertTest: assertTest)
             runQuitAndTabBarUXParityTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialQuitStressTests(appDelegate: appDelegate, assertTest: assertTest)

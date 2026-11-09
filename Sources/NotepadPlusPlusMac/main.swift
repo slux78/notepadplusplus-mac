@@ -27,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
+        // Without this AppKit releases the window once more when it is closed, so the strong `window`
+        // reference dangles and the quit that follows "close last window" crashes in objc_msgSend.
+        window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
         updateWindowTitle()
@@ -270,9 +273,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // MARK: - Application Termination Lifecycle (Upstream WM_CLOSE Parity)
+    private var didPrepareForTermination = false
+
     public func prepareForApplicationTermination() -> Bool {
         // Commit any in-flight text input / IME composition
-        window?.makeFirstResponder(nil)
+        if let window = window, window.isVisible { window.makeFirstResponder(nil) }
         return workspace.prepareForTermination()
     }
 
@@ -282,10 +287,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard sender === window else { return true }
-        return prepareForApplicationTermination()
+        let ok = prepareForApplicationTermination()
+        // The app terminates right after its last window closes; remember that the save prompts / backup
+        // were already handled so `applicationShouldTerminate` does not ask a second time.
+        if ok { didPrepareForTermination = true }
+        return ok
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if didPrepareForTermination {
+            didPrepareForTermination = false
+            return .terminateNow
+        }
         if prepareForApplicationTermination() {
             return .terminateNow
         } else {
