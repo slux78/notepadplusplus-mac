@@ -251,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             workspace.restoreAutoSession()
             NppCommandLineParser.parse(CommandLine.arguments, workspace: workspace)
+            workspace.applyStartupDocumentPolicy()
             startPeriodicBackupTimer()
         }
     }
@@ -325,10 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window?.isDocumentEdited = isAnyEdited
 
         if let doc = activeDoc {
-            let isDocDirty = doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)
-            let dirtyPrefix = isDocDirty ? "*" : ""
-            let pathOrTitle = doc.filePath?.path ?? doc.title
-            window?.title = "\(dirtyPrefix)\(pathOrTitle) - Notepad++"
+            window?.title = workspace.windowTitleText(for: doc)
         } else {
             window?.title = "Notepad++"
         }
@@ -416,16 +414,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fileMenu.addItem(NSMenuItem.separator())
 
         let recentMenu = NSMenu(title: tr("Recent Files"))
+        // "In Submenu" off: the entries sit directly in the File menu instead of a Recent Files submenu.
+        let recentTarget: NSMenu = workspace.recentFilesInSubmenu ? recentMenu : fileMenu
         for (idx, url) in workspace.recentFiles.enumerated() {
-            let label: String
-            if workspace.recentFilesDisplayMode == 0 {
-                label = "\(idx + 1): \(url.lastPathComponent)"
-            } else {
-                label = "\(idx + 1): \(url.path)"
-            }
+            let label = NppWorkspace.recentFileLabel(index: idx, url: url, mode: workspace.recentFilesDisplayMode,
+                                                     customLength: workspace.recentFilesCustomLength)
             let rItem = NSMenuItem(title: label, action: #selector(menuOpenRecentFile(_:)), keyEquivalent: "")
             rItem.representedObject = url
-            recentMenu.addItem(rItem)
+            recentTarget.addItem(rItem)
         }
         if !workspace.recentFiles.isEmpty {
             recentMenu.addItem(NSMenuItem.separator())

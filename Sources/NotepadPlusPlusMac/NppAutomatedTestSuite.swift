@@ -1439,6 +1439,7 @@ final class NppAutomatedTestSuite {
             assertTest("Quit: main window is not over-released on close (crash on closing the last window)",
                        appDelegate.window.isReleasedWhenClosed == false)
             runResourceBundleTests(assertTest: assertTest)
+            runSettingsBatch1Tests(assertTest: assertTest)
             runQuitAndTabBarUXParityTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialQuitStressTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialTabBarStressTests(assertTest: assertTest)
@@ -1667,7 +1668,7 @@ final class NppAutomatedTestSuite {
         // Verify: Replaying insertDateTime inserts a single timestamp
         ws.executeMacroSteps(ws.recordedMacroSteps)
         let dateReplay1 = testTv.string
-        let datePattern = #"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"#
+        let datePattern = #"(\d{2}:\d{2}:\d{2} \d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"#  // either order (Preferences: reverse date/time)
         let regex = try? NSRegularExpression(pattern: datePattern)
         let matches1 = regex?.matches(in: dateReplay1, range: NSRange(location: 0, length: (dateReplay1 as NSString).length)) ?? []
         assertTest("Adversarial Macro: Single insertDateTime step inserts exactly 1 date string (no duplicates)",
@@ -5469,6 +5470,91 @@ final class NppAutomatedTestSuite {
         workspace.deleteRunCommand(id: saved.id)
         assertTest("Manual Run: deleting command persists",
                    NppWorkspace(runCommandDefaults: defaults).savedRunCommands.isEmpty)
+    }
+
+    static func runSettingsBatch1Tests(assertTest: (String, Bool) -> Void) {
+        let ws = NppWorkspace()
+        ws.supportDirectoryOverride = FileManager.default.temporaryDirectory.appendingPathComponent("npp_b1_\(UUID().uuidString)")
+        ws.closeAll(force: true)
+        let fixed = Date(timeIntervalSince1970: 1_800_000_000)
+        let tz = TimeZone.current
+        _ = tz
+        // Date/time order
+        let normal = NppEditOperations.dateTimeString(isLong: false, reverse: false, date: fixed)
+        let reversed = NppEditOperations.dateTimeString(isLong: false, reverse: true, date: fixed)
+        assertTest("Setting dateTimeReverseOrder: default is 'time date'",
+                   normal.range(of: #"^\d\d:\d\d:\d\d \d{4}-\d\d-\d\d$"#, options: .regularExpression) != nil)
+        assertTest("Setting dateTimeReverseOrder: reversed is 'date time'",
+                   reversed.range(of: #"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$"#, options: .regularExpression) != nil)
+        let v = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        v.isEditable = true
+        ws.dateTimeReverseOrder = true
+        NppEditOperations.insertDateTime(in: v, isLong: false, reverse: ws.dateTimeReverseOrder)
+        assertTest("Setting dateTimeReverseOrder: inserted text follows the setting",
+                   v.string.range(of: #"^\d{4}-\d\d-\d\d "#, options: .regularExpression) != nil)
+        ws.dateTimeCustomFormat = "yyyy/MM/dd"
+        assertTest("Setting dateTimeCustomFormat: customized insert uses the Preferences field", ws.customDateFormat == "yyyy/MM/dd")
+        // Recent files label
+        let u = URL(fileURLWithPath: "/Users/someone/Documents/projects/very/long/folder/structure/file.txt")
+        assertTest("Setting recentFilesDisplayMode 0: only file name",
+                   NppWorkspace.recentFileLabel(index: 0, url: u, mode: 0, customLength: 30) == "1: file.txt")
+        assertTest("Setting recentFilesDisplayMode 1: full path",
+                   NppWorkspace.recentFileLabel(index: 1, url: u, mode: 1, customLength: 30) == "2: \(u.path)")
+        let short = NppWorkspace.recentFileLabel(index: 0, url: u, mode: 2, customLength: 30)
+        assertTest("Setting recentFilesCustomLength: long path is shortened but keeps the file name",
+                   short.count < u.path.count && short.hasSuffix("/file.txt") && short.contains("…"))
+        // Tab / window titles
+        let doc = NppDocument(title: "new 1", content: "\n  hello world  \nsecond")
+        ws.useFirstLineAsTabName = false
+        assertTest("Setting useFirstLineAsTabName off: untitled tab keeps 'new 1'", ws.tabTitle(for: doc) == "new 1")
+        ws.useFirstLineAsTabName = true
+        assertTest("Setting useFirstLineAsTabName on: first non-empty line names the tab", ws.tabTitle(for: doc) == "hello world")
+        let saved = NppDocument(title: "a.txt", content: "zzz"); saved.filePath = URL(fileURLWithPath: "/tmp/dir/a.txt")
+        assertTest("Setting useFirstLineAsTabName: saved files keep their file name", ws.tabTitle(for: saved) == "a.txt")
+        ws.shortTitleInBar = false
+        assertTest("Setting shortTitleInBar off: title bar shows full path", ws.windowTitleText(for: saved) == "/tmp/dir/a.txt - Notepad++")
+        ws.shortTitleInBar = true
+        assertTest("Setting shortTitleInBar on: title bar shows file name only", ws.windowTitleText(for: saved) == "a.txt - Notepad++")
+        // Exit on close last tab
+        var exited = 0
+        ws.exitHandler = { exited += 1 }
+        ws.closeAll(force: true)
+        ws.exitOnCloseLastTab = false
+        let only = ws.documents[0]
+        _ = ws.closeDocument(id: only.id, force: true)
+        assertTest("Setting exitOnCloseLastTab off: closing last tab opens an empty one", exited == 0 && ws.documents.count == 1)
+        ws.exitOnCloseLastTab = true
+        _ = ws.closeDocument(id: ws.documents[0].id, force: true)
+        assertTest("Setting exitOnCloseLastTab on: closing last tab exits instead", exited == 1)
+        ws.exitOnCloseLastTab = false
+        // Startup new doc
+        let sw = NppWorkspace()
+        sw.supportDirectoryOverride = ws.supportDirectoryOverride
+        sw.closeAll(force: true)
+        let f = FileManager.default.temporaryDirectory.appendingPathComponent("npp_b1_open.txt")
+        try? "x".write(to: f, atomically: true, encoding: .utf8)
+        sw.openFile(url: f)
+        sw.documents.filter { $0.filePath == nil && $0.content.isEmpty }.forEach { _ = sw.closeDocument(id: $0.id, force: true) }
+        sw.addNewDocOnStartup = false
+        sw.applyStartupDocumentPolicy()
+        let withoutNew = sw.documents.filter { $0.filePath == nil }.count
+        sw.addNewDocOnStartup = true
+        sw.applyStartupDocumentPolicy()
+        let withNew = sw.documents.filter { $0.filePath == nil }.count
+        assertTest("Setting addNewDocOnStartup: adds an empty doc only when enabled", withoutNew == 0 && withNew == 1)
+        sw.applyStartupDocumentPolicy()
+        assertTest("Setting addNewDocOnStartup: does not add a second empty doc", sw.documents.filter { $0.filePath == nil }.count == 1)
+        // Default directory
+        sw.defaultDirectoryMode = 2
+        sw.customDefaultDirectory = "/tmp"
+        assertTest("Setting defaultDirectoryMode 'always on': uses custom folder", sw.defaultOpenDirectory()?.path == "/tmp")
+        sw.defaultDirectoryMode = 1
+        assertTest("Setting defaultDirectoryMode 'remember last': uses last opened file's folder",
+                   sw.defaultOpenDirectory()?.standardizedFileURL.path == f.deletingLastPathComponent().standardizedFileURL.path)
+        sw.defaultDirectoryMode = 0
+        sw.activeDocumentId = sw.documents.first { $0.filePath != nil }?.id
+        assertTest("Setting defaultDirectoryMode 'follow current doc': uses active document's folder",
+                   sw.defaultOpenDirectory()?.standardizedFileURL.path == f.deletingLastPathComponent().standardizedFileURL.path)
     }
 
     static func runResourceBundleTests(assertTest: (String, Bool) -> Void) {

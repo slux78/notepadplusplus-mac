@@ -122,7 +122,7 @@ public struct NppTabBarView: View {
             let check = (activeId == doc.id) ? "✓ " : "   "
             let dirty = doc.isDirty ? "*" : ""
             let pinned = doc.isPinned ? "📌 " : ""
-            let title = "\(check)\(index + 1): \(pinned)\(doc.title)\(dirty)"
+            let title = "\(check)\(index + 1): \(pinned)\(workspace.tabTitle(for: doc))\(dirty)"
             let item = NSMenuItem(title: title, action: #selector(TabMenuTarget.selectDoc(_:)), keyEquivalent: "")
             item.target = TabMenuTarget.shared
             item.representedObject = doc.id
@@ -323,7 +323,7 @@ public struct NppTabItemView: View {
     }
 
     private var displayedTitle: String {
-        Self.formattedTitle(title: doc.title, maxLen: workspace.tabMaxLabelLen)
+        Self.formattedTitle(title: workspace.tabTitle(for: doc), maxLen: workspace.tabMaxLabelLen)
     }
 
     private var verticalPadding: CGFloat {

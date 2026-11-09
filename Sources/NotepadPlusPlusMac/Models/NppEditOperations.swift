@@ -1181,16 +1181,26 @@ public final class NppEditOperations {
     }
 
     // MARK: - Insert Operations
-    public static func insertDateTime(in textView: NSTextView, isLong: Bool) {
-        guard textView.isEditable else { return }
-        let formatter = DateFormatter()
+    /// Notepad++ inserts "time date" by default and "date time" when
+    /// "Reverse default date time order" is on.
+    public static func dateTimeString(isLong: Bool, reverse: Bool, date: Date = Date()) -> String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm:ss"
+        let dateFormatter = DateFormatter()
         if isLong {
-            formatter.dateStyle = .full
-            formatter.timeStyle = .medium
+            dateFormatter.dateStyle = .full
+            dateFormatter.timeStyle = .none
         } else {
-            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            dateFormatter.dateFormat = "yyyy-MM-dd"
         }
-        let str = formatter.string(from: Date())
+        let t = timeFormatter.string(from: date)
+        let d = dateFormatter.string(from: date)
+        return reverse ? "\(d) \(t)" : "\(t) \(d)"
+    }
+
+    public static func insertDateTime(in textView: NSTextView, isLong: Bool, reverse: Bool = false) {
+        guard textView.isEditable else { return }
+        let str = dateTimeString(isLong: isLong, reverse: reverse)
         let sel = textView.selectedRange()
         if textView.shouldChangeText(in: sel, replacementString: str) {
             textView.replaceCharacters(in: sel, with: str)

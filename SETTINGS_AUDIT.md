@@ -47,8 +47,8 @@
 | 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `customBackupDir` | Directory: | todo |
 | 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `customBackupDirEnabled` | Custom Backup Directory | todo |
 | 17. Auto-Completion (IDD_PREFERENCE_SUB_AUTOCOMPLETION) | `autoCompletionBrief` | Make auto-completion list brief | todo |
-| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `dateTimeCustomFormat` | Format: | todo |
-| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `dateTimeReverseOrder` | Reverse default date time order | todo |
+| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `dateTimeCustomFormat` | Format: | done (tested) |
+| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `dateTimeReverseOrder` | Reverse default date time order | done (tested) |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `multiInstanceMode` |  | todo |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberCharacterPanel` | Character Panel | todo |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberClipboardHistory` | Clipboard History | todo |
@@ -58,7 +58,7 @@
 | 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterClose` | Close: | todo |
 | 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterOpen` | Open: | todo |
 | 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterSeveralLines` | Allow on several lines | todo |
-| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `exitOnCloseLastTab` | Exit on close the last tab | todo |
+| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `exitOnCloseLastTab` | Exit on close the last tab | done (tested) |
 | 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabAltIcons` | Alternate icons | todo |
 | 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabColorIndicator` | Draw a coloured bar on active tab | todo |
 | 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabLock` | Lock (no drag and drop) | todo |
@@ -87,7 +87,7 @@
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `fileStatusGoToEOF` | Scroll to the last line after update | todo |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `muteAllSounds` | Mute all sounds | todo |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `saveAllConfirmDialog` | Enable Save All confirm dialog | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `shortTitleInBar` | Show only filename in title bar | todo |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `shortTitleInBar` | Show only filename in title bar | done (tested) |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `workspaceFileExt` | Workspace file ext.: | todo |
 | 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `caretBlinkRate` | F | todo |
 | 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `disableSelectedTextDragDrop` | Disable selected text drag-and-drop | todo |
@@ -114,12 +114,12 @@
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `foldMarginStyle` |  | todo |
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `paddingRight` | Right: | todo |
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `verticalEdgeBgMode` | Background mode | todo |
-| 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `addNewDocOnStartup` | Always open a new document in addition at startup | todo |
+| 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `addNewDocOnStartup` | Always open a new document in addition at startup | done (tested) |
 | 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `openAnsiAsUtf8` | Apply to opened ANSI files | todo |
-| 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `useFirstLineAsTabName` | Use the first line of document as untitled tab name | todo |
-| 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `customDefaultDirectory` | Always on: | todo |
-| 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `defaultDirectoryMode` | Follow current document | todo |
+| 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `useFirstLineAsTabName` | Use the first line of document as untitled tab name | done (tested) |
+| 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `customDefaultDirectory` | Always on: | done (tested) |
+| 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `defaultDirectoryMode` | Follow current document | done (tested) |
 | 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `dropFolderOpenAllFiles` | Open all files of folder instead of launching Folder as Workspace on folder dropping | todo |
 | 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `dontCheckHistoryAtLaunch` | Don't check at launch time | todo |
-| 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `recentFilesCustomLength` |  | todo |
-| 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `recentFilesInSubmenu` | In Submenu | todo |
+| 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `recentFilesCustomLength` |  | done (tested) |
+| 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `recentFilesInSubmenu` | In Submenu | done (tested) |

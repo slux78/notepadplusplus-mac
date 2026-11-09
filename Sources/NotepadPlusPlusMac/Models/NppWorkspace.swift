@@ -390,7 +390,11 @@ public final class NppWorkspace: ObservableObject {
 
     // Pass 2: Edit Menu Parity State
     @Published public var beginSelectAnchor: Int? = nil
-    @Published public var customDateFormat: String = "yyyy-MM-dd HH:mm:ss"
+    /// Same value as the "Format:" field in Preferences > Date/Time (kept for older call sites).
+    public var customDateFormat: String {
+        get { dateTimeCustomFormat }
+        set { dateTimeCustomFormat = newValue }
+    }
     @Published public var isAllDocumentsReadOnly: Bool = false
 
     // Authentic Notepad++ Modeless Dialogs & Transparency
@@ -1584,6 +1588,7 @@ public final class NppWorkspace: ObservableObject {
             return
         }
         addRecentFile(url)
+        lastOpenDirectory = url.deletingLastPathComponent()
         // If already open, just switch to it
         if let existing = documents.first(where: { $0.filePath == url }) {
             if existing.isSessionPlaceholder && FileManager.default.fileExists(atPath: url.path) {
@@ -1610,6 +1615,61 @@ public final class NppWorkspace: ObservableObject {
 
     @Published public var recentFiles: [URL] = []
     @Published public var closedFilePaths: [URL] = []
+
+    /// Menu text for a recent-file entry, honouring Preferences > Recent Files History.
+    public static func recentFileLabel(index: Int, url: URL, mode: Int, customLength: Int) -> String {
+        switch mode {
+        case 0: return "\(index + 1): \(url.lastPathComponent)"
+        case 2:
+            let path = url.path
+            let limit = max(8, customLength)
+            guard path.count > limit else { return "\(index + 1): \(path)" }
+            let name = url.lastPathComponent
+            let keepHead = max(1, limit - name.count - 4)
+            return "\(index + 1): \(String(path.prefix(keepHead)))…/\(name)"
+        default: return "\(index + 1): \(url.path)"
+        }
+    }
+
+    /// Called instead of opening a fresh empty tab when the last tab is closed and
+    /// "Exit on close the last tab" is enabled. Defaults to quitting the app.
+    public var exitHandler: () -> Void = { NSApp.terminate(nil) }
+
+    /// "Always open a new document in addition at startup".
+    public func applyStartupDocumentPolicy() {
+        guard addNewDocOnStartup else { return }
+        let hasBlank = documents.contains { $0.filePath == nil && !$0.isDirty && $0.content.isEmpty }
+        if !hasBlank || documents.isEmpty { newDocument() }
+    }
+
+    public var lastOpenDirectory: URL?
+
+    /// Folder the Open dialog should start in (Preferences > Default Directory).
+    public func defaultOpenDirectory() -> URL? {
+        switch defaultDirectoryMode {
+        case 1: return lastOpenDirectory
+        case 2:
+            let p = customDefaultDirectory.trimmingCharacters(in: .whitespaces)
+            return p.isEmpty ? nil : URL(fileURLWithPath: (p as NSString).expandingTildeInPath, isDirectory: true)
+        default: return activeDocument?.filePath?.deletingLastPathComponent()
+        }
+    }
+
+    /// Title shown in the window title bar for a document.
+    public func windowTitleText(for doc: NppDocument) -> String {
+        let isDirty = doc.isDirty || (doc.filePath == nil && !doc.content.isEmpty)
+        let name = shortTitleInBar ? (doc.filePath?.lastPathComponent ?? doc.title) : (doc.filePath?.path ?? doc.title)
+        return "\(isDirty ? "*" : "")\(name) - Notepad++"
+    }
+
+    /// Tab label for a document ("Use the first line of document as untitled tab name").
+    public func tabTitle(for doc: NppDocument) -> String {
+        guard useFirstLineAsTabName, doc.filePath == nil else { return doc.title }
+        let first = doc.content.nppLines().first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        guard !first.isEmpty else { return doc.title }
+        return first.count > 24 ? String(first.prefix(24)) + "…" : first
+    }
 
     public func addRecentFile(_ url: URL) {
         recentFiles.removeAll(where: { $0.path == url.path })
@@ -1832,7 +1892,11 @@ public final class NppWorkspace: ObservableObject {
         documents.remove(at: index)
 
         if documents.isEmpty {
-            newDocument()
+            if exitOnCloseLastTab {
+                exitHandler()
+            } else {
+                newDocument()
+            }
         } else if wasActive || activeDocumentId == id || !documents.contains(where: { $0.id == activeDocumentId }) {
             let safeIndex = max(0, min(fallbackIndex, documents.count - 1))
             activeDocumentId = documents[safeIndex].id
@@ -3281,6 +3345,7 @@ public final class NppWorkspace: ObservableObject {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
+        panel.directoryURL = defaultOpenDirectory()
         panel.begin { [weak self] response in
             if response == .OK {
                 for url in panel.urls {
