@@ -96,7 +96,8 @@ public struct NppEditorView: NSViewRepresentable {
                 isDarkMode: theme.isDark,
                 baseFont: targetFont,
                 theme: theme,
-                userDefinedLanguage: workspace.userDefinedLanguage(named: document.language)
+                userDefinedLanguage: workspace.userDefinedLanguage(named: document.language),
+                treatBackslashAsEscapeForSql: workspace.treatBackslashAsEscapeForSql
             )
         }
 
@@ -171,9 +172,13 @@ public struct NppEditorView: NSViewRepresentable {
         }
 
         // Update padding margins (Notepad++ Margins/Border/Edge preference)
-        let targetPadding = NSSize(width: CGFloat(workspace.paddingLeft), height: 0)
+        let targetPadding = NSSize(width: CGFloat(workspace.paddingLeft + workspace.paddingRight), height: 0)
         if textView.textContainerInset != targetPadding {
             textView.textContainerInset = targetPadding
+        }
+        let targetBorder: NSBorderType = workspace.borderWidth == 1 ? .lineBorder : .noBorder
+        if scrollView.borderType != targetBorder {
+            scrollView.borderType = targetBorder
         }
 
         // Scroll beyond last line
@@ -262,6 +267,9 @@ public struct NppEditorView: NSViewRepresentable {
         var smartHighlightedRanges: [NSRange] = []
         var lastSmartHighlightedWord: String = ""
         var activeBraceRanges: [NSRange] = []
+        var activeTagRanges: [NSRange] = []
+        var activeTagAttrRanges: [NSRange] = []
+        var activeNoneHtmlRanges: [NSRange] = []
 
         init(_ parent: NppEditorView) {
             self.parent = parent
@@ -315,6 +323,57 @@ public struct NppEditorView: NSViewRepresentable {
             textView?.needsDisplay = true
             updateSmartHighlighting()
             updateBraceHighlighting()
+            updateMatchingTags()
+        }
+
+        func updateMatchingTags() {
+            guard let tv = textView, let ts = tv.textStorage else { return }
+            let sel = tv.selectedRange()
+            let str = tv.string as NSString
+
+            // Clear previous tag highlights
+            if !activeTagRanges.isEmpty || !activeTagAttrRanges.isEmpty || !activeNoneHtmlRanges.isEmpty {
+                ts.beginEditing()
+                for r in (activeTagRanges + activeTagAttrRanges + activeNoneHtmlRanges) where NSMaxRange(r) <= ts.length {
+                    ts.removeAttribute(.backgroundColor, range: r)
+                }
+                ts.endEditing()
+                activeTagRanges.removeAll()
+                activeTagAttrRanges.removeAll()
+                activeNoneHtmlRanges.removeAll()
+            }
+
+            let ws = parent.workspace
+            guard ws.highlightMatchingTags || ws.highlightTagAttributes || ws.highlightNoneHtmlZone else { return }
+            guard let res = NppEditOperations.findMatchingTagPair(in: str, at: sel.location) else { return }
+
+            ts.beginEditing()
+            if res.isNoneHtmlZone && ws.highlightNoneHtmlZone, let r = res.noneHtmlRange, NSMaxRange(r) <= ts.length {
+                let noneHtmlColor = NSColor.systemIndigo.withAlphaComponent(0.2)
+                ts.addAttribute(.backgroundColor, value: noneHtmlColor, range: r)
+                activeNoneHtmlRanges.append(r)
+            }
+
+            if ws.highlightMatchingTags {
+                let tagHighlightColor = NSColor.systemPurple.withAlphaComponent(0.3)
+                if res.openTagRange.location != NSNotFound && NSMaxRange(res.openTagRange) <= ts.length {
+                    ts.addAttribute(.backgroundColor, value: tagHighlightColor, range: res.openTagRange)
+                    activeTagRanges.append(res.openTagRange)
+                }
+                if res.closeTagRange.location != NSNotFound && NSMaxRange(res.closeTagRange) <= ts.length {
+                    ts.addAttribute(.backgroundColor, value: tagHighlightColor, range: res.closeTagRange)
+                    activeTagRanges.append(res.closeTagRange)
+                }
+            }
+
+            if ws.highlightTagAttributes {
+                let attrHighlightColor = NSColor.systemOrange.withAlphaComponent(0.3)
+                for r in res.attributeRanges where NSMaxRange(r) <= ts.length {
+                    ts.addAttribute(.backgroundColor, value: attrHighlightColor, range: r)
+                    activeTagAttrRanges.append(r)
+                }
+            }
+            ts.endEditing()
         }
 
         func updateBraceHighlighting() {
@@ -392,13 +451,19 @@ public struct NppEditorView: NSViewRepresentable {
             // Notepad++ Smart Highlight: find all occurrences of selectedWord in document
             var ranges: [NSRange] = []
             var searchRange = NSRange(location: 0, length: str.length)
-            let searchOpts: NSString.CompareOptions = parent.workspace.smartHighlightMatchCase ? [.literal] : [.caseInsensitive]
+            let matchCase = parent.workspace.smartHighlightUseFindSettings
+                ? parent.workspace.matchCase
+                : parent.workspace.smartHighlightMatchCase
+            let wholeWord = parent.workspace.smartHighlightUseFindSettings
+                ? parent.workspace.matchWholeWord
+                : parent.workspace.smartHighlightWholeWord
+            let searchOpts: NSString.CompareOptions = matchCase ? [.literal] : [.caseInsensitive]
 
             while searchRange.location < str.length {
                 let found = str.range(of: selectedWord, options: searchOpts, range: searchRange)
                 if found.location == NSNotFound { break }
                 var valid = true
-                if parent.workspace.smartHighlightWholeWord {
+                if wholeWord {
                     if found.location > 0 {
                         let prev = str.character(at: found.location - 1)
                         if CharacterSet.alphanumerics.contains(UnicodeScalar(prev) ?? UnicodeScalar(0)) || prev == 95 {
@@ -467,7 +532,8 @@ public struct NppEditorView: NSViewRepresentable {
             NppSyntaxHighlighter.highlight(textStorage: ts, language: parent.document.language,
                                            isDarkMode: isDark, baseFont: tv.font,
                                            theme: parent.workspace.currentTheme,
-                                           userDefinedLanguage: parent.workspace.userDefinedLanguage(named: parent.document.language))
+                                           userDefinedLanguage: parent.workspace.userDefinedLanguage(named: parent.document.language),
+                                           treatBackslashAsEscapeForSql: parent.workspace.treatBackslashAsEscapeForSql)
             if !parent.document.styledTokenRanges.isEmpty {
                 ts.beginEditing()
                 for (styleIdx, tokenRanges) in parent.document.styledTokenRanges {
@@ -2009,6 +2075,14 @@ public final class NppTextView: NSTextView {
     public override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
 
+        // Change History Text Indicator (Notepad++ Margins/Border/Edge preference)
+        if let ws = editorCoordinator?.parent.workspace, ws.changeHistoryText,
+           let doc = editorCoordinator?.parent.document, doc.isDirty {
+            let changeBar = NSRect(x: self.textContainerOrigin.x, y: rect.minY, width: 3.0, height: rect.height)
+            NSColor.systemOrange.withAlphaComponent(0.6).setFill()
+            NSBezierPath(rect: changeBar).fill()
+        }
+
         let shouldHighlightLine = editorCoordinator?.parent.workspace.highlightCurrentLine ?? true
         let lineIndicatorMode = editorCoordinator?.parent.workspace.currentLineIndicator ?? 1
         if shouldHighlightLine && lineIndicatorMode != 0, let layoutManager = self.layoutManager {
@@ -2074,7 +2148,15 @@ public final class NppTextView: NSTextView {
             let font = self.font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
             let charWidth = font.maximumAdvancement.width
             let edgeX = self.textContainerOrigin.x + (charWidth * CGFloat(col))
-            if ws.verticalEdgeMode == 1 {
+            let isBgMode = ws.verticalEdgeBgMode || ws.verticalEdgeMode == 2
+            if isBgMode {
+                let edgeBg = (ws.currentTheme.isDark)
+                    ? NSColor(calibratedWhite: 0.18, alpha: 0.35)
+                    : NSColor(calibratedWhite: 0.90, alpha: 0.35)
+                edgeBg.setFill()
+                let bgRect = NSRect(x: edgeX, y: dirtyRect.minY, width: max(0, dirtyRect.maxX - edgeX), height: dirtyRect.height)
+                NSBezierPath(rect: bgRect).fill()
+            } else {
                 let edgeColor = (ws.currentTheme.isDark)
                     ? NSColor(calibratedWhite: 0.32, alpha: 0.8)
                     : NSColor(calibratedWhite: 0.78, alpha: 0.8)
@@ -2084,13 +2166,6 @@ public final class NppTextView: NSTextView {
                 path.line(to: NSPoint(x: edgeX, y: dirtyRect.maxY))
                 path.lineWidth = 1.0
                 path.stroke()
-            } else if ws.verticalEdgeMode == 2 {
-                let edgeBg = (ws.currentTheme.isDark)
-                    ? NSColor(calibratedWhite: 0.18, alpha: 0.35)
-                    : NSColor(calibratedWhite: 0.90, alpha: 0.35)
-                edgeBg.setFill()
-                let bgRect = NSRect(x: edgeX, y: dirtyRect.minY, width: max(0, dirtyRect.maxX - edgeX), height: dirtyRect.height)
-                NSBezierPath(rect: bgRect).fill()
             }
         }
 

@@ -989,6 +989,7 @@ public final class NppWorkspace: ObservableObject {
     @Published public var smartHighlightMatchCase: Bool = false
     @Published public var smartHighlightWholeWord: Bool = false
     @Published public var smartHighlightUseFindSettings: Bool = false
+    @Published public var secondarySmartHighlightToken: String = ""
 
     // 14: Print
     @Published public var printColorOption: Int = 0 // 0: WYSIWYG, 1: Invert, 2: B&W, 3: No BG
@@ -5592,10 +5593,29 @@ public final class NppWorkspace: ObservableObject {
 
         var matchedRanges: [NSRange] = []
         var searchRange = NSRange(location: 0, length: nsStr.length)
+        let searchOpts: NSString.CompareOptions = markAllMatchCase ? [.literal] : [.caseInsensitive]
         while searchRange.location < nsStr.length {
-            let found = nsStr.range(of: token, options: [.literal], range: searchRange)
+            let found = nsStr.range(of: token, options: searchOpts, range: searchRange)
             if found.location == NSNotFound { break }
-            matchedRanges.append(found)
+            var valid = true
+            if markAllWholeWord {
+                if found.location > 0 {
+                    let prev = nsStr.character(at: found.location - 1)
+                    if CharacterSet.alphanumerics.contains(UnicodeScalar(prev) ?? UnicodeScalar(0)) || prev == 95 {
+                        valid = false
+                    }
+                }
+                let endPos = NSMaxRange(found)
+                if endPos < nsStr.length {
+                    let next = nsStr.character(at: endPos)
+                    if CharacterSet.alphanumerics.contains(UnicodeScalar(next) ?? UnicodeScalar(0)) || next == 95 {
+                        valid = false
+                    }
+                }
+            }
+            if valid {
+                matchedRanges.append(found)
+            }
             let nextPos = found.location + max(1, found.length)
             searchRange = NSRange(location: nextPos, length: nsStr.length - nextPos)
         }

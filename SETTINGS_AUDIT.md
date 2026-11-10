@@ -9,19 +9,19 @@
 | 0. General (IDD_PREFERENCE_SUB_GENERAL) | `dialogFontName` | Name: | todo |
 | 0. General (IDD_PREFERENCE_SUB_GENERAL) | `dialogFontSize` | Size: | todo |
 | 0. General (IDD_PREFERENCE_SUB_GENERAL) | `hideMenuBar` | Hide (use Alt or F10 key to toggle) | todo |
-| 11. Language (IDD_PREFERENCE_SUB_LANGUAGE) | `treatBackslashAsEscapeForSql` | Treat backslash as escape character for SQL | todo |
+| 11. Language (IDD_PREFERENCE_SUB_LANGUAGE) | `treatBackslashAsEscapeForSql` | Treat backslash as escape character for SQL | done (tested) |
 | 12. Indentation (IDD_PREFERENCE_SUB_INDENTATION) | `backspaceUnindents` |  | done (tested) |
 | 12. Indentation (IDD_PREFERENCE_SUB_INDENTATION) | `useDefaultTabValue` |  | done (tested) |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightMatchingTags` | Enable | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightNoneHtmlZone` | Highlight comment/php/asp zone | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightTagAttributes` | Highlight tag attributes | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `markAllMatchCase` | Match case | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `markAllWholeWord` | Match whole word only | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightAnotherView` | Highlight another view | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightMatchCase` | Match case | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightUseFindSettings` | Use Find dialog settings | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightWholeWord` | Match whole word only | todo |
-| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlighting` | Enable | todo |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightMatchingTags` | Enable | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightNoneHtmlZone` | Highlight comment/php/asp zone | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightTagAttributes` | Highlight tag attributes | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `markAllMatchCase` | Match case | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `markAllWholeWord` | Match whole word only | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightAnotherView` | Highlight another view | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightMatchCase` | Match case | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightUseFindSettings` | Use Find dialog settings | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightWholeWord` | Match whole word only | done (tested) |
+| 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlighting` | Enable | done (tested) |
 | 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printColorOption` |  | todo |
 | 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFooterLeft` |  | todo |
 | 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFooterMiddle` |  | todo |
@@ -108,12 +108,12 @@
 | 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcIncludeUnicodeEol` | Apply Appearance settings to C0, C1 & Unicode EOL | done (tested) |
 | 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcNoInputC0` | Prevent control character (C0 code) typing into document | done (tested) |
 | 5. Dark Mode (IDD_PREFERENCE_SUB_DARKMODE) | `darkModeTone` |  | todo |
-| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `borderWidth` |  | todo |
-| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `changeHistoryMargin` | Show in the margin | todo |
-| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `changeHistoryText` | Show in the text | todo |
-| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `foldMarginStyle` |  | todo |
-| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `paddingRight` | Right: | todo |
-| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `verticalEdgeBgMode` | Background mode | todo |
+| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `borderWidth` |  | done (tested) |
+| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `changeHistoryMargin` | Show in the margin | done (tested) |
+| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `changeHistoryText` | Show in the text | done (tested) |
+| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `foldMarginStyle` |  | done (tested) |
+| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `paddingRight` | Right: | done (tested) |
+| 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `verticalEdgeBgMode` | Background mode | done (tested) |
 | 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `addNewDocOnStartup` | Always open a new document in addition at startup | done (tested) |
 | 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `openAnsiAsUtf8` | Apply to opened ANSI files | todo |
 | 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `useFirstLineAsTabName` | Use the first line of document as untitled tab name | done (tested) |

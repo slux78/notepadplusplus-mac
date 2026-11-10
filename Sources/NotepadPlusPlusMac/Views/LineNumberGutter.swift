@@ -160,6 +160,14 @@ public final class NppGutterView: NSRulerView {
         bgColor.setFill()
         fullBounds.fill()
 
+        // Change History Margin (Notepad++ Scintilla Parity)
+        if workspace?.changeHistoryMargin == true {
+            let historyColor = (document?.isDirty == true) ? NSColor.systemOrange : NSColor.systemGreen
+            historyColor.setFill()
+            let historyRect = NSRect(x: fullBounds.maxX - 3.0, y: fullBounds.minY, width: 2.5, height: fullBounds.height)
+            NSBezierPath(rect: historyRect).fill()
+        }
+
         // Border line on right
         borderColor.setStroke()
         let path = NSBezierPath()
@@ -246,6 +254,10 @@ public final class NppGutterView: NSRulerView {
                     if showBookmarkMargin && (document?.bookmarkedLines.contains(lineIndex) == true) {
                         drawBookmarkGlyph(at: NSPoint(x: 3.5, y: yPos + (strRect.height - 9.0) / 2.0))
                     }
+
+                    if let style = workspace?.foldMarginStyle, style != "None", (document?.foldedLines.contains(lineIndex) == true) {
+                        drawFoldGlyph(style: style, isFolded: true, at: NSPoint(x: fullBounds.maxX - 16.0, y: yPos + (strRect.height - 9.0) / 2.0))
+                    }
                 }
             }
 
@@ -280,6 +292,10 @@ public final class NppGutterView: NSRulerView {
                     if showBookmarkMargin && (document?.bookmarkedLines.contains(lineIndex) == true) {
                         drawBookmarkGlyph(at: NSPoint(x: 3.5, y: yPos + (strRect.height - 9.0) / 2.0))
                     }
+
+                    if let style = workspace?.foldMarginStyle, style != "None", (document?.foldedLines.contains(lineIndex) == true) {
+                        drawFoldGlyph(style: style, isFolded: true, at: NSPoint(x: fullBounds.maxX - 16.0, y: yPos + (strRect.height - 9.0) / 2.0))
+                    }
                 }
             }
         }
@@ -295,6 +311,77 @@ public final class NppGutterView: NSRulerView {
         NSColor(calibratedRed: 0.08, green: 0.35, blue: 0.75, alpha: 1.0).setStroke()
         circlePath.lineWidth = 1.0
         circlePath.stroke()
+    }
+
+    private func drawFoldGlyph(style: String, isFolded: Bool, at origin: NSPoint) {
+        guard style != "None" else { return }
+        let isDark = (workspace?.currentTheme.isDark) ?? (self.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        let strokeColor = isDark ? NSColor(calibratedWhite: 0.65, alpha: 1.0) : NSColor(calibratedWhite: 0.35, alpha: 1.0)
+        let glyphRect = NSRect(x: origin.x, y: origin.y, width: 9.0, height: 9.0)
+
+        strokeColor.setStroke()
+        switch style {
+        case "Circle tree":
+            let circle = NSBezierPath(ovalIn: glyphRect)
+            circle.lineWidth = 1.0
+            circle.stroke()
+            let hLine = NSBezierPath()
+            hLine.move(to: NSPoint(x: glyphRect.minX + 2.0, y: glyphRect.midY))
+            hLine.line(to: NSPoint(x: glyphRect.maxX - 2.0, y: glyphRect.midY))
+            hLine.lineWidth = 1.0
+            hLine.stroke()
+            if isFolded {
+                let vLine = NSBezierPath()
+                vLine.move(to: NSPoint(x: glyphRect.midX, y: glyphRect.minY + 2.0))
+                vLine.line(to: NSPoint(x: glyphRect.midX, y: glyphRect.maxY - 2.0))
+                vLine.lineWidth = 1.0
+                vLine.stroke()
+            }
+        case "Arrow":
+            let arrow = NSBezierPath()
+            if isFolded {
+                arrow.move(to: NSPoint(x: glyphRect.minX + 2.0, y: glyphRect.minY + 1.0))
+                arrow.line(to: NSPoint(x: glyphRect.maxX - 1.0, y: glyphRect.midY))
+                arrow.line(to: NSPoint(x: glyphRect.minX + 2.0, y: glyphRect.maxY - 1.0))
+                arrow.close()
+            } else {
+                arrow.move(to: NSPoint(x: glyphRect.minX + 1.0, y: glyphRect.minY + 2.0))
+                arrow.line(to: NSPoint(x: glyphRect.maxX - 1.0, y: glyphRect.minY + 2.0))
+                arrow.line(to: NSPoint(x: glyphRect.midX, y: glyphRect.maxY - 1.0))
+                arrow.close()
+            }
+            strokeColor.setFill()
+            arrow.fill()
+        case "Simple":
+            let hLine = NSBezierPath()
+            hLine.move(to: NSPoint(x: glyphRect.minX + 1.5, y: glyphRect.midY))
+            hLine.line(to: NSPoint(x: glyphRect.maxX - 1.5, y: glyphRect.midY))
+            hLine.lineWidth = 1.2
+            hLine.stroke()
+            if isFolded {
+                let vLine = NSBezierPath()
+                vLine.move(to: NSPoint(x: glyphRect.midX, y: glyphRect.minY + 1.5))
+                vLine.line(to: NSPoint(x: glyphRect.midX, y: glyphRect.maxY - 1.5))
+                vLine.lineWidth = 1.2
+                vLine.stroke()
+            }
+        default: // "Box tree"
+            let box = NSBezierPath(rect: glyphRect)
+            box.lineWidth = 1.0
+            box.stroke()
+            let hLine = NSBezierPath()
+            hLine.move(to: NSPoint(x: glyphRect.minX + 2.0, y: glyphRect.midY))
+            hLine.line(to: NSPoint(x: glyphRect.maxX - 2.0, y: glyphRect.midY))
+            hLine.lineWidth = 1.0
+            hLine.stroke()
+            if isFolded {
+                let vLine = NSBezierPath()
+                vLine.move(to: NSPoint(x: glyphRect.midX, y: glyphRect.minY + 2.0))
+                vLine.line(to: NSPoint(x: glyphRect.midX, y: glyphRect.maxY - 2.0))
+                vLine.lineWidth = 1.0
+                vLine.stroke()
+            }
+        }
     }
 
     public override func mouseDown(with event: NSEvent) {
@@ -337,7 +424,16 @@ public final class NppGutterView: NSRulerView {
             targetLineRange = text.lineRange(for: NSRange(location: min(charIndex, text.length), length: 0))
         }
 
-        if showBookmarkMargin && pointInGutter.x <= bookmarkMarginWidth {
+        if let style = workspace?.foldMarginStyle, style != "None", pointInGutter.x >= self.bounds.maxX - 18.0 {
+            if let doc = document {
+                if doc.foldedLines.contains(clickedLine) {
+                    doc.foldedLines.remove(clickedLine)
+                } else {
+                    doc.foldedLines.insert(clickedLine)
+                }
+                needsDisplay = true
+            }
+        } else if showBookmarkMargin && pointInGutter.x <= bookmarkMarginWidth {
             workspace?.toggleBookmark(line: clickedLine)
             needsDisplay = true
         } else {

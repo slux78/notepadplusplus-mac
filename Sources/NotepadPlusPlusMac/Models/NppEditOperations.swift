@@ -1459,6 +1459,174 @@ public final class NppEditOperations {
         }
         return NSRange(location: start, length: max(0, end - start))
     }
+
+    // MARK: - HTML/XML Tag Matching (Notepad++ Highlighting Preference Parity)
+
+    public struct NppTagMatchResult {
+        public let openTagRange: NSRange
+        public let closeTagRange: NSRange
+        public let attributeRanges: [NSRange]
+        public let isNoneHtmlZone: Bool
+        public let noneHtmlRange: NSRange?
+
+        public init(openTagRange: NSRange = NSRange(location: NSNotFound, length: 0),
+                    closeTagRange: NSRange = NSRange(location: NSNotFound, length: 0),
+                    attributeRanges: [NSRange] = [],
+                    isNoneHtmlZone: Bool = false,
+                    noneHtmlRange: NSRange? = nil) {
+            self.openTagRange = openTagRange
+            self.closeTagRange = closeTagRange
+            self.attributeRanges = attributeRanges
+            self.isNoneHtmlZone = isNoneHtmlZone
+            self.noneHtmlRange = noneHtmlRange
+        }
+    }
+
+    /// Finds matching XML/HTML tag pair and attribute ranges at or adjacent to `caretPos`.
+    public static func findMatchingTagPair(in nsString: NSString, at caretPos: Int) -> NppTagMatchResult? {
+        let len = nsString.length
+        guard len >= 3 else { return nil }
+        let pos = max(0, min(caretPos, len))
+
+        // 1. Check for non-HTML zones (comments, PHP, ASP)
+        let nonHtmlPatterns = [
+            "<!--[\\s\\S]*?-->",
+            "<\\?[\\s\\S]*?\\?>",
+            "<%[\\s\\S]*?%>"
+        ]
+        for pattern in nonHtmlPatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+                let matches = regex.matches(in: nsString as String, options: [], range: NSRange(location: 0, length: len))
+                for m in matches {
+                    if pos >= m.range.location && pos <= NSMaxRange(m.range) {
+                        return NppTagMatchResult(isNoneHtmlZone: true, noneHtmlRange: m.range)
+                    }
+                }
+            }
+        }
+
+        // 2. Identify tag around cursor: find '<' before or at pos and '>' after or at pos
+        var openBracket = -1
+        var searchStart = min(pos, len - 1)
+        while searchStart >= 0 {
+            let ch = nsString.character(at: searchStart)
+            if ch == 0x3C { // '<'
+                openBracket = searchStart
+                break
+            } else if ch == 0x3E && searchStart < pos { // '>' before pos -> cursor not inside a tag
+                break
+            }
+            searchStart -= 1
+        }
+        guard openBracket >= 0 else { return nil }
+
+        var closeBracket = -1
+        var searchEnd = openBracket
+        while searchEnd < len {
+            let ch = nsString.character(at: searchEnd)
+            if ch == 0x3E { // '>'
+                closeBracket = searchEnd
+                break
+            } else if ch == 0x3C && searchEnd > openBracket {
+                break
+            }
+            searchEnd += 1
+        }
+        guard closeBracket > openBracket else { return nil }
+
+        // Cursor should be within or immediately adjacent to this tag
+        guard pos >= openBracket && pos <= closeBracket + 1 else { return nil }
+
+        let tagContentRange = NSRange(location: openBracket, length: closeBracket - openBracket + 1)
+        let tagStr = nsString.substring(with: tagContentRange)
+
+        // Ignore comments, xml declaration or doctype
+        if tagStr.hasPrefix("<!--") || tagStr.hasPrefix("<?") || tagStr.hasPrefix("<!") {
+            return NppTagMatchResult(isNoneHtmlZone: true, noneHtmlRange: tagContentRange)
+        }
+
+        // Self-closing tag <tag ... /> has no separate closing tag
+        if tagStr.hasSuffix("/>") {
+            let attrRanges = extractAttributes(in: tagStr, baseOffset: openBracket)
+            return NppTagMatchResult(openTagRange: tagContentRange, closeTagRange: NSRange(location: NSNotFound, length: 0), attributeRanges: attrRanges)
+        }
+
+        let isCloseTag = tagStr.hasPrefix("</")
+        let tagName: String
+        if isCloseTag {
+            let raw = tagStr.dropFirst(2).dropLast(1).trimmingCharacters(in: .whitespacesAndNewlines)
+            tagName = raw.components(separatedBy: CharacterSet.whitespacesAndNewlines).first ?? ""
+        } else {
+            let raw = tagStr.dropFirst(1).dropLast(1).trimmingCharacters(in: .whitespacesAndNewlines)
+            tagName = raw.components(separatedBy: CharacterSet.whitespacesAndNewlines).first ?? ""
+        }
+        guard !tagName.isEmpty else { return nil }
+
+        // Scan for matching tag
+        if isCloseTag {
+            // Scan backwards for <tagName
+            var depth = 1
+            let openPattern = "<" + NSRegularExpression.escapedPattern(for: tagName) + "(\\s+[^>]*>|>)"
+            let closePattern = "</" + NSRegularExpression.escapedPattern(for: tagName) + "\\s*>"
+            let combinedPattern = "(\(openPattern))|(\(closePattern))"
+            guard let regex = try? NSRegularExpression(pattern: combinedPattern, options: [.caseInsensitive]) else { return nil }
+
+            let precedingRange = NSRange(location: 0, length: openBracket)
+            let matches = regex.matches(in: nsString as String, options: [], range: precedingRange)
+            for m in matches.reversed() {
+                let mStr = nsString.substring(with: m.range)
+                if mStr.hasPrefix("</") {
+                    depth += 1
+                } else if !mStr.hasSuffix("/>") {
+                    depth -= 1
+                    if depth == 0 {
+                        let attrRanges = extractAttributes(in: mStr, baseOffset: m.range.location)
+                        return NppTagMatchResult(openTagRange: m.range, closeTagRange: tagContentRange, attributeRanges: attrRanges)
+                    }
+                }
+            }
+        } else {
+            // Scan forwards for </tagName>
+            var depth = 1
+            let openPattern = "<" + NSRegularExpression.escapedPattern(for: tagName) + "(\\s+[^>]*>|>)"
+            let closePattern = "</" + NSRegularExpression.escapedPattern(for: tagName) + "\\s*>"
+            let combinedPattern = "(\(openPattern))|(\(closePattern))"
+            guard let regex = try? NSRegularExpression(pattern: combinedPattern, options: [.caseInsensitive]) else { return nil }
+
+            let followingStart = closeBracket + 1
+            guard followingStart < len else { return nil }
+            let followingRange = NSRange(location: followingStart, length: len - followingStart)
+            let matches = regex.matches(in: nsString as String, options: [], range: followingRange)
+            for m in matches {
+                let mStr = nsString.substring(with: m.range)
+                if mStr.hasPrefix("</") {
+                    depth -= 1
+                    if depth == 0 {
+                        let attrRanges = extractAttributes(in: tagStr, baseOffset: openBracket)
+                        return NppTagMatchResult(openTagRange: tagContentRange, closeTagRange: m.range, attributeRanges: attrRanges)
+                    }
+                } else if !mStr.hasSuffix("/>") {
+                    depth += 1
+                }
+            }
+        }
+
+        let attrRanges = extractAttributes(in: tagStr, baseOffset: openBracket)
+        return NppTagMatchResult(openTagRange: tagContentRange, closeTagRange: NSRange(location: NSNotFound, length: 0), attributeRanges: attrRanges)
+    }
+
+    private static func extractAttributes(in tagStr: String, baseOffset: Int) -> [NSRange] {
+        var ranges: [NSRange] = []
+        let attrPattern = "[a-zA-Z0-9_\\-:]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)"
+        if let regex = try? NSRegularExpression(pattern: attrPattern, options: []) {
+            let ns = tagStr as NSString
+            let matches = regex.matches(in: tagStr, options: [], range: NSRange(location: 0, length: ns.length))
+            for m in matches {
+                ranges.append(NSRange(location: baseOffset + m.range.location, length: m.range.length))
+            }
+        }
+        return ranges
+    }
 }
 
 extension String {

@@ -67,7 +67,8 @@ public struct NppSyntaxRules {
 public final class NppSyntaxHighlighter {
     public static func highlight(textStorage: NSTextStorage, language: String, isDarkMode: Bool,
                                  baseFont: NSFont? = nil, theme: NppTheme? = nil,
-                                 maxFileSizeMB: Int = 200, userDefinedLanguage: NppUserDefineLanguage? = nil) {
+                                 maxFileSizeMB: Int = 200, userDefinedLanguage: NppUserDefineLanguage? = nil,
+                                 treatBackslashAsEscapeForSql: Bool = false) {
         let string = textStorage.string
         guard !string.isEmpty else { return }
         if maxFileSizeMB > 0 && (string as NSString).length > maxFileSizeMB * 1024 * 1024 {
@@ -199,7 +200,18 @@ public final class NppSyntaxHighlighter {
         }
 
         // 10. Strings: Multi-line and Single-line strings
-        let stringPattern = #"\"\"\"[\s\S]*?\"\"\"|'''[\s\S]*?'''|\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`"#
+        let stringPattern: String
+        if language == "SQL" {
+            if treatBackslashAsEscapeForSql {
+                // MySQL style: backslash escapes single quotes
+                stringPattern = #"\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`"#
+            } else {
+                // Standard SQL: only doubled single quotes '' are escaped inside strings, backslash is literal
+                stringPattern = #"\"([^\"\\]|\\.)*\"|'([^']|'')*'|`([^`\\]|\\.)*`"#
+            }
+        } else {
+            stringPattern = #"\"\"\"[\s\S]*?\"\"\"|'''[\s\S]*?'''|\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*'|`([^`\\]|\\.)*`"#
+        }
         if let regex = try? NSRegularExpression(pattern: stringPattern, options: []) {
             let matches = regex.matches(in: string, options: [], range: fullRange)
             for m in matches {

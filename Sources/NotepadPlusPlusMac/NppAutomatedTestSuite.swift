@@ -1442,6 +1442,7 @@ final class NppAutomatedTestSuite {
             runSettingsBatch1Tests(assertTest: assertTest)
             runSettingsBatch2Tests(assertTest: assertTest)
             runSettingsBatch3Tests(assertTest: assertTest)
+            runSettingsBatch4Tests(assertTest: assertTest)
             runQuitAndTabBarUXParityTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialQuitStressTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialTabBarStressTests(assertTest: assertTest)
@@ -5818,6 +5819,106 @@ final class NppAutomatedTestSuite {
         assertTest("Setting useMonospacedFontInFindDlg: true", ws.useMonospacedFontInFindDlg == true)
         ws.performanceSuppress2GBWarning = true
         assertTest("Setting performanceSuppress2GBWarning: true", ws.performanceSuppress2GBWarning == true)
+
+        ws.closeAll(force: true)
+    }
+
+    static func runSettingsBatch4Tests(assertTest: (String, Bool) -> Void) {
+        let ws = NppWorkspace()
+        ws.closeAll(force: true)
+
+        // 1. Highlighting: markAllMatchCase & markAllWholeWord
+        let doc1 = ws.documents[0]
+        doc1.content = "Hello hello HelloWorld hello"
+        ws.activeDocumentId = doc1.id
+        doc1.cursorPos = 0
+        doc1.selectionLength = 5 // "Hello"
+
+        ws.markAllMatchCase = true
+        ws.markAllWholeWord = false
+        _ = ws.styleAllOccurrencesOfToken(styleIndex: 1)
+        assertTest("Setting markAllMatchCase: only matches exact case (2 occurrences with HelloWorld)",
+                   doc1.styledTokenRanges[1]?.count == 2)
+
+        doc1.styledTokenRanges.removeAll()
+        ws.markAllMatchCase = true
+        ws.markAllWholeWord = true
+        _ = ws.styleAllOccurrencesOfToken(styleIndex: 1)
+        assertTest("Setting markAllMatchCase & markAllWholeWord: exact case and whole word (1 occurrence)",
+                   doc1.styledTokenRanges[1]?.count == 1)
+
+        doc1.styledTokenRanges.removeAll()
+        ws.markAllMatchCase = false
+        ws.markAllWholeWord = false
+        _ = ws.styleAllOccurrencesOfToken(styleIndex: 1)
+        assertTest("Setting markAllMatchCase false: matches case-insensitively (4 occurrences)",
+                   doc1.styledTokenRanges[1]?.count == 4)
+
+        doc1.styledTokenRanges.removeAll()
+        ws.markAllMatchCase = false
+        ws.markAllWholeWord = true
+        _ = ws.styleAllOccurrencesOfToken(styleIndex: 1)
+        assertTest("Setting markAllWholeWord true: excludes partial match HelloWorld (3 occurrences)",
+                   doc1.styledTokenRanges[1]?.count == 3)
+
+        // 2. Highlighting: XML/HTML Tag Matching
+        let htmlSnippet: NSString = "<div id=\"main\" class=\"container\"><p>Hello</p></div>"
+        let tagMatch = NppEditOperations.findMatchingTagPair(in: htmlSnippet, at: 2)
+        assertTest("Setting highlightMatchingTags: finds matching div tags",
+                   tagMatch != nil && htmlSnippet.substring(with: tagMatch!.openTagRange) == "<div id=\"main\" class=\"container\">" &&
+                   htmlSnippet.substring(with: tagMatch!.closeTagRange) == "</div>")
+
+        assertTest("Setting highlightTagAttributes: extracts id and class attribute ranges",
+                   tagMatch != nil && tagMatch!.attributeRanges.count == 2)
+
+        let phpSnippet: NSString = "<div><?php echo 'foo'; ?></div>"
+        let noneHtmlMatch = NppEditOperations.findMatchingTagPair(in: phpSnippet, at: 10)
+        assertTest("Setting highlightNoneHtmlZone: identifies PHP block as non-HTML zone",
+                   noneHtmlMatch != nil && noneHtmlMatch!.isNoneHtmlZone == true)
+
+        // 3. Language: treatBackslashAsEscapeForSql
+        let ts1 = NSTextStorage(string: "SELECT 'it\\'s' AS col;")
+        NppSyntaxHighlighter.highlight(textStorage: ts1, language: "SQL", isDarkMode: false, treatBackslashAsEscapeForSql: true)
+        let stringColor1 = ts1.attribute(.foregroundColor, at: 8, effectiveRange: nil) as? NSColor
+        let stringColorEsc = ts1.attribute(.foregroundColor, at: 12, effectiveRange: nil) as? NSColor
+        assertTest("Setting treatBackslashAsEscapeForSql true: highlights entire escaped string",
+                   stringColor1 != nil && stringColorEsc != nil)
+
+        let ts2 = NSTextStorage(string: "SELECT 'it\\'s' AS col;")
+        NppSyntaxHighlighter.highlight(textStorage: ts2, language: "SQL", isDarkMode: false, treatBackslashAsEscapeForSql: false)
+        let asColColor = ts2.attribute(.foregroundColor, at: 15, effectiveRange: nil) as? NSColor
+        assertTest("Setting treatBackslashAsEscapeForSql false: parses with standard SQL quotes",
+                   asColColor != nil)
+
+        // 4. Margins/Border/Edge: borderWidth, paddingRight, verticalEdgeBgMode
+        ws.borderWidth = 1
+        assertTest("Setting borderWidth: set to 1", ws.borderWidth == 1)
+        ws.borderWidth = 0
+        assertTest("Setting borderWidth: set to 0", ws.borderWidth == 0)
+
+        ws.paddingRight = 10
+        assertTest("Setting paddingRight: set to 10", ws.paddingRight == 10)
+        ws.verticalEdgeBgMode = true
+        assertTest("Setting verticalEdgeBgMode: set to true", ws.verticalEdgeBgMode == true)
+
+        // 5. Margins: foldMarginStyle, changeHistoryMargin, changeHistoryText
+        ws.foldMarginStyle = "Circle tree"
+        assertTest("Setting foldMarginStyle: Circle tree configured", ws.foldMarginStyle == "Circle tree")
+        ws.foldMarginStyle = "Arrow"
+        assertTest("Setting foldMarginStyle: Arrow configured", ws.foldMarginStyle == "Arrow")
+        ws.foldMarginStyle = "Box tree"
+        assertTest("Setting foldMarginStyle: Box tree configured", ws.foldMarginStyle == "Box tree")
+
+        ws.changeHistoryMargin = true
+        assertTest("Setting changeHistoryMargin: configured to true", ws.changeHistoryMargin == true)
+        ws.changeHistoryText = true
+        assertTest("Setting changeHistoryText: configured to true", ws.changeHistoryText == true)
+
+        // 6. Highlighting: smartHighlightAnotherView
+        ws.smartHighlightAnotherView = true
+        assertTest("Setting smartHighlightAnotherView: configured to true", ws.smartHighlightAnotherView == true)
+        ws.smartHighlightUseFindSettings = true
+        assertTest("Setting smartHighlightUseFindSettings: configured to true", ws.smartHighlightUseFindSettings == true)
 
         ws.closeAll(force: true)
     }
