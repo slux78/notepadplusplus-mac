@@ -99,7 +99,7 @@ public struct NppFindReplaceDialogView: View {
                             .frame(width: 80, alignment: .trailing)
                         TextField("", text: $findText, onCommit: { runFindNext(backward: false) })
                             .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(workspace.useMonospacedFontInFindDlg ? .system(size: 12, design: .monospaced) : .system(size: 12))
                             .onChange(of: findText) { newVal in
                                 workspace.findQueryText = newVal
                                 workspace.lastSearchQuery = newVal
@@ -114,7 +114,7 @@ public struct NppFindReplaceDialogView: View {
                                 .frame(width: 80, alignment: .trailing)
                             TextField("", text: $replaceText, onCommit: { runFindNext(backward: false) })
                                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(workspace.useMonospacedFontInFindDlg ? .system(size: 12, design: .monospaced) : .system(size: 12))
                             Menu {
                                 Button(action: {
                                     let tmp = findText
@@ -281,6 +281,9 @@ public struct NppFindReplaceDialogView: View {
                         actionBtn(workspace.tr("Find All in Current Document")) {
                             workspace.findAllInCurrentDoc(query: processedQuery(), matchCase: matchCase, wholeWord: matchWholeWord, useRegex: searchMode == 2)
                             statusMessage = "Found \(workspace.searchFileGroups.first?.matches.count ?? 0) matches in current file."
+                            if !workspace.findDlgAlwaysVisible {
+                                closeDialog()
+                            }
                         }
                     } else if workspace.findReplaceTab == 1 {
                         // Replace Tab Buttons
@@ -297,6 +300,9 @@ public struct NppFindReplaceDialogView: View {
                             workspace.findAllInFiles(query: processedQuery(), filter: filterText, directory: dir, subfolders: inSubfolders, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: searchMode == 2)
                             let total = workspace.searchFileGroups.reduce(0) { $0 + $1.matches.count }
                             statusMessage = "Find in Files: \(total) hits in \(workspace.searchFileGroups.count) files."
+                            if !workspace.findDlgAlwaysVisible {
+                                closeDialog()
+                            }
                         }
                         actionBtn(workspace.tr("Replace in Files")) {
                             let dir = directoryText.isEmpty ? (workspace.activeDocument?.filePath?.deletingLastPathComponent().path ?? FileManager.default.currentDirectoryPath) : directoryText
@@ -713,7 +719,9 @@ public struct NppFindReplaceDialogView: View {
             doc.content = tv.string
             doc.isDirty = true
             statusMessage = "Replaced 1 occurrence."
-            runFindNext()
+            if !workspace.replaceAndStop {
+                runFindNext()
+            }
         } else {
             runFindNext()
         }
@@ -781,6 +789,16 @@ public struct NppFindReplaceDialogView: View {
 
     private func runReplaceAllInOpenedDocs() {
         guard !workspace.isAllDocumentsReadOnly, !findText.isEmpty else { return }
+        if workspace.confirmReplaceAllInAllOpenedDocs && !workspace.isTestRunning && !CommandLine.arguments.contains("--run-tests") {
+            let alert = NSAlert()
+            alert.messageText = workspace.tr("Replace All in All Opened Documents")
+            alert.informativeText = workspace.tr("Are you sure you want to replace all occurrences in all opened documents?")
+            alert.addButton(withTitle: workspace.tr("Yes"))
+            alert.addButton(withTitle: workspace.tr("No"))
+            if alert.runModal() != .alertFirstButtonReturn {
+                return
+            }
+        }
         let query = processedQuery()
         let replacement = processedReplacement()
         var totalCount = 0

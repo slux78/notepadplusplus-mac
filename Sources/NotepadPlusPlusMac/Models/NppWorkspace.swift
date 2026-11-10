@@ -1071,12 +1071,52 @@ public final class NppWorkspace: ObservableObject {
     // 20: Performance
     @Published public var performanceLargeFileEnabled: Bool = true
     @Published public var performanceLargeFileSizeMB: Int = 200
-    @Published public var performanceDeactivateWordWrap: Bool = true
+    @Published public var performanceDeactivateWordWrap: Bool = true {
+        didSet {
+            activeTextView?.needsLayout = true
+            activeTextView?.needsDisplay = true
+        }
+    }
     @Published public var performanceAllowAutoCompletion: Bool = false
     @Published public var performanceAllowSmartHighlighting: Bool = false
     @Published public var performanceAllowBraceMatch: Bool = false
     @Published public var performanceAllowClickableLink: Bool = false
     @Published public var performanceSuppress2GBWarning: Bool = false
+
+    public func shouldAllowAutoCompletion(doc: NppDocument?) -> Bool {
+        if let doc = doc, isLargeFile(doc: doc) {
+            return performanceAllowAutoCompletion
+        }
+        return autoCompletionEnabled
+    }
+
+    public func shouldAllowSmartHighlighting(doc: NppDocument?) -> Bool {
+        if let doc = doc, isLargeFile(doc: doc) {
+            return performanceAllowSmartHighlighting
+        }
+        return smartHighlighting
+    }
+
+    public func shouldAllowBraceMatch(doc: NppDocument?) -> Bool {
+        if let doc = doc, isLargeFile(doc: doc) {
+            return performanceAllowBraceMatch
+        }
+        return true
+    }
+
+    public func shouldAllowClickableLink(doc: NppDocument?) -> Bool {
+        if let doc = doc, isLargeFile(doc: doc) {
+            return performanceAllowClickableLink
+        }
+        return clickableLinkEnable
+    }
+
+    public func shouldAllowWordWrap(doc: NppDocument?) -> Bool {
+        if let doc = doc, isLargeFile(doc: doc) && performanceDeactivateWordWrap {
+            return false
+        }
+        return isWordWrapEnabled
+    }
 
     // 21: Cloud & Link
     @Published public var cloudMode: Int = 0 // 0: No Cloud, 1: Custom Cloud
@@ -1629,6 +1669,17 @@ public final class NppWorkspace: ObservableObject {
             }
             activeDocumentId = existing.id
             return
+        }
+
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attrs[.size] as? UInt64, size >= 2_147_483_648 {
+            if !performanceSuppress2GBWarning && !isTestRunning && !CommandLine.arguments.contains("--run-tests") {
+                let alert = NSAlert()
+                alert.messageText = tr("File is too large")
+                alert.informativeText = tr("The file is larger than 2GB. Opening it may cause high memory usage.")
+                alert.addButton(withTitle: tr("OK"))
+                alert.runModal()
+            }
         }
 
         do {
@@ -2354,12 +2405,18 @@ public final class NppWorkspace: ObservableObject {
         let rawMatches = regex.matches(in: doc.content, options: [], range: NSRange(location: 0, length: content.length))
 
         var results: [NppSearchMatch] = []
+        var seenLines = Set<Int>()
         for m in rawMatches {
             let lineRange = content.lineRange(for: NSRange(location: m.range.location, length: 0))
             let lineText = content.substring(with: lineRange).trimmingCharacters(in: .newlines)
 
             // Compute exact 1-indexed line number
             let lineNum = NppLineCounter.lineNumber(upTo: m.range.location, in: content)
+
+            if showOncePerFoundLine && seenLines.contains(lineNum) {
+                continue
+            }
+            seenLines.insert(lineNum)
 
             let matchRangeInLine = NSRange(location: m.range.location - lineRange.location, length: m.range.length)
 
@@ -2827,7 +2884,7 @@ public final class NppWorkspace: ObservableObject {
 
         var groups: [NppSearchFileGroup] = []
         for fileUrl in targetFiles {
-            if let openDoc = documents.first(where: { $0.filePath?.standardizedFileURL.path == fileUrl.standardizedFileURL.path }) {
+            if !fifIgnoreOpenedFiles, let openDoc = documents.first(where: { $0.filePath?.standardizedFileURL.path == fileUrl.standardizedFileURL.path }) {
                 let matches = searchInDocument(doc: openDoc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
                 if !matches.isEmpty {
                     groups.append(NppSearchFileGroup(documentId: openDoc.id, documentTitle: openDoc.title, filePath: fileUrl, matches: matches))

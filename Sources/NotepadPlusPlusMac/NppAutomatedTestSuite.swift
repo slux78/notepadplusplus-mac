@@ -1441,6 +1441,7 @@ final class NppAutomatedTestSuite {
             runResourceBundleTests(assertTest: assertTest)
             runSettingsBatch1Tests(assertTest: assertTest)
             runSettingsBatch2Tests(assertTest: assertTest)
+            runSettingsBatch3Tests(assertTest: assertTest)
             runQuitAndTabBarUXParityTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialQuitStressTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialTabBarStressTests(assertTest: assertTest)
@@ -5713,6 +5714,110 @@ final class NppAutomatedTestSuite {
         assertTest("Setting npcCustomColor: enables custom color", ws.npcCustomColor == true)
         ws.npcIncludeUnicodeEol = true
         assertTest("Setting npcIncludeUnicodeEol: enabled", ws.npcIncludeUnicodeEol == true)
+
+        ws.closeAll(force: true)
+    }
+
+    static func runSettingsBatch3Tests(assertTest: (String, Bool) -> Void) {
+        let ws = NppWorkspace()
+        ws.supportDirectoryOverride = FileManager.default.temporaryDirectory.appendingPathComponent("npp_b3_\(UUID().uuidString)")
+        ws.closeAll(force: true)
+        let testDoc = ws.activeDocument ?? ws.documents[0]
+        ws.activeDocumentId = testDoc.id
+        testDoc.content = "apple apple apple\norange\napple pear apple\n"
+        ws.showOncePerFoundLine = false
+        ws.findAllInCurrentDoc(query: "apple", matchCase: false, wholeWord: false, useRegex: false)
+        let totalMatchesMulti = ws.searchFileGroups.first?.matches.count ?? 0
+        assertTest("Setting showOncePerFoundLine off: finds all occurrences across lines (5 matches)",
+                   totalMatchesMulti == 5)
+
+        ws.showOncePerFoundLine = true
+        ws.findAllInCurrentDoc(query: "apple", matchCase: false, wholeWord: false, useRegex: false)
+        let totalMatchesSingle = ws.searchFileGroups.first?.matches.count ?? 0
+        assertTest("Setting showOncePerFoundLine on: shows only one entry per found line (2 matches)",
+                   totalMatchesSingle == 2)
+
+        // 2. fifIgnoreOpenedFiles
+        let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("npp_fif_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        let fileOnDisk = tmpDir.appendingPathComponent("sample.txt")
+        try? "disk_content".write(to: fileOnDisk, atomically: true, encoding: .utf8)
+
+        ws.openFile(url: fileOnDisk)
+        let openDoc = ws.documents.first { $0.filePath?.path == fileOnDisk.path }!
+        openDoc.content = "memory_dirty_content"
+        openDoc.isDirty = true
+
+        ws.fifIgnoreOpenedFiles = false
+        ws.findAllInFiles(query: "memory_dirty_content", filter: "*.txt", directory: tmpDir.path, subfolders: false, matchCase: false, wholeWord: false, useRegex: false)
+        assertTest("Setting fifIgnoreOpenedFiles off: Find in Files searches in open dirty buffers",
+                   ws.searchFileGroups.first?.matches.count == 1)
+
+        ws.fifIgnoreOpenedFiles = true
+        ws.findAllInFiles(query: "memory_dirty_content", filter: "*.txt", directory: tmpDir.path, subfolders: false, matchCase: false, wholeWord: false, useRegex: false)
+        assertTest("Setting fifIgnoreOpenedFiles on: Find in Files ignores open buffers and searches disk only (0 memory hits)",
+                   ws.searchFileGroups.isEmpty)
+        ws.findAllInFiles(query: "disk_content", filter: "*.txt", directory: tmpDir.path, subfolders: false, matchCase: false, wholeWord: false, useRegex: false)
+        assertTest("Setting fifIgnoreOpenedFiles on: Find in Files finds on-disk content",
+                   ws.searchFileGroups.first?.matches.count == 1)
+
+        // 3. Performance settings with large files
+        let largeDoc = NppDocument(title: "large.txt", content: "hello")
+        largeDoc.rawFileBytes = Data(count: 250 * 1024 * 1024) // 250MB (exceeds default 200MB)
+        assertTest("Performance: large file detected (>200MB)", ws.isLargeFile(doc: largeDoc) == true)
+
+        ws.performanceAllowAutoCompletion = false
+        assertTest("Setting performanceAllowAutoCompletion off: disallows autocompletion on large files",
+                   ws.shouldAllowAutoCompletion(doc: largeDoc) == false)
+        ws.performanceAllowAutoCompletion = true
+        assertTest("Setting performanceAllowAutoCompletion on: allows autocompletion on large files",
+                   ws.shouldAllowAutoCompletion(doc: largeDoc) == true)
+
+        ws.performanceAllowBraceMatch = false
+        assertTest("Setting performanceAllowBraceMatch off: disallows brace match on large files",
+                   ws.shouldAllowBraceMatch(doc: largeDoc) == false)
+        ws.performanceAllowBraceMatch = true
+        assertTest("Setting performanceAllowBraceMatch on: allows brace match on large files",
+                   ws.shouldAllowBraceMatch(doc: largeDoc) == true)
+
+        ws.performanceAllowSmartHighlighting = false
+        assertTest("Setting performanceAllowSmartHighlighting off: disallows smart highlighting on large files",
+                   ws.shouldAllowSmartHighlighting(doc: largeDoc) == false)
+        ws.performanceAllowSmartHighlighting = true
+        assertTest("Setting performanceAllowSmartHighlighting on: allows smart highlighting on large files",
+                   ws.shouldAllowSmartHighlighting(doc: largeDoc) == true)
+
+        ws.performanceAllowClickableLink = false
+        assertTest("Setting performanceAllowClickableLink off: disallows clickable links on large files",
+                   ws.shouldAllowClickableLink(doc: largeDoc) == false)
+        ws.performanceAllowClickableLink = true
+        assertTest("Setting performanceAllowClickableLink on: allows clickable links on large files",
+                   ws.shouldAllowClickableLink(doc: largeDoc) == true)
+
+        ws.isWordWrapEnabled = true
+        ws.performanceDeactivateWordWrap = true
+        assertTest("Setting performanceDeactivateWordWrap on: deactivates word wrap globally",
+                   ws.shouldAllowWordWrap(doc: largeDoc) == false)
+        ws.performanceDeactivateWordWrap = false
+        assertTest("Setting performanceDeactivateWordWrap off: allows word wrap",
+                   ws.shouldAllowWordWrap(doc: largeDoc) == true)
+
+        // 4. Searching UI toggles
+        ws.replaceAndStop = true
+        assertTest("Setting replaceAndStop: configured to true", ws.replaceAndStop == true)
+        ws.replaceAndStop = false
+        assertTest("Setting replaceAndStop: reset to false", ws.replaceAndStop == false)
+
+        ws.confirmReplaceAllInAllOpenedDocs = true
+        assertTest("Setting confirmReplaceAllInAllOpenedDocs: true", ws.confirmReplaceAllInAllOpenedDocs == true)
+        ws.findDlgAlwaysVisible = true
+        assertTest("Setting findDlgAlwaysVisible: true", ws.findDlgAlwaysVisible == true)
+        ws.incSearchBarAtTop = true
+        assertTest("Setting incSearchBarAtTop: true", ws.incSearchBarAtTop == true)
+        ws.useMonospacedFontInFindDlg = true
+        assertTest("Setting useMonospacedFontInFindDlg: true", ws.useMonospacedFontInFindDlg == true)
+        ws.performanceSuppress2GBWarning = true
+        assertTest("Setting performanceSuppress2GBWarning: true", ws.performanceSuppress2GBWarning == true)
 
         ws.closeAll(force: true)
     }

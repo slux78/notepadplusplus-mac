@@ -24,8 +24,9 @@ public struct NppEditorView: NSViewRepresentable {
         } else {
             workspace.secondaryScrollView = scrollView
         }
+        let allowWrap = workspace.shouldAllowWordWrap(doc: document)
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = !workspace.isWordWrapEnabled
+        scrollView.hasHorizontalScroller = !allowWrap
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
 
@@ -40,6 +41,18 @@ public struct NppEditorView: NSViewRepresentable {
         textView.editorCoordinator = context.coordinator
         textView.workspace = workspace
         textView.isEditable = !document.isReadOnly && !workspace.isAllDocumentsReadOnly
+
+        var linkAttrs: [NSAttributedString.Key: Any] = [:]
+        if workspace.clickableLinkNoUnderline {
+            linkAttrs[.underlineStyle] = 0
+        } else {
+            linkAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+        if workspace.clickableLinkFullBoxMode {
+            linkAttrs[.backgroundColor] = NSColor.systemBlue.withAlphaComponent(0.2)
+        }
+        textView.linkTextAttributes = linkAttrs
+        textView.isAutomaticLinkDetectionEnabled = workspace.shouldAllowClickableLink(doc: document)
 
         let targetFont = NppWorkspace.resolveFont(name: workspace.fontFamily, size: workspace.fontSize)
         textView.font = targetFont
@@ -56,7 +69,7 @@ public struct NppEditorView: NSViewRepresentable {
         ]
 
         // Line wrap setup
-        configureWordWrap(textView: textView, scrollView: scrollView, enabled: workspace.isWordWrapEnabled)
+        configureWordWrap(textView: textView, scrollView: scrollView, enabled: allowWrap)
 
         scrollView.documentView = textView
 
@@ -186,9 +199,10 @@ public struct NppEditorView: NSViewRepresentable {
         }
 
         // Update word wrap
-        if context.coordinator.lastWordWrap != workspace.isWordWrapEnabled {
-            context.coordinator.lastWordWrap = workspace.isWordWrapEnabled
-            configureWordWrap(textView: textView, scrollView: scrollView, enabled: workspace.isWordWrapEnabled)
+        let allowWrap = workspace.shouldAllowWordWrap(doc: document)
+        if context.coordinator.lastWordWrap != allowWrap {
+            context.coordinator.lastWordWrap = allowWrap
+            configureWordWrap(textView: textView, scrollView: scrollView, enabled: allowWrap)
         }
 
         // Jump to match from Find All Results panel
@@ -325,6 +339,7 @@ public struct NppEditorView: NSViewRepresentable {
                 activeBraceRanges.removeAll()
             }
 
+            guard parent.workspace.shouldAllowBraceMatch(doc: parent.document) else { return }
             guard str.length >= 2 else { return }
             // Upstream Notepad++ matching brace detection
             if let pair = NppEditOperations.findMatchingBracePair(in: str, at: sel.location, allowEnclosing: false) {
@@ -368,6 +383,7 @@ public struct NppEditorView: NSViewRepresentable {
                 lastSmartHighlightedWord = ""
             }
 
+            guard parent.workspace.shouldAllowSmartHighlighting(doc: parent.document) else { return }
             guard sel.length > 0 && NSMaxRange(sel) <= str.length else { return }
 
             let selectedWord = str.substring(with: sel).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -376,11 +392,30 @@ public struct NppEditorView: NSViewRepresentable {
             // Notepad++ Smart Highlight: find all occurrences of selectedWord in document
             var ranges: [NSRange] = []
             var searchRange = NSRange(location: 0, length: str.length)
+            let searchOpts: NSString.CompareOptions = parent.workspace.smartHighlightMatchCase ? [.literal] : [.caseInsensitive]
 
             while searchRange.location < str.length {
-                let found = str.range(of: selectedWord, options: [.literal], range: searchRange)
+                let found = str.range(of: selectedWord, options: searchOpts, range: searchRange)
                 if found.location == NSNotFound { break }
-                ranges.append(found)
+                var valid = true
+                if parent.workspace.smartHighlightWholeWord {
+                    if found.location > 0 {
+                        let prev = str.character(at: found.location - 1)
+                        if CharacterSet.alphanumerics.contains(UnicodeScalar(prev) ?? UnicodeScalar(0)) || prev == 95 {
+                            valid = false
+                        }
+                    }
+                    let endPos = NSMaxRange(found)
+                    if endPos < str.length {
+                        let next = str.character(at: endPos)
+                        if CharacterSet.alphanumerics.contains(UnicodeScalar(next) ?? UnicodeScalar(0)) || next == 95 {
+                            valid = false
+                        }
+                    }
+                }
+                if valid {
+                    ranges.append(found)
+                }
                 let nextPos = found.location + max(1, found.length)
                 searchRange = NSRange(location: nextPos, length: str.length - nextPos)
             }
@@ -477,6 +512,7 @@ public final class NppTextView: NSTextView {
     }
 
     public func triggerCompletion(mode: Int) {
+        guard resolvedWorkspace?.performanceAllowAutoCompletion ?? true else { return }
         let caret = selectedRange().location
         let engine = NppCompletionEngine.shared
         let suggestions: [String]
@@ -1319,7 +1355,7 @@ public final class NppTextView: NSTextView {
         if let chars = event.characters, let first = chars.first {
             if first == "(" { showParameterHint() }
             cleanInvalidMatchedChars(caretPos: self.selectedRange().location, typedChar: first)
-            if let ws = resolvedWorkspace, ws.autoCompletionEnabled,
+            if let ws = resolvedWorkspace, ws.shouldAllowAutoCompletion(doc: resolvedDocument),
                !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
                (first.isLetter || first.isNumber || first == "_"),
                self.window != nil, self.selectedRange().length == 0, self.selectedRanges.count <= 1 {

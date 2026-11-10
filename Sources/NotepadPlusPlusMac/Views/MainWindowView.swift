@@ -19,8 +19,8 @@ public struct NppMainWindowView: View {
                 NppTabBarView(workspace: workspace, viewIndex: 0)
             }
 
-            // 3. Search Bar (if visible)
-            if workspace.showSearchBar {
+            // 3. Search Bar (if visible and at top)
+            if workspace.showSearchBar && workspace.incSearchBarAtTop {
                 NppSearchBarView(workspace: workspace)
             }
 
@@ -138,6 +138,11 @@ public struct NppMainWindowView: View {
                     })
                     .frame(width: 520)
                 }
+            }
+
+            // Search Bar (if visible and at bottom)
+            if workspace.showSearchBar && !workspace.incSearchBarAtTop {
+                NppSearchBarView(workspace: workspace)
             }
 
             // 5. Search Results Panel (Notepad++ Find Result dock)

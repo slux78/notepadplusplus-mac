@@ -36,13 +36,13 @@
 | 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginRight` | Right: | todo |
 | 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginTop` | Top: | todo |
 | 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printVariableSelection` | Variable: | todo |
-| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `confirmReplaceAllInAllOpenedDocs` | Confirm Replace All in All Opened Documents | todo |
-| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `fifIgnoreOpenedFiles` | Find in Files: Prefer on-disk file content over open buffers | todo |
-| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `findDlgAlwaysVisible` | Find dialog remains open after search that outputs to results window | todo |
-| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `incSearchBarAtTop` | Incremental Search: show the bar at the top | todo |
-| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `replaceAndStop` | Replace: Don't move to the following occurrence | todo |
-| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `showOncePerFoundLine` | Search Result window: show only one entry per found line if possible | todo |
-| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `useMonospacedFontInFindDlg` | Use Monospaced font in Find dialog (Need to restart Notepad++) | todo |
+| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `confirmReplaceAllInAllOpenedDocs` | Confirm Replace All in All Opened Documents | done (tested) |
+| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `fifIgnoreOpenedFiles` | Find in Files: Prefer on-disk file content over open buffers | done (tested) |
+| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `findDlgAlwaysVisible` | Find dialog remains open after search that outputs to results window | done (tested) |
+| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `incSearchBarAtTop` | Incremental Search: show the bar at the top | done (tested) |
+| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `replaceAndStop` | Replace: Don't move to the following occurrence | done (tested) |
+| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `showOncePerFoundLine` | Search Result window: show only one entry per found line if possible | done (tested) |
+| 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `useMonospacedFontInFindDlg` | Use Monospaced font in Find dialog (Need to restart Notepad++) | done (tested) |
 | 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `backupOnSaveMode` |  | todo |
 | 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `customBackupDir` | Directory: | todo |
 | 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `customBackupDirEnabled` | Custom Backup Directory | todo |
@@ -66,12 +66,12 @@
 | 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabPinFeature` | Enable pin tab feature | todo |
 | 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabShowOnlyPinnedButton` | Show only pinned button | todo |
 | 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabVertical` | Vertical | todo |
-| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowAutoCompletion` | Allow Auto-Completion | todo |
-| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowBraceMatch` | Allow Brace Match | todo |
-| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowClickableLink` | Allow URL Clickable Link | todo |
-| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowSmartHighlighting` | Allow Smart Highlighting | todo |
-| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceDeactivateWordWrap` | Deactivate Word Wrap globally | todo |
-| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceSuppress2GBWarning` | Suppress warning when opening ≥2GB files | todo |
+| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowAutoCompletion` | Allow Auto-Completion | done (tested) |
+| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowBraceMatch` | Allow Brace Match | done (tested) |
+| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowClickableLink` | Allow URL Clickable Link | done (tested) |
+| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowSmartHighlighting` | Allow Smart Highlighting | done (tested) |
+| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceDeactivateWordWrap` | Deactivate Word Wrap globally | done (tested) |
+| 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceSuppress2GBWarning` | Suppress warning when opening ≥2GB files | done (tested) |
 | 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkEnable` | Enable | todo |
 | 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkFullBoxMode` | Enable fullbox mode | todo |
 | 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkNoUnderline` | No underline | todo |
