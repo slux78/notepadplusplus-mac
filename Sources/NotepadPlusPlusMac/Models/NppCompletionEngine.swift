@@ -32,7 +32,8 @@ public final class NppCompletionEngine {
         mode: Int,
         minimumLength: Int,
         ignoreNumbers: Bool,
-        manual: Bool
+        manual: Bool,
+        brief: Bool = false
     ) -> [String] {
         let source = text as NSString
         let range = Self.wordRange(in: source, before: caret)
@@ -56,6 +57,14 @@ public final class NppCompletionEngine {
                 let word = source.substring(with: match.range)
                 if word.hasPrefix(prefix) && word != prefix { found.insert(word) }
             }
+        }
+        if brief {
+            found = Set(found.map { word in
+                if let paren = word.firstIndex(of: "(") {
+                    return String(word[..<paren]).trimmingCharacters(in: .whitespaces)
+                }
+                return word
+            })
         }
         return found.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }

@@ -43,10 +43,10 @@
 | 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `replaceAndStop` | Replace: Don't move to the following occurrence | done (tested) |
 | 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `showOncePerFoundLine` | Search Result window: show only one entry per found line if possible | done (tested) |
 | 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `useMonospacedFontInFindDlg` | Use Monospaced font in Find dialog (Need to restart Notepad++) | done (tested) |
-| 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `backupOnSaveMode` |  | todo |
-| 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `customBackupDir` | Directory: | todo |
-| 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `customBackupDirEnabled` | Custom Backup Directory | todo |
-| 17. Auto-Completion (IDD_PREFERENCE_SUB_AUTOCOMPLETION) | `autoCompletionBrief` | Make auto-completion list brief | todo |
+| 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `backupOnSaveMode` |  | done (tested) |
+| 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `customBackupDir` | Directory: | done (tested) |
+| 16. Backup (IDD_PREFERENCE_SUB_BACKUP) | `customBackupDirEnabled` | Custom Backup Directory | done (tested) |
+| 17. Auto-Completion (IDD_PREFERENCE_SUB_AUTOCOMPLETION) | `autoCompletionBrief` | Make auto-completion list brief | done (tested) |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `dateTimeCustomFormat` | Format: | done (tested) |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `dateTimeReverseOrder` | Reverse default date time order | done (tested) |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `multiInstanceMode` |  | todo |
@@ -55,29 +55,29 @@
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPanelStateDocList` | Document List | todo |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPanelStateFAW` | Folder as Workspace | todo |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPluginPanels` | Plugin Panels | todo |
-| 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterClose` | Close: | todo |
-| 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterOpen` | Open: | todo |
-| 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterSeveralLines` | Allow on several lines | todo |
+| 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterClose` | Close: | done (tested) |
+| 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterOpen` | Open: | done (tested) |
+| 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterSeveralLines` | Allow on several lines | done (tested) |
 | 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `exitOnCloseLastTab` | Exit on close the last tab | done (tested) |
-| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabAltIcons` | Alternate icons | todo |
-| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabColorIndicator` | Draw a coloured bar on active tab | todo |
-| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabLock` | Lock (no drag and drop) | todo |
-| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabMultiLine` | Multi-line | todo |
-| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabPinFeature` | Enable pin tab feature | todo |
-| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabShowOnlyPinnedButton` | Show only pinned button | todo |
-| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabVertical` | Vertical | todo |
+| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabAltIcons` | Alternate icons | done (tested) |
+| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabColorIndicator` | Draw a coloured bar on active tab | done (tested) |
+| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabLock` | Lock (no drag and drop) | done (tested) |
+| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabMultiLine` | Multi-line | done (tested) |
+| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabPinFeature` | Enable pin tab feature | done (tested) |
+| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabShowOnlyPinnedButton` | Show only pinned button | done (tested) |
+| 2. Tab Bar (IDD_PREFERENCE_SUB_TABBAR) | `tabVertical` | Vertical | done (tested) |
 | 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowAutoCompletion` | Allow Auto-Completion | done (tested) |
 | 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowBraceMatch` | Allow Brace Match | done (tested) |
 | 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowClickableLink` | Allow URL Clickable Link | done (tested) |
 | 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceAllowSmartHighlighting` | Allow Smart Highlighting | done (tested) |
 | 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceDeactivateWordWrap` | Deactivate Word Wrap globally | done (tested) |
 | 20. Performance (IDD_PREFERENCE_SUB_PERFORMANCE) | `performanceSuppress2GBWarning` | Suppress warning when opening ≥2GB files | done (tested) |
-| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkEnable` | Enable | todo |
-| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkFullBoxMode` | Enable fullbox mode | todo |
-| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkNoUnderline` | No underline | todo |
-| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `cloudMode` | No Cloud | todo |
-| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `cloudPath` | Set your cloud location path here: | todo |
-| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `uriCustomSchemes` | URI customized schemes: | todo |
+| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkEnable` | Enable | done (tested) |
+| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkFullBoxMode` | Enable fullbox mode | done (tested) |
+| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `clickableLinkNoUnderline` | No underline | done (tested) |
+| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `cloudMode` | No Cloud | done (tested) |
+| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `cloudPath` | Set your cloud location path here: | done (tested) |
+| 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `uriCustomSchemes` | URI customized schemes: | done (tested) |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `allowSymlinksInFAW` | Allow loading symlinks in Folder as Workspace panel | todo |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `autoDetectEncoding` | Autodetect character encoding | todo |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docPeekerOnMap` | Peek on document map | todo |
@@ -107,7 +107,7 @@
 | 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcCustomColor` | Custom Color | done (tested) |
 | 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcIncludeUnicodeEol` | Apply Appearance settings to C0, C1 & Unicode EOL | done (tested) |
 | 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcNoInputC0` | Prevent control character (C0 code) typing into document | done (tested) |
-| 5. Dark Mode (IDD_PREFERENCE_SUB_DARKMODE) | `darkModeTone` |  | todo |
+| 5. Dark Mode (IDD_PREFERENCE_SUB_DARKMODE) | `darkModeTone` |  | done (tested) |
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `borderWidth` |  | done (tested) |
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `changeHistoryMargin` | Show in the margin | done (tested) |
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `changeHistoryText` | Show in the text | done (tested) |

@@ -148,60 +148,90 @@ public struct NppTabBarView: View {
         }
     }
 
+    @ViewBuilder
+    private func tabItem(for doc: NppDocument) -> some View {
+        NppTabItemView(
+            doc: doc,
+            workspace: workspace,
+            isActive: currentActiveId == doc.id,
+            viewIndex: viewIndex,
+            onSelect: {
+                if viewIndex == 1 {
+                    workspace.secondaryActiveDocumentId = doc.id
+                    workspace.activeView = 1
+                } else {
+                    workspace.activeDocumentId = doc.id
+                    workspace.activeView = 0
+                }
+            },
+            onClose: {
+                _ = workspace.closeDocument(id: doc.id, force: false)
+            }
+        )
+        .id(doc.id)
+        .onDrag {
+            if workspace.tabLock {
+                return NSItemProvider()
+            }
+            return NSItemProvider(object: doc.id.uuidString as NSString)
+        }
+        .onDrop(of: ["public.utf8-plain-text", "public.text"], delegate: TabDropDelegate(item: doc, workspace: workspace, viewIndex: viewIndex))
+    }
+
     public var body: some View {
         ScrollViewReader { proxy in
             HStack(spacing: 0) {
                 // 1. Scrollable tab strip containing both tabs and trailing empty space
                 GeometryReader { geo in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 0) {
-                            HStack(spacing: 2) {
-                                ForEach(currentDocs) { doc in
-                                    NppTabItemView(
-                                        doc: doc,
-                                        workspace: workspace,
-                                        isActive: currentActiveId == doc.id,
-                                        viewIndex: viewIndex,
-                                        onSelect: {
-                                            if viewIndex == 1 {
-                                                workspace.secondaryActiveDocumentId = doc.id
-                                                workspace.activeView = 1
-                                            } else {
-                                                workspace.activeDocumentId = doc.id
-                                                workspace.activeView = 0
-                                            }
-                                        },
-                                        onClose: {
-                                            _ = workspace.closeDocument(id: doc.id, force: false)
-                                        }
-                                    )
-                                    .id(doc.id)
-                                    .onDrag {
-                                        NSItemProvider(object: doc.id.uuidString as NSString)
+                    Group {
+                        if workspace.tabVertical {
+                            ScrollView(.vertical, showsIndicators: false) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    ForEach(currentDocs) { doc in
+                                        tabItem(for: doc)
                                     }
-                                    .onDrop(of: ["public.utf8-plain-text", "public.text"], delegate: TabDropDelegate(item: doc, workspace: workspace, viewIndex: viewIndex))
                                 }
+                                .padding(4)
                             }
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, workspace.tabReduce ? 1 : 3)
-
-                            // 2. Empty space next to tabs (Double-click creates new tab per Notepad++ spec)
-                            Color.clear
-                                .contentShape(Rectangle())
-                                .frame(minWidth: 40, maxWidth: .infinity, maxHeight: .infinity)
-                                .onTapGesture(count: 2) {
-                                    if workspace.doubleClickSpaceToNewTab {
-                                        if viewIndex == 1 {
-                                            workspace.newDocumentInSecondaryView()
-                                            workspace.activeView = 1
-                                        } else {
-                                            workspace.activeView = 0
-                                            workspace.newDocument()
-                                        }
+                        } else if workspace.tabMultiLine {
+                            ScrollView(.vertical, showsIndicators: false) {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 2)], spacing: 2) {
+                                    ForEach(currentDocs) { doc in
+                                        tabItem(for: doc)
                                     }
                                 }
+                                .padding(4)
+                            }
+                        } else {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 0) {
+                                    HStack(spacing: 2) {
+                                        ForEach(currentDocs) { doc in
+                                            tabItem(for: doc)
+                                        }
+                                    }
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, workspace.tabReduce ? 1 : 3)
+
+                                    // 2. Empty space next to tabs (Double-click creates new tab per Notepad++ spec)
+                                    Color.clear
+                                        .contentShape(Rectangle())
+                                        .frame(minWidth: 40, maxWidth: .infinity, maxHeight: .infinity)
+                                        .onTapGesture(count: 2) {
+                                            if workspace.doubleClickSpaceToNewTab {
+                                                if viewIndex == 1 {
+                                                    workspace.newDocumentInSecondaryView()
+                                                    workspace.activeView = 1
+                                                } else {
+                                                    workspace.activeView = 0
+                                                    workspace.newDocument()
+                                                }
+                                            }
+                                        }
+                                }
+                                .frame(minWidth: geo.size.width, minHeight: workspace.tabReduce ? 24 : 30)
+                            }
                         }
-                        .frame(minWidth: geo.size.width, minHeight: workspace.tabReduce ? 24 : 30)
                     }
                     .onChange(of: currentActiveId) { newId in
                         if let id = newId {
@@ -286,6 +316,7 @@ struct TabDropDelegate: DropDelegate {
     let viewIndex: Int
 
     func performDrop(info: DropInfo) -> Bool {
+        if workspace.tabLock { return false }
         guard let itemProvider = info.itemProviders(for: ["public.utf8-plain-text", "public.text"]).first else { return false }
         itemProvider.loadItem(forTypeIdentifier: "public.utf8-plain-text", options: nil) { (data, error) in
             var uuidStr: String?
@@ -338,13 +369,13 @@ public struct NppTabItemView: View {
         HStack(spacing: 4) {
             // Clickable tab label (Icon + Title)
             HStack(spacing: 6) {
-                if doc.isPinned {
+                if doc.isPinned && workspace.tabPinFeature {
                     Image(systemName: "pin.fill")
                         .font(.system(size: workspace.tabReduce ? 8 : 9))
                         .foregroundColor(.orange)
                 }
 
-                // Authentic Floppy Disk / Monitoring / Lock Icon
+                // Authentic Floppy Disk / Monitoring / Lock / Alt Icon
                 if doc.isMonitoring {
                     Image(systemName: "eye.fill")
                         .font(.system(size: workspace.tabReduce ? 9 : 10))
@@ -353,6 +384,10 @@ public struct NppTabItemView: View {
                     Image(systemName: "lock.fill")
                         .font(.system(size: workspace.tabReduce ? 9 : 10))
                         .foregroundColor(.secondary)
+                } else if workspace.tabAltIcons {
+                    Image(systemName: doc.isDirty ? "pencil.circle.fill" : "doc.text.fill")
+                        .font(.system(size: workspace.tabReduce ? 9 : 10.5))
+                        .foregroundColor(doc.isDirty ? .red : .blue)
                 } else {
                     FloppyIconView(isDirty: doc.isDirty, size: workspace.tabReduce ? 11 : 12.5)
                 }
@@ -364,7 +399,7 @@ public struct NppTabItemView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
-                if workspace.doubleClickTabToClose && !doc.isPinned {
+                if workspace.doubleClickTabToClose && (!doc.isPinned || !workspace.tabPinFeature) {
                     onClose()
                 }
             }
@@ -372,8 +407,9 @@ public struct NppTabItemView: View {
                 onSelect()
             }
 
-            // Close button [x] (respects showTabCloseButton, hidden if pinned)
-            if workspace.showTabCloseButton && !doc.isPinned {
+            // Close button [x] (respects showTabCloseButton, hidden if pinned, respects tabShowOnlyPinnedButton)
+            let showClose = workspace.showTabCloseButton && (!workspace.tabShowOnlyPinnedButton || doc.isPinned)
+            if showClose && (!doc.isPinned || !workspace.tabPinFeature) {
                 Button(action: {
                     onClose()
                 }) {
@@ -406,7 +442,7 @@ public struct NppTabItemView: View {
                         .fill(Self.tabAccentColor(for: doc.tabColorId))
                         .frame(height: 3.0)
                         .cornerRadius(1)
-                } else if isActive {
+                } else if isActive && workspace.tabColorIndicator {
                     Rectangle()
                         .fill(Color(red: 0.98, green: 0.48, blue: 0.12)) // Authentic Notepad++ Orange highlight
                         .frame(height: 2.5)

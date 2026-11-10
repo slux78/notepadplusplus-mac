@@ -304,7 +304,8 @@ public struct NppEditorView: NSViewRepresentable {
                 mode: manualMode ?? ws.autoCompletionType,
                 minimumLength: ws.autoCompletionThreshold,
                 ignoreNumbers: ws.autoCompletionIgnoreNumbers,
-                manual: manualMode != nil
+                manual: manualMode != nil,
+                brief: ws.autoCompletionBrief
             )
         }
 

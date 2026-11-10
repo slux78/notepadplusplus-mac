@@ -485,6 +485,33 @@ public final class NppWorkspace: ObservableObject {
         return false
     }
 
+    /// Expands custom delimiter selection (Notepad++ Delimiter preference parity)
+    public func expandCustomDelimiterRange(at caretLocation: Int, in nsString: NSString) -> NSRange? {
+        guard !delimiterOpen.isEmpty && !delimiterClose.isEmpty else { return nil }
+        let len = nsString.length
+        guard len > 0 else { return nil }
+        let pos = max(0, min(caretLocation, len))
+
+        let candidateBefore = NSRange(location: 0, length: min(pos, len))
+        let foundOpen = nsString.range(of: delimiterOpen, options: [.backwards], range: candidateBefore)
+        guard foundOpen.location != NSNotFound else { return nil }
+
+        let closeSearchStart = NSMaxRange(foundOpen)
+        guard closeSearchStart <= len else { return nil }
+        let candidateAfter = NSRange(location: closeSearchStart, length: len - closeSearchStart)
+        let foundClose = nsString.range(of: delimiterClose, options: [], range: candidateAfter)
+        guard foundClose.location != NSNotFound else { return nil }
+
+        let resultRange = NSRange(location: foundOpen.location, length: NSMaxRange(foundClose) - foundOpen.location)
+        if !delimiterSeveralLines {
+            let sub = nsString.substring(with: resultRange)
+            if sub.contains("\n") || sub.contains("\r") {
+                return nil
+            }
+        }
+        return resultRange
+    }
+
     /// Expands word selection around `caretLocation` in `nsString` matching Scintilla's `expandWordSelection()`
     public func expandWordRange(at caretLocation: Int, in nsString: NSString) -> NSRange {
         let len = nsString.length
@@ -799,7 +826,18 @@ public final class NppWorkspace: ObservableObject {
         let selectionOverride = styleOverrides[styleOverrideKey(themeId: themeMode, language: "Global Styles", style: "Selected text colour")]
 
         let effectiveFg = (globalOverrideFg ? globalOverride?.fgColor : nil) ?? defaultOverride?.fgColor ?? base.foregroundColor
-        let effectiveBg = (globalOverrideBg ? globalOverride?.bgColor : nil) ?? defaultOverride?.bgColor ?? base.backgroundColor
+        var effectiveBg = (globalOverrideBg ? globalOverride?.bgColor : nil) ?? defaultOverride?.bgColor ?? base.backgroundColor
+        if base.isDark {
+            switch darkModeTone {
+            case "Red": effectiveBg = NSColor(calibratedRed: 0.17, green: 0.11, blue: 0.11, alpha: 1.0)
+            case "Green": effectiveBg = NSColor(calibratedRed: 0.11, green: 0.17, blue: 0.11, alpha: 1.0)
+            case "Blue": effectiveBg = NSColor(calibratedRed: 0.11, green: 0.13, blue: 0.19, alpha: 1.0)
+            case "Purple": effectiveBg = NSColor(calibratedRed: 0.16, green: 0.11, blue: 0.19, alpha: 1.0)
+            case "Cyan": effectiveBg = NSColor(calibratedRed: 0.11, green: 0.17, blue: 0.18, alpha: 1.0)
+            case "Olive": effectiveBg = NSColor(calibratedRed: 0.17, green: 0.17, blue: 0.11, alpha: 1.0)
+            default: break // "Black" uses base theme background
+            }
+        }
         let effectiveGutterBg = (globalOverrideBg ? globalOverride?.bgColor : nil) ?? gutterOverride?.bgColor ?? base.gutterBackground
         let effectiveGutterFg = (globalOverrideFg ? globalOverride?.fgColor : nil) ?? gutterOverride?.fgColor ?? base.gutterForeground
         let effectiveActiveLine = currentLineOverride?.bgColor ?? base.activeLineColor
@@ -1126,6 +1164,13 @@ public final class NppWorkspace: ObservableObject {
     @Published public var clickableLinkNoUnderline: Bool = false
     @Published public var clickableLinkFullBoxMode: Bool = false
     @Published public var uriCustomSchemes: String = ""
+
+    public func customUriSchemesList() -> [String] {
+        return uriCustomSchemes
+            .components(separatedBy: CharacterSet(charactersIn: ",; \t\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+    }
 
     // 22: Search Engine
     @Published public var searchEngineChoice: Int = 1 // 0: DuckDuckGo, 1: Google, 2: Yahoo, 3: Stack Overflow, 4: Custom
@@ -3399,9 +3444,36 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
+    public func performBackupOnSave(for fileUrl: URL) {
+        guard backupOnSaveMode > 0 else { return }
+        guard FileManager.default.fileExists(atPath: fileUrl.path) else { return }
+
+        let backupDir: URL
+        if customBackupDirEnabled && !customBackupDir.isEmpty {
+            backupDir = URL(fileURLWithPath: customBackupDir)
+        } else {
+            backupDir = backupDirectoryURL
+        }
+        try? FileManager.default.createDirectory(at: backupDir, withIntermediateDirectories: true)
+
+        let backupName: String
+        if backupOnSaveMode == 1 {
+            backupName = fileUrl.lastPathComponent + ".bak"
+        } else {
+            let df = DateFormatter()
+            df.dateFormat = "yyyy-MM-dd_HHmmss"
+            let timestamp = df.string(from: Date())
+            backupName = fileUrl.lastPathComponent + "." + timestamp + ".bak"
+        }
+        let backupDest = backupDir.appendingPathComponent(backupName)
+        try? FileManager.default.removeItem(at: backupDest)
+        try? FileManager.default.copyItem(at: fileUrl, to: backupDest)
+    }
+
     public func saveActive() {
         guard let doc = activeDocument else { return }
-        if doc.filePath != nil {
+        if let url = doc.filePath {
+            performBackupOnSave(for: url)
             _ = doc.save()
         } else {
             promptSaveAs(for: doc)
@@ -3410,7 +3482,8 @@ public final class NppWorkspace: ObservableObject {
 
     public func saveAll() {
         for doc in documents where doc.isDirty {
-            if doc.filePath != nil {
+            if let url = doc.filePath {
+                performBackupOnSave(for: url)
                 _ = doc.save()
             } else {
                 promptSaveAs(for: doc)
@@ -3424,6 +3497,7 @@ public final class NppWorkspace: ObservableObject {
         panel.nameFieldStringValue = doc.filePath?.lastPathComponent ?? doc.title
         panel.begin { response in
             if response == .OK, let url = panel.url {
+                self.performBackupOnSave(for: url)
                 if doc.save(to: url), let language = self.userDefinedLanguage(for: url) {
                     doc.language = language.name
                 }

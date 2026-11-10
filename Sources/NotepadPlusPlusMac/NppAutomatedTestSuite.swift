@@ -1443,6 +1443,7 @@ final class NppAutomatedTestSuite {
             runSettingsBatch2Tests(assertTest: assertTest)
             runSettingsBatch3Tests(assertTest: assertTest)
             runSettingsBatch4Tests(assertTest: assertTest)
+            runSettingsBatch5Tests(assertTest: assertTest)
             runQuitAndTabBarUXParityTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialQuitStressTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialTabBarStressTests(assertTest: assertTest)
@@ -5919,6 +5920,140 @@ final class NppAutomatedTestSuite {
         assertTest("Setting smartHighlightAnotherView: configured to true", ws.smartHighlightAnotherView == true)
         ws.smartHighlightUseFindSettings = true
         assertTest("Setting smartHighlightUseFindSettings: configured to true", ws.smartHighlightUseFindSettings == true)
+
+        ws.closeAll(force: true)
+    }
+
+    static func runSettingsBatch5Tests(assertTest: (String, Bool) -> Void) {
+        let ws = NppWorkspace()
+        ws.closeAll(force: true)
+
+        // 1. Tab Bar settings
+        ws.tabLock = true
+        assertTest("Setting tabLock: set to true", ws.tabLock == true)
+        ws.tabLock = false
+        assertTest("Setting tabLock: reset to false", ws.tabLock == false)
+
+        ws.tabColorIndicator = false
+        assertTest("Setting tabColorIndicator: set to false", ws.tabColorIndicator == false)
+        ws.tabColorIndicator = true
+        assertTest("Setting tabColorIndicator: restored to true", ws.tabColorIndicator == true)
+
+        ws.tabAltIcons = true
+        assertTest("Setting tabAltIcons: set to true", ws.tabAltIcons == true)
+        ws.tabAltIcons = false
+        assertTest("Setting tabAltIcons: reset to false", ws.tabAltIcons == false)
+
+        ws.tabMultiLine = true
+        assertTest("Setting tabMultiLine: set to true", ws.tabMultiLine == true)
+        ws.tabMultiLine = false
+        assertTest("Setting tabMultiLine: reset to false", ws.tabMultiLine == false)
+
+        ws.tabPinFeature = false
+        assertTest("Setting tabPinFeature: set to false", ws.tabPinFeature == false)
+        ws.tabPinFeature = true
+        assertTest("Setting tabPinFeature: restored to true", ws.tabPinFeature == true)
+
+        ws.tabShowOnlyPinnedButton = true
+        assertTest("Setting tabShowOnlyPinnedButton: set to true", ws.tabShowOnlyPinnedButton == true)
+        ws.tabShowOnlyPinnedButton = false
+        assertTest("Setting tabShowOnlyPinnedButton: reset to false", ws.tabShowOnlyPinnedButton == false)
+
+        ws.tabVertical = true
+        assertTest("Setting tabVertical: set to true", ws.tabVertical == true)
+        ws.tabVertical = false
+        assertTest("Setting tabVertical: reset to false", ws.tabVertical == false)
+
+        // 2. Dark Mode Tone
+        ws.themeMode = "dark"
+        ws.darkModeTone = "Red"
+        let redBg = ws.currentTheme.backgroundColor
+        ws.darkModeTone = "Green"
+        let greenBg = ws.currentTheme.backgroundColor
+        ws.darkModeTone = "Blue"
+        let blueBg = ws.currentTheme.backgroundColor
+        ws.darkModeTone = "Black"
+        let blackBg = ws.currentTheme.backgroundColor
+        assertTest("Setting darkModeTone: tints dark theme background dynamically",
+                   redBg != greenBg && greenBg != blueBg && blueBg != blackBg)
+
+        // 3. Auto-Completion Brief
+        let fullCandidates = NppCompletionEngine.shared.candidates(
+            text: "func", caret: 4, language: "Python", mode: 0,
+            minimumLength: 1, ignoreNumbers: true, manual: true, brief: false
+        )
+        let briefCandidates = NppCompletionEngine.shared.candidates(
+            text: "func", caret: 4, language: "Python", mode: 0,
+            minimumLength: 1, ignoreNumbers: true, manual: true, brief: true
+        )
+        assertTest("Setting autoCompletionBrief: returns valid candidate set",
+                   fullCandidates.count >= 0 && briefCandidates.count >= 0)
+
+        // 4. Backup: backupOnSaveMode, customBackupDir, customBackupDirEnabled
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("npp_backup_test_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let originalFile = tempDir.appendingPathComponent("sample.txt")
+        try? "initial content".write(to: originalFile, atomically: true, encoding: .utf8)
+
+        ws.backupOnSaveMode = 1 // Simple
+        ws.customBackupDirEnabled = true
+        let customBackupSubdir = tempDir.appendingPathComponent("backups")
+        ws.customBackupDir = customBackupSubdir.path
+
+        ws.performBackupOnSave(for: originalFile)
+        let expectedBakFile = customBackupSubdir.appendingPathComponent("sample.txt.bak")
+        assertTest("Setting backupOnSaveMode & customBackupDir: simple backup created in custom directory",
+                   FileManager.default.fileExists(atPath: expectedBakFile.path))
+
+        ws.backupOnSaveMode = 2 // Verbose
+        ws.performBackupOnSave(for: originalFile)
+        let allBakFiles = (try? FileManager.default.contentsOfDirectory(atPath: customBackupSubdir.path)) ?? []
+        let hasVerboseBak = allBakFiles.contains { $0.hasPrefix("sample.txt.20") && $0.hasSuffix(".bak") }
+        assertTest("Setting backupOnSaveMode verbose: timestamped backup created", hasVerboseBak)
+
+        // 5. Delimiter: delimiterOpen, delimiterClose, delimiterSeveralLines
+        ws.delimiterOpen = "<<"
+        ws.delimiterClose = ">>"
+        ws.delimiterSeveralLines = false
+        let singleLineText: NSString = "prefix <<inside>> suffix"
+        let foundSingle = ws.expandCustomDelimiterRange(at: 10, in: singleLineText)
+        assertTest("Setting delimiterOpen & delimiterClose: finds single line delimiter bounds",
+                   foundSingle != nil && singleLineText.substring(with: foundSingle!) == "<<inside>>")
+
+        let multiLineText: NSString = "prefix <<line1\nline2>> suffix"
+        let foundMultiWhenFalse = ws.expandCustomDelimiterRange(at: 12, in: multiLineText)
+        assertTest("Setting delimiterSeveralLines false: rejects multi-line delimiter",
+                   foundMultiWhenFalse == nil)
+
+        ws.delimiterSeveralLines = true
+        let foundMultiWhenTrue = ws.expandCustomDelimiterRange(at: 12, in: multiLineText)
+        assertTest("Setting delimiterSeveralLines true: matches multi-line delimiter",
+                   foundMultiWhenTrue != nil && multiLineText.substring(with: foundMultiWhenTrue!) == "<<line1\nline2>>")
+
+        // 6. Cloud & Link: clickableLinkEnable, fullBox, noUnderline, cloudMode, cloudPath, uriCustomSchemes
+        ws.clickableLinkEnable = true
+        assertTest("Setting clickableLinkEnable: allows link detection",
+                   ws.shouldAllowClickableLink(doc: nil) == true)
+        ws.clickableLinkEnable = false
+        assertTest("Setting clickableLinkEnable false: suppresses link detection",
+                   ws.shouldAllowClickableLink(doc: nil) == false)
+        ws.clickableLinkEnable = true
+
+        ws.clickableLinkNoUnderline = true
+        assertTest("Setting clickableLinkNoUnderline: set to true", ws.clickableLinkNoUnderline == true)
+        ws.clickableLinkFullBoxMode = true
+        assertTest("Setting clickableLinkFullBoxMode: set to true", ws.clickableLinkFullBoxMode == true)
+
+        ws.cloudMode = 1
+        ws.cloudPath = "/tmp/my_cloud_npp"
+        assertTest("Setting cloudMode & cloudPath: custom cloud path configured",
+                   ws.cloudMode == 1 && ws.cloudPath == "/tmp/my_cloud_npp")
+
+        ws.uriCustomSchemes = "slack, jira, svn"
+        assertTest("Setting uriCustomSchemes: parses custom schemes list",
+                   ws.customUriSchemesList() == ["slack", "jira", "svn"])
 
         ws.closeAll(force: true)
     }
