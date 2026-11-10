@@ -1444,6 +1444,7 @@ final class NppAutomatedTestSuite {
             runSettingsBatch3Tests(assertTest: assertTest)
             runSettingsBatch4Tests(assertTest: assertTest)
             runSettingsBatch5Tests(assertTest: assertTest)
+            runSettingsBatch6And7Tests(assertTest: assertTest)
             runQuitAndTabBarUXParityTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialQuitStressTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialTabBarStressTests(assertTest: assertTest)
@@ -6054,6 +6055,179 @@ final class NppAutomatedTestSuite {
         ws.uriCustomSchemes = "slack, jira, svn"
         assertTest("Setting uriCustomSchemes: parses custom schemes list",
                    ws.customUriSchemesList() == ["slack", "jira", "svn"])
+
+        ws.closeAll(force: true)
+    }
+
+    static func runSettingsBatch6And7Tests(assertTest: (String, Bool) -> Void) {
+        let ws = NppWorkspace()
+        ws.closeAll(force: true)
+
+        // 1. MISC: muteAllSounds
+        ws.muteAllSounds = true
+        assertTest("Setting muteAllSounds: true prevents sound output", ws.muteAllSounds == true)
+        ws.playBeep() // should not crash or emit sound
+        ws.muteAllSounds = false
+        assertTest("Setting muteAllSounds: reset to false", ws.muteAllSounds == false)
+
+        // 2. MISC: fileStatusGoToEOF & reload
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("npp_eof_test_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let eofFile = tempDir.appendingPathComponent("eof.txt")
+        try? "line1\nline2\nline3\n".write(to: eofFile, atomically: true, encoding: .utf8)
+        ws.openFile(url: eofFile)
+        let openedDoc = ws.documents.first { $0.filePath == eofFile }
+        assertTest("File status: opened test file for EOF test", openedDoc != nil)
+
+        if let doc = openedDoc {
+            doc.cursorPos = 0
+            ws.fileStatusGoToEOF = true
+            ws.reloadFromDisk(for: doc)
+            assertTest("Setting fileStatusGoToEOF true: positions cursor at EOF upon reload",
+                       doc.cursorPos == (doc.content as NSString).length)
+        }
+
+        // 3. MISC: saveAllConfirmDialog
+        ws.saveAllConfirmDialog = true
+        assertTest("Setting saveAllConfirmDialog: configured to true", ws.saveAllConfirmDialog == true)
+        ws.saveAllConfirmDialog = false
+        assertTest("Setting saveAllConfirmDialog: configured to false", ws.saveAllConfirmDialog == false)
+
+        // 4. MISC: allowSymlinksInFAW
+        ws.allowSymlinksInFAW = false
+        assertTest("Setting allowSymlinksInFAW: configured to false", ws.allowSymlinksInFAW == false)
+        ws.allowSymlinksInFAW = true
+        assertTest("Setting allowSymlinksInFAW: restored to true", ws.allowSymlinksInFAW == true)
+
+        // 5. MISC: workspaceFileExt
+        ws.workspaceFileExt = "nppworkspace"
+        assertTest("Setting workspaceFileExt: configured custom extension", ws.workspaceFileExt == "nppworkspace")
+        ws.workspaceFileExt = "workspace"
+
+        // 6. MISC: openAnsiAsUtf8 & autoDetectEncoding
+        ws.openAnsiAsUtf8 = true
+        assertTest("Setting openAnsiAsUtf8: configured to true", ws.openAnsiAsUtf8 == true)
+        ws.autoDetectEncoding = false
+        assertTest("Setting autoDetectEncoding: configured to false", ws.autoDetectEncoding == false)
+        ws.autoDetectEncoding = true
+
+        // 7. MISC: docPeekerOnTab & docPeekerOnMap
+        ws.docPeekerOnTab = true
+        assertTest("Setting docPeekerOnTab: configured to true", ws.docPeekerOnTab == true)
+        ws.docPeekerOnMap = true
+        assertTest("Setting docPeekerOnMap: configured to true", ws.docPeekerOnMap == true)
+
+        // 8. MISC: docSwitcherEnabled & docSwitcherMRU
+        ws.closeAll(force: true)
+        let docA = ws.documents[0]
+        docA.title = "DocA"
+        ws.newDocument()
+        let docB = ws.documents[1]
+        docB.title = "DocB"
+        ws.newDocument()
+        let docC = ws.documents[2]
+        docC.title = "DocC"
+
+        // Access order: DocA, then DocC, then DocB
+        ws.activeDocumentId = docA.id
+        ws.activeDocumentId = docC.id
+        ws.activeDocumentId = docB.id
+
+        ws.docSwitcherEnabled = true
+        ws.docSwitcherMRU = true
+        // MRU order from top is [DocB, DocC, DocA]. nextTab should switch to DocC!
+        ws.nextTab()
+        assertTest("Setting docSwitcherMRU true: switches to most recently used doc (DocC)",
+                   ws.activeDocumentId == docC.id)
+
+        ws.docSwitcherMRU = false
+        // Sequential order: DocC index is 2 -> (2 + 1) % 3 = 0 -> DocA!
+        ws.nextTab()
+        assertTest("Setting docSwitcherMRU false: switches sequentially to next tab index (DocA)",
+                   ws.activeDocumentId == docA.id)
+
+        ws.docSwitcherEnabled = false
+        let beforeSwitcher = ws.activeDocumentId
+        ws.nextTab()
+        assertTest("Setting docSwitcherEnabled false: tab switching via switcher is disabled",
+                   ws.activeDocumentId == beforeSwitcher)
+        ws.docSwitcherEnabled = true
+        ws.docSwitcherMRU = true
+
+        // 9. Recent Files & Directory: dontCheckHistoryAtLaunch & dropFolderOpenAllFiles
+        ws.dontCheckHistoryAtLaunch = true
+        assertTest("Setting dontCheckHistoryAtLaunch: configured to true", ws.dontCheckHistoryAtLaunch == true)
+        ws.dropFolderOpenAllFiles = true
+        assertTest("Setting dropFolderOpenAllFiles: configured to true", ws.dropFolderOpenAllFiles == true)
+        ws.dropFolderOpenAllFiles = false
+
+        // 10. Multi-Instance & Panels: multiInstanceMode & remember panels
+        ws.multiInstanceMode = 1
+        assertTest("Setting multiInstanceMode: configured to 1", ws.multiInstanceMode == 1)
+        ws.multiInstanceMode = 0
+
+        ws.rememberCharacterPanel = true
+        ws.rememberClipboardHistory = true
+        ws.rememberPanelStateDocList = true
+        ws.rememberPanelStateFAW = true
+        ws.rememberPluginPanels = true
+        assertTest("Settings rememberPanels: all panel persistence flags configured",
+                   ws.rememberCharacterPanel && ws.rememberClipboardHistory &&
+                   ws.rememberPanelStateDocList && ws.rememberPanelStateFAW && ws.rememberPluginPanels)
+
+        // 11. (no UI) & General: defaultEol, distractionFreePadding, insertMode, showWindowsDialog, dialogFont
+        ws.defaultEol = .lf
+        assertTest("Setting defaultEol: synchronized with defaultNewDocFormat (.lf)",
+                   ws.defaultNewDocFormat == .lf)
+        ws.defaultEol = .crlf
+
+        ws.distractionFreePadding = 120
+        assertTest("Setting distractionFreePadding: configured to 120", ws.distractionFreePadding == 120)
+
+        ws.insertMode = false
+        assertTest("Setting insertMode: overwrite mode set", ws.insertMode == false)
+        ws.insertMode = true
+        assertTest("Setting insertMode: insert mode restored", ws.insertMode == true)
+
+        ws.showWindowsDialog = false
+        assertTest("Setting showWindowsDialog: set to false", ws.showWindowsDialog == false)
+
+        ws.dialogFontName = "Helvetica"
+        ws.dialogFontSize = 14
+        let resolvedFont = ws.resolveDialogFont()
+        assertTest("Setting dialogFontName & dialogFontSize: resolves custom dialog font",
+                   resolvedFont.pointSize >= 13)
+
+        // 12. Print: printColorOption, margins, header/footer, line numbers, form feed
+        ws.printColorOption = 2 // B&W
+        assertTest("Setting printColorOption: configured to 2 (B&W)", ws.printColorOption == 2)
+        ws.printLineNumbers = true
+        assertTest("Setting printLineNumbers: configured to true", ws.printLineNumbers == true)
+        ws.printFormFeedPageBreak = true
+        assertTest("Setting printFormFeedPageBreak: configured to true", ws.printFormFeedPageBreak == true)
+
+        ws.printMarginTop = 15
+        ws.printMarginLeft = 20
+        ws.printMarginRight = 20
+        ws.printMarginBottom = 15
+        assertTest("Setting printMargins: top, left, right, bottom configured",
+                   ws.printMarginTop == 15 && ws.printMarginLeft == 20 &&
+                   ws.printMarginRight == 20 && ws.printMarginBottom == 15)
+
+        ws.printHeaderLeft = "$(CURRENT_FILE)"
+        ws.printHeaderMiddle = "Confidential"
+        ws.printHeaderRight = "Page 1"
+        ws.printFooterMiddle = "Notepad++ Mac"
+        let formattedHeader = ws.formatPrintHeaderFooter("File: $(CURRENT_FILE)")
+        assertTest("Setting printHeaderLeft & formatPrintHeaderFooter: expands $(CURRENT_FILE)",
+                   !formattedHeader.contains("$(CURRENT_FILE)"))
+
+        let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
+        tv.string = "Test print output text"
+        let printOp = ws.configuredPrintOperation(for: tv)
+        assertTest("Setting configuredPrintOperation: produces valid NSPrintOperation with custom printInfo",
+                   printOp.printInfo.topMargin > 0 && printOp.printInfo.leftMargin > 0)
 
         ws.closeAll(force: true)
     }

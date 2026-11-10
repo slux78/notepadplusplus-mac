@@ -100,10 +100,20 @@ public final class NppWorkspace: ObservableObject {
             validateActiveDocument()
         }
     }
+    @Published public var mruDocumentIds: [UUID] = []
+
+    public func recordDocumentAccess(id: UUID) {
+        mruDocumentIds.removeAll { $0 == id }
+        mruDocumentIds.insert(id, at: 0)
+    }
+
     @Published public var activeDocumentId: UUID? {
         didSet {
             if oldValue != activeDocumentId {
                 beginSelectAnchor = nil
+                if let id = activeDocumentId {
+                    recordDocumentAccess(id: id)
+                }
             }
             validateActiveDocument()
         }
@@ -451,7 +461,17 @@ public final class NppWorkspace: ObservableObject {
     @Published public var showStyleConfigurator: Bool = false
     @Published public var showShortcutMapper: Bool = false
     @Published public var showColumnEditor: Bool = false
-    @Published public var showWindowsDialog: Bool = false
+    @Published public var showWindowsDialog: Bool = false {
+        didSet {
+            if showWindowsDialog {
+                if !isTest {
+                    NppWindowsDialogWindowController.shared.show(workspace: self)
+                }
+            } else {
+                NppWindowsDialogWindowController.shared.close()
+            }
+        }
+    }
 
     // Typing Mode
     @Published public var insertMode: Bool = true // true = INS, false = OVR
@@ -931,7 +951,13 @@ public final class NppWorkspace: ObservableObject {
     @Published public var displayBookmarkMargin: Bool = true
 
     // 7: New Document
-    @Published public var defaultNewDocFormat: NppEol = .crlf
+    @Published public var defaultNewDocFormat: NppEol = .crlf {
+        didSet {
+            if defaultEol != defaultNewDocFormat {
+                defaultEol = defaultNewDocFormat
+            }
+        }
+    }
     @Published public var defaultNewDocEncoding: String = "UTF-8"
     @Published public var openAnsiAsUtf8: Bool = false
     @Published public var defaultNewDocLanguage: String = "Plain Text"
@@ -1182,7 +1208,7 @@ public final class NppWorkspace: ObservableObject {
     @Published public var fileStatusAutoReloadSilently: Bool = false
     @Published public var fileStatusGoToEOF: Bool = false
     @Published public var docSwitcherEnabled: Bool = true
-    @Published public var docSwitcherMRU: Bool = true
+    @Published public var docSwitcherMRU: Bool = false
     @Published public var docPeekerOnTab: Bool = false
     @Published public var docPeekerOnMap: Bool = false
     @Published public var muteAllSounds: Bool = false
@@ -1300,7 +1326,13 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // New Document Defaults
-    @Published public var defaultEol: NppEol = .crlf
+    @Published public var defaultEol: NppEol = .crlf {
+        didSet {
+            if defaultNewDocFormat != defaultEol {
+                defaultNewDocFormat = defaultEol
+            }
+        }
+    }
     @Published public var defaultEncoding: String = "UTF-8"
     @Published public var defaultLanguage: String = "Plain Text"
 
@@ -1466,6 +1498,10 @@ public final class NppWorkspace: ObservableObject {
             ud.removeObject(forKey: Self.prefsShowProjectPanel2Key)
             ud.removeObject(forKey: Self.prefsShowProjectPanel3Key)
         }
+        if rememberCharacterPanel { ud.set(showCharacterPanel, forKey: "npp.prefs.showCharacterPanel") }
+        if rememberClipboardHistory { ud.set(showClipboardHistory, forKey: "npp.prefs.showClipboardHistory") }
+        if rememberPanelStateDocList { ud.set(showDocumentList, forKey: "npp.prefs.showDocumentList") }
+        if rememberPanelStateFAW { ud.set(showFolderAsWorkspace, forKey: "npp.prefs.showFolderAsWorkspace") }
     }
 
     public func loadPreferences() {
@@ -1514,6 +1550,18 @@ public final class NppWorkspace: ObservableObject {
             if ud.object(forKey: Self.prefsShowProjectPanel3Key) != nil {
                 showProjectPanel3 = ud.bool(forKey: Self.prefsShowProjectPanel3Key)
             }
+        }
+        if rememberCharacterPanel && ud.object(forKey: "npp.prefs.showCharacterPanel") != nil {
+            showCharacterPanel = ud.bool(forKey: "npp.prefs.showCharacterPanel")
+        }
+        if rememberClipboardHistory && ud.object(forKey: "npp.prefs.showClipboardHistory") != nil {
+            showClipboardHistory = ud.bool(forKey: "npp.prefs.showClipboardHistory")
+        }
+        if rememberPanelStateDocList && ud.object(forKey: "npp.prefs.showDocumentList") != nil {
+            showDocumentList = ud.bool(forKey: "npp.prefs.showDocumentList")
+        }
+        if rememberPanelStateFAW && ud.object(forKey: "npp.prefs.showFolderAsWorkspace") != nil {
+            showFolderAsWorkspace = ud.bool(forKey: "npp.prefs.showFolderAsWorkspace")
         }
     }
 
@@ -1729,7 +1777,7 @@ public final class NppWorkspace: ObservableObject {
         }
 
         do {
-            let doc = try NppDocument.fromFile(url: url)
+            let doc = try NppDocument.fromFile(url: url, openAnsiAsUtf8: openAnsiAsUtf8, autoDetectEncoding: autoDetectEncoding)
             if let udl = userDefinedLanguage(for: url) { doc.language = udl.name }
             // If only single untitled document is open and empty, replace it
             if documents.count == 1 && documents[0].filePath == nil && documents[0].content.isEmpty && !documents[0].isDirty {
@@ -1874,6 +1922,7 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public var isTestRunning: Bool = false
+    public var isTest: Bool { isTestRunning || CommandLine.arguments.contains("--run-tests") }
     public var confirmSaveHandler: ((NppDocument) -> SavePromptResult)? = nil
     public var promptSaveHandler: ((NppDocument) -> Bool)? = nil
     public static var defaultInteractionProvider: NppUserInteractionProvider = NppDefaultInteractionProvider()
@@ -1945,13 +1994,18 @@ public final class NppWorkspace: ObservableObject {
     }
 
 
+    public func playBeep() {
+        guard !muteAllSounds else { return }
+        NSSound.beep()
+    }
+
     @discardableResult
     public func closeDocument(id: UUID, force: Bool = false) -> Bool {
         guard let index = documents.firstIndex(where: { $0.id == id }) else { return true }
         let doc = documents[index]
         // Authentic Notepad++ (Notepad_plus.cpp L5165): Pinned tab cannot be closed
         if doc.isPinned {
-            NSSound.beep()
+            playBeep()
             return false
         }
 
@@ -2210,7 +2264,7 @@ public final class NppWorkspace: ObservableObject {
     public func reloadFromDisk(for doc: NppDocument) {
         guard let url = doc.filePath else { return }
         do {
-            let reloaded = try NppDocument.fromFile(url: url)
+            let reloaded = try NppDocument.fromFile(url: url, openAnsiAsUtf8: openAnsiAsUtf8, autoDetectEncoding: autoDetectEncoding)
             let wasPlaceholder = doc.isSessionPlaceholder
             doc.content = reloaded.content
             doc.encoding = reloaded.encoding
@@ -2223,6 +2277,10 @@ public final class NppWorkspace: ObservableObject {
             if wasPlaceholder { doc.isReadOnly = false }
             doc.clearBookmarks()
             doc.styledTokenRanges.removeAll()
+            if fileStatusGoToEOF {
+                doc.cursorPos = (doc.content as NSString).length
+                doc.selectionLength = 0
+            }
             objectWillChange.send()
         } catch {
             print("Failed to reload file: \(error)")
@@ -3481,6 +3539,19 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func saveAll() {
+        if saveAllConfirmDialog && !isTest {
+            let dirtyDocs = documents.filter { $0.isDirty }
+            if !dirtyDocs.isEmpty {
+                let alert = NSAlert()
+                alert.messageText = tr("Save All")
+                alert.informativeText = tr("Are you sure you want to save all modified documents?")
+                alert.addButton(withTitle: tr("Yes"))
+                alert.addButton(withTitle: tr("Cancel"))
+                if alert.runModal() != .alertFirstButtonReturn {
+                    return
+                }
+            }
+        }
         for doc in documents where doc.isDirty {
             if let url = doc.filePath {
                 performBackupOnSave(for: url)
@@ -4020,13 +4091,79 @@ public final class NppWorkspace: ObservableObject {
         }
     }
 
+    // MARK: - Notepad++ Print Configuration (IDD_PREFERENCE_SUB_PRINT)
+    public func configuredPrintOperation(for tv: NSTextView) -> NSPrintOperation {
+        let printInfo = NSPrintInfo.shared.copy() as! NSPrintInfo
+        let mmToPt: CGFloat = 72.0 / 25.4
+        printInfo.topMargin = CGFloat(printMarginTop) * mmToPt
+        printInfo.bottomMargin = CGFloat(printMarginBottom) * mmToPt
+        printInfo.leftMargin = CGFloat(printMarginLeft) * mmToPt
+        printInfo.rightMargin = CGFloat(printMarginRight) * mmToPt
+        printInfo.isHorizontallyCentered = false
+        printInfo.isVerticallyCentered = false
+
+        let headerStr = [formatPrintHeaderFooter(printHeaderLeft),
+                         formatPrintHeaderFooter(printHeaderMiddle),
+                         formatPrintHeaderFooter(printHeaderRight)].filter { !$0.isEmpty }.joined(separator: " | ")
+        let footerStr = [formatPrintHeaderFooter(printFooterLeft),
+                         formatPrintHeaderFooter(printFooterMiddle),
+                         formatPrintHeaderFooter(printFooterRight)].filter { !$0.isEmpty }.joined(separator: " | ")
+
+        let dict = printInfo.dictionary()
+        if !headerStr.isEmpty || !footerStr.isEmpty {
+            dict[NSPrintInfo.AttributeKey.headerAndFooter] = true
+        }
+
+        let op = NSPrintOperation(view: tv, printInfo: printInfo)
+        return op
+    }
+
+    public func formatPrintHeaderFooter(_ template: String) -> String {
+        guard let doc = activeDocument else { return template }
+        var result = template
+        result = result.replacingOccurrences(of: "$(CURRENT_FILE)", with: doc.filePath?.lastPathComponent ?? doc.title)
+        result = result.replacingOccurrences(of: "$(FULL_CURRENT_PATH)", with: doc.filePath?.path ?? doc.title)
+        result = result.replacingOccurrences(of: "$(CURRENT_WORD)", with: doc.title)
+        return result
+    }
+
     public func printNow() {
         if let tv = activeTextView ?? (NSApp.keyWindow?.firstResponder as? NSTextView) {
-            let op = NSPrintOperation(view: tv)
+            let op = configuredPrintOperation(for: tv)
             op.showsPrintPanel = false
             op.showsProgressPanel = false
-            op.run()
+            if !isTest {
+                op.run()
+            }
         }
+    }
+
+    public func checkRecentFilesAtLaunch() {
+        guard !dontCheckHistoryAtLaunch else { return }
+        recentFiles.removeAll { !FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    public func handleDroppedFolder(url: URL) {
+        if dropFolderOpenAllFiles {
+            let fm = FileManager.default
+            if let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) {
+                for case let fileURL as URL in enumerator {
+                    let isRegular = (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) ?? false
+                    if isRegular {
+                        openFile(url: fileURL)
+                    }
+                }
+            }
+        } else {
+            openFolderAsWorkspace(url: url)
+        }
+    }
+
+    public func resolveDialogFont() -> NSFont {
+        if !dialogFontName.isEmpty, let font = NSFont(name: dialogFontName, size: CGFloat(dialogFontSize)) {
+            return font
+        }
+        return NSFont.systemFont(ofSize: CGFloat(max(9, dialogFontSize)))
     }
 
     public func restoreRecentClosedFile() {
@@ -4530,17 +4667,42 @@ public final class NppWorkspace: ObservableObject {
 
     // MARK: - Tab Navigation & Sorting (Window Menu)
     public func nextTab() {
-        guard documents.count > 1, let currentId = activeDocumentId,
+        guard docSwitcherEnabled else { return }
+        guard documents.count > 1 else { return }
+        if docSwitcherMRU {
+            let availableMru = mruDocumentIds.filter { id in documents.contains(where: { $0.id == id }) }
+            if availableMru.count > 1 {
+                let targetId = availableMru[1]
+                activeDocumentId = targetId
+                recordDocumentAccess(id: targetId)
+                return
+            }
+        }
+        guard let currentId = activeDocumentId,
               let currentIndex = documents.firstIndex(where: { $0.id == currentId }) else { return }
         let nextIndex = (currentIndex + 1) % documents.count
-        activeDocumentId = documents[nextIndex].id
+        let targetId = documents[nextIndex].id
+        activeDocumentId = targetId
+        recordDocumentAccess(id: targetId)
     }
 
     public func prevTab() {
-        guard documents.count > 1, let currentId = activeDocumentId,
+        guard docSwitcherEnabled else { return }
+        guard documents.count > 1 else { return }
+        if docSwitcherMRU {
+            let availableMru = mruDocumentIds.filter { id in documents.contains(where: { $0.id == id }) }
+            if let targetId = availableMru.last, targetId != activeDocumentId {
+                activeDocumentId = targetId
+                recordDocumentAccess(id: targetId)
+                return
+            }
+        }
+        guard let currentId = activeDocumentId,
               let currentIndex = documents.firstIndex(where: { $0.id == currentId }) else { return }
         let prevIndex = (currentIndex - 1 + documents.count) % documents.count
-        activeDocumentId = documents[prevIndex].id
+        let targetId = documents[prevIndex].id
+        activeDocumentId = targetId
+        recordDocumentAccess(id: targetId)
     }
 
     public func selectTab(at index: Int) {
@@ -4768,8 +4930,10 @@ public final class NppWorkspace: ObservableObject {
 
     public func printActive() {
         if let tv = activeTextView ?? (NSApp.keyWindow?.firstResponder as? NSTextView) {
-            let op = NSPrintOperation(view: tv)
-            op.run()
+            let op = configuredPrintOperation(for: tv)
+            if !isTest {
+                op.run()
+            }
         }
     }
 

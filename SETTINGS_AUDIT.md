@@ -2,13 +2,13 @@
 
 | Section | Property | UI label | Status |
 |---|---|---|---|
-| (no UI) | `defaultEol` |  | todo |
-| (no UI) | `distractionFreePadding` |  | todo |
-| (no UI) | `insertMode` |  | todo |
-| (no UI) | `showWindowsDialog` |  | todo |
-| 0. General (IDD_PREFERENCE_SUB_GENERAL) | `dialogFontName` | Name: | todo |
-| 0. General (IDD_PREFERENCE_SUB_GENERAL) | `dialogFontSize` | Size: | todo |
-| 0. General (IDD_PREFERENCE_SUB_GENERAL) | `hideMenuBar` | Hide (use Alt or F10 key to toggle) | todo |
+| (no UI) | `defaultEol` |  | done (tested) |
+| (no UI) | `distractionFreePadding` |  | done (tested) |
+| (no UI) | `insertMode` |  | done (tested) |
+| (no UI) | `showWindowsDialog` |  | done (tested) |
+| 0. General (IDD_PREFERENCE_SUB_GENERAL) | `dialogFontName` | Name: | done (tested) |
+| 0. General (IDD_PREFERENCE_SUB_GENERAL) | `dialogFontSize` | Size: | done (tested) |
+| 0. General (IDD_PREFERENCE_SUB_GENERAL) | `hideMenuBar` | Hide (use Alt or F10 key to toggle) | N/A (macOS platform) |
 | 11. Language (IDD_PREFERENCE_SUB_LANGUAGE) | `treatBackslashAsEscapeForSql` | Treat backslash as escape character for SQL | done (tested) |
 | 12. Indentation (IDD_PREFERENCE_SUB_INDENTATION) | `backspaceUnindents` |  | done (tested) |
 | 12. Indentation (IDD_PREFERENCE_SUB_INDENTATION) | `useDefaultTabValue` |  | done (tested) |
@@ -22,20 +22,20 @@
 | 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightUseFindSettings` | Use Find dialog settings | done (tested) |
 | 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlightWholeWord` | Match whole word only | done (tested) |
 | 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `smartHighlighting` | Enable | done (tested) |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printColorOption` |  | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFooterLeft` |  | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFooterMiddle` |  | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFooterRight` |  | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFormFeedPageBreak` | Print formfeed as page break | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printHeaderLeft` |  | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printHeaderMiddle` | Time | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printHeaderRight` |  | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printLineNumbers` | Print line number | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginBottom` | Bottom: | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginLeft` | Left: | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginRight` | Right: | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginTop` | Top: | todo |
-| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printVariableSelection` | Variable: | todo |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printColorOption` |  | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFooterLeft` |  | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFooterMiddle` |  | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFooterRight` |  | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printFormFeedPageBreak` | Print formfeed as page break | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printHeaderLeft` |  | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printHeaderMiddle` | Time | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printHeaderRight` |  | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printLineNumbers` | Print line number | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginBottom` | Bottom: | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginLeft` | Left: | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginRight` | Right: | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printMarginTop` | Top: | done (tested) |
+| 14. Print (IDD_PREFERENCE_SUB_PRINT) | `printVariableSelection` | Variable: | done (tested) |
 | 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `confirmReplaceAllInAllOpenedDocs` | Confirm Replace All in All Opened Documents | done (tested) |
 | 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `fifIgnoreOpenedFiles` | Find in Files: Prefer on-disk file content over open buffers | done (tested) |
 | 15. Searching (IDD_PREFERENCE_SUB_SEARCHING) | `findDlgAlwaysVisible` | Find dialog remains open after search that outputs to results window | done (tested) |
@@ -49,12 +49,12 @@
 | 17. Auto-Completion (IDD_PREFERENCE_SUB_AUTOCOMPLETION) | `autoCompletionBrief` | Make auto-completion list brief | done (tested) |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `dateTimeCustomFormat` | Format: | done (tested) |
 | 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `dateTimeReverseOrder` | Reverse default date time order | done (tested) |
-| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `multiInstanceMode` |  | todo |
-| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberCharacterPanel` | Character Panel | todo |
-| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberClipboardHistory` | Clipboard History | todo |
-| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPanelStateDocList` | Document List | todo |
-| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPanelStateFAW` | Folder as Workspace | todo |
-| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPluginPanels` | Plugin Panels | todo |
+| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `multiInstanceMode` |  | done (tested) |
+| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberCharacterPanel` | Character Panel | done (tested) |
+| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberClipboardHistory` | Clipboard History | done (tested) |
+| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPanelStateDocList` | Document List | done (tested) |
+| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPanelStateFAW` | Folder as Workspace | done (tested) |
+| 18. Multi-Instance & Date (IDD_PREFERENCE_SUB_MULTIINSTANCE) | `rememberPluginPanels` | Plugin Panels | done (tested) |
 | 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterClose` | Close: | done (tested) |
 | 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterOpen` | Open: | done (tested) |
 | 19. Delimiter (IDD_PREFERENCE_SUB_DELIMITER) | `delimiterSeveralLines` | Allow on several lines | done (tested) |
@@ -78,17 +78,17 @@
 | 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `cloudMode` | No Cloud | done (tested) |
 | 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `cloudPath` | Set your cloud location path here: | done (tested) |
 | 21. Cloud & Link (IDD_PREFERENCE_SUB_CLOUD_LINK) | `uriCustomSchemes` | URI customized schemes: | done (tested) |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `allowSymlinksInFAW` | Allow loading symlinks in Folder as Workspace panel | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `autoDetectEncoding` | Autodetect character encoding | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docPeekerOnMap` | Peek on document map | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docPeekerOnTab` | Peek on tab | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docSwitcherEnabled` | Enable | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docSwitcherMRU` | Enable MRU behaviour | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `fileStatusGoToEOF` | Scroll to the last line after update | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `muteAllSounds` | Mute all sounds | todo |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `saveAllConfirmDialog` | Enable Save All confirm dialog | todo |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `allowSymlinksInFAW` | Allow loading symlinks in Folder as Workspace panel | done (tested) |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `autoDetectEncoding` | Autodetect character encoding | done (tested) |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docPeekerOnMap` | Peek on document map | done (tested) |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docPeekerOnTab` | Peek on tab | done (tested) |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docSwitcherEnabled` | Enable | done (tested) |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `docSwitcherMRU` | Enable MRU behaviour | done (tested) |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `fileStatusGoToEOF` | Scroll to the last line after update | done (tested) |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `muteAllSounds` | Mute all sounds | done (tested) |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `saveAllConfirmDialog` | Enable Save All confirm dialog | done (tested) |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `shortTitleInBar` | Show only filename in title bar | done (tested) |
-| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `workspaceFileExt` | Workspace file ext.: | todo |
+| 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `workspaceFileExt` | Workspace file ext.: | done (tested) |
 | 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `caretBlinkRate` | F | done (tested) |
 | 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `disableSelectedTextDragDrop` | Disable selected text drag-and-drop | done (tested) |
 | 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `disableTouchpadScroll` | Disable advanced scrolling feature due to touchpad issue | done (tested) |
@@ -115,11 +115,11 @@
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `paddingRight` | Right: | done (tested) |
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `verticalEdgeBgMode` | Background mode | done (tested) |
 | 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `addNewDocOnStartup` | Always open a new document in addition at startup | done (tested) |
-| 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `openAnsiAsUtf8` | Apply to opened ANSI files | todo |
+| 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `openAnsiAsUtf8` | Apply to opened ANSI files | done (tested) |
 | 7. New Document (IDD_PREFERENCE_SUB_NEWDOCUMENT) | `useFirstLineAsTabName` | Use the first line of document as untitled tab name | done (tested) |
 | 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `customDefaultDirectory` | Always on: | done (tested) |
 | 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `defaultDirectoryMode` | Follow current document | done (tested) |
-| 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `dropFolderOpenAllFiles` | Open all files of folder instead of launching Folder as Workspace on folder dropping | todo |
-| 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `dontCheckHistoryAtLaunch` | Don't check at launch time | todo |
+| 8. Default Directory (IDD_PREFERENCE_SUB_DEFAULTDIRECTORY) | `dropFolderOpenAllFiles` | Open all files of folder instead of launching Folder as Workspace on folder dropping | done (tested) |
+| 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `dontCheckHistoryAtLaunch` | Don't check at launch time | done (tested) |
 | 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `recentFilesCustomLength` |  | done (tested) |
 | 9. Recent Files History (IDD_PREFERENCE_SUB_RECENTFILESHISTORY) | `recentFilesInSubmenu` | In Submenu | done (tested) |

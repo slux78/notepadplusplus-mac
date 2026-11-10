@@ -171,8 +171,9 @@ public struct NppEditorView: NSViewRepresentable {
             scrollView.rulersVisible = workspace.showLineNumbers
         }
 
-        // Update padding margins (Notepad++ Margins/Border/Edge preference)
-        let targetPadding = NSSize(width: CGFloat(workspace.paddingLeft + workspace.paddingRight), height: 0)
+        // Update padding margins (Notepad++ Margins/Border/Edge & Distraction Free preference)
+        let extraDfPadding = workspace.isDistractionFreeMode ? workspace.distractionFreePadding : 0
+        let targetPadding = NSSize(width: CGFloat(workspace.paddingLeft + workspace.paddingRight + extraDfPadding), height: 0)
         if textView.textContainerInset != targetPadding {
             textView.textContainerInset = targetPadding
         }
@@ -1719,7 +1720,18 @@ public final class NppTextView: NSTextView {
         resolvedWorkspace?.recordMacroStep(.insertText(textToInsert))
 
         guard self.selectedRanges.count > 1 else {
-            super.insertText(textToInsert, replacementRange: replacementRange)
+            var effectiveRange = replacementRange
+            if resolvedWorkspace?.insertMode == false, (effectiveRange.location == NSNotFound || effectiveRange.length == 0) {
+                let currentSel = self.selectedRange()
+                let strLen = (self.string as NSString).length
+                if currentSel.length == 0 && currentSel.location < strLen {
+                    let charAtPos = (self.string as NSString).character(at: currentSel.location)
+                    if charAtPos != 10 && charAtPos != 13 {
+                        effectiveRange = NSRange(location: currentSel.location, length: 1)
+                    }
+                }
+            }
+            super.insertText(textToInsert, replacementRange: effectiveRange)
             return
         }
 

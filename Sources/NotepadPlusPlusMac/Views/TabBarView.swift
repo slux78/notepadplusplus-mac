@@ -454,6 +454,7 @@ public struct NppTabItemView: View {
         .onHover { hovering in
             isHovering = hovering
         }
+        .help(workspace.docPeekerOnTab ? "\(displayedTitle)\n\(String(doc.content.prefix(200)))" : "")
         // MARK: - Notepad++ Tab Right Click Context Menu (tabContextMenu.xml)
         .contextMenu {
             if !doc.isPinned {

@@ -161,7 +161,7 @@ public final class NppDocument: ObservableObject, Identifiable {
         self.isDirty = false
     }
 
-    public static func fromFile(url: URL) throws -> NppDocument {
+    public static func fromFile(url: URL, openAnsiAsUtf8: Bool = false, autoDetectEncoding: Bool = true) throws -> NppDocument {
         let data = try Data(contentsOf: url)
         let doc = NppDocument(title: url.lastPathComponent)
         doc.filePath = url
@@ -171,7 +171,10 @@ public final class NppDocument: ObservableObject, Identifiable {
         data.withUnsafeBytes { rawPtr in
             guard let ptr = rawPtr.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
             let det = npp_detect_encoding_and_eol(ptr, data.count)
-            let charset = det.charsetName != nil ? String(cString: det.charsetName) : "UTF-8"
+            var charset = (autoDetectEncoding && det.charsetName != nil) ? String(cString: det.charsetName) : "UTF-8"
+            if openAnsiAsUtf8 && (charset == "Windows-1252" || charset == "ANSI" || charset == "ISO-8859-1") {
+                charset = "UTF-8"
+            }
             doc.encoding = charset
             doc.hasBOM = det.hasBOM != 0
             doc.eolFormat = NppEol(rawValue: Int(det.eolFormat)) ?? .lf

@@ -200,14 +200,23 @@ private struct FolderItemView: View {
             }
 
             if isDirectory && isExpanded {
-                let children = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
-                let sortedChildren = children.sorted { a, b in
-                    a.lastPathComponent.localizedCaseInsensitiveCompare(b.lastPathComponent) == .orderedAscending
-                }
-                ForEach(sortedChildren, id: \.self) { child in
+                ForEach(getChildren(), id: \.self) { child in
                     FolderItemView(url: child, depth: depth + 1, expandedPaths: $expandedPaths, workspace: workspace, onSelectFile: onSelectFile)
                 }
             }
+        }
+    }
+
+    private func getChildren() -> [URL] {
+        var rawChildren = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles])) ?? []
+        if !workspace.allowSymlinksInFAW {
+            rawChildren = rawChildren.filter { child in
+                let isSymlink = (try? child.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) ?? false
+                return !isSymlink
+            }
+        }
+        return rawChildren.sorted { a, b in
+            a.lastPathComponent.localizedCaseInsensitiveCompare(b.lastPathComponent) == .orderedAscending
         }
     }
 }
