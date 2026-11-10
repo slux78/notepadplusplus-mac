@@ -50,6 +50,7 @@ public final class NppDocument: ObservableObject, Identifiable {
     @Published public var styledTokenRanges: [Int: [NSRange]] = [:] // 1..5 -> styled NSRanges
     @Published public var language: String = "Plain Text"
     @Published public var bookmarkedLines: Set<Int> = [] // 1-indexed line numbers
+    @Published public var foldedLines: Set<Int> = [] // 1-indexed lines that are folded
 
     @Published public var cursorLine: Int = 1
     @Published public var cursorCol: Int = 1

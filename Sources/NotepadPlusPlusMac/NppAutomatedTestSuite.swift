@@ -1440,6 +1440,7 @@ final class NppAutomatedTestSuite {
                        appDelegate.window.isReleasedWhenClosed == false)
             runResourceBundleTests(assertTest: assertTest)
             runSettingsBatch1Tests(assertTest: assertTest)
+            runSettingsBatch2Tests(assertTest: assertTest)
             runQuitAndTabBarUXParityTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialQuitStressTests(appDelegate: appDelegate, assertTest: assertTest)
             runAdversarialTabBarStressTests(assertTest: assertTest)
@@ -5555,6 +5556,165 @@ final class NppAutomatedTestSuite {
         sw.activeDocumentId = sw.documents.first { $0.filePath != nil }?.id
         assertTest("Setting defaultDirectoryMode 'follow current doc': uses active document's folder",
                    sw.defaultOpenDirectory()?.standardizedFileURL.path == f.deletingLastPathComponent().standardizedFileURL.path)
+    }
+
+    static func runSettingsBatch2Tests(assertTest: (String, Bool) -> Void) {
+        let ws = NppWorkspace()
+        ws.supportDirectoryOverride = FileManager.default.temporaryDirectory.appendingPathComponent("npp_b2_\(UUID().uuidString)")
+        ws.closeAll(force: true)
+        ws.newDocument()
+
+        let sv = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        let tv = NppTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        tv.workspace = ws
+        sv.documentView = tv
+        ws.activeTextView = tv
+
+        // 1. lineCutCopyWithNoSelection
+        tv.string = "Line One\nLine Two\nLine Three"
+        tv.setSelectedRange(NSRange(location: 10, length: 0)) // inside "Line Two"
+        ws.lineCutCopyWithNoSelection = true
+        tv.copy(nil)
+        let copied = NSPasteboard.general.string(forType: .string) ?? ""
+        assertTest("Setting lineCutCopyWithNoSelection: copy with 0-selection copies entire line",
+                   copied == "Line Two\n")
+
+        tv.cut(nil)
+        assertTest("Setting lineCutCopyWithNoSelection: cut with 0-selection deletes entire line",
+                   tv.string == "Line One\nLine Three")
+
+        tv.setSelectedRange(NSRange(location: 2, length: 0)) // inside "Line One"
+        ws.lineCutCopyWithNoSelection = false
+        let lenBefore = tv.string.count
+        tv.cut(nil)
+        assertTest("Setting lineCutCopyWithNoSelection off: cut with 0-selection does not delete line",
+                   tv.string.count == lenBefore)
+
+        // 2. backspaceUnindents
+        _ = ws.effectiveTabSize
+        ws.useDefaultTabValue = false
+        ws.tabSize = 4
+        ws.backspaceUnindents = true
+        tv.string = "        Code" // 8 leading spaces
+        tv.setSelectedRange(NSRange(location: 8, length: 0))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("Setting backspaceUnindents on: first backspace unindents by tabSize (8 -> 4 spaces)",
+                   tv.string == "    Code" && tv.selectedRange().location == 4)
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("Setting backspaceUnindents on: second backspace unindents to column 0 (4 -> 0 spaces)",
+                   tv.string == "Code" && tv.selectedRange().location == 0)
+
+        ws.backspaceUnindents = false
+        tv.string = "        Code"
+        tv.setSelectedRange(NSRange(location: 8, length: 0))
+        tv.doCommand(by: #selector(NSStandardKeyBindingResponding.deleteBackward(_:)))
+        assertTest("Setting backspaceUnindents off: backspace deletes only a single space (8 -> 7 spaces)",
+                   tv.string == "       Code" && tv.selectedRange().location == 7)
+
+        // 3. useDefaultTabValue
+        ws.tabSize = 8
+        ws.useDefaultTabValue = true
+        assertTest("Setting useDefaultTabValue on: effectiveTabSize is locked to default 4",
+                   ws.effectiveTabSize == 4)
+        ws.useDefaultTabValue = false
+        assertTest("Setting useDefaultTabValue off: effectiveTabSize uses custom tabSize (8)",
+                   ws.effectiveTabSize == 8)
+
+        // 4. rightClickKeepsSelection
+        tv.string = "Selected text here"
+        tv.setSelectedRange(NSRange(location: 0, length: 8)) // "Selected"
+        ws.rightClickKeepsSelection = true
+        let dummyEvent = NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: NSPoint(x: 200, y: 150),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        )!
+        tv.rightMouseDown(with: dummyEvent)
+        assertTest("Setting rightClickKeepsSelection on: right click preserves existing selection",
+                   tv.selectedRange() == NSRange(location: 0, length: 8))
+
+        // 5. disableSelectedTextDragDrop
+        ws.disableSelectedTextDragDrop = true
+        assertTest("Setting disableSelectedTextDragDrop on: dragSelection returns false",
+                   tv.dragSelection(with: dummyEvent, offset: .zero, slideBack: true) == false)
+
+        // 6. npcNoInputC0
+        ws.npcNoInputC0 = true
+        tv.string = ""
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        tv.insertText("A\u{0001}\u{0007}B\tC\n", replacementRange: NSRange(location: 0, length: 0))
+        assertTest("Setting npcNoInputC0 on: strips C0 control characters while keeping tab/newline",
+                   tv.string == "AB\tC\n")
+
+        ws.npcNoInputC0 = false
+        tv.insertText("\u{0002}", replacementRange: NSRange(location: tv.string.count, length: 0))
+        assertTest("Setting npcNoInputC0 off: allows control characters",
+                   tv.string.contains("\u{0002}"))
+
+        // 7. scrollBeyondLastLine
+        ws.scrollBeyondLastLine = true
+        tv.layout()
+        assertTest("Setting scrollBeyondLastLine on: scrollview has bottom content insets",
+                   sv.contentInsets.bottom > 0)
+        ws.scrollBeyondLastLine = false
+        tv.layout()
+        assertTest("Setting scrollBeyondLastLine off: scrollview bottom content inset is 0",
+                   sv.contentInsets.bottom == 0)
+
+        // 8. foldingToggle
+        ws.foldingToggle = true
+        ws.activeDocument?.cursorLine = 5
+        ws.foldCurrentLevel(line: 5)
+        assertTest("Setting foldingToggle on: first call folds line 5",
+                   ws.activeDocument?.foldedLines.contains(5) == true)
+        ws.foldCurrentLevel(line: 5)
+        assertTest("Setting foldingToggle on: second call toggles and unfolds line 5",
+                   ws.activeDocument?.foldedLines.contains(5) == false)
+
+        ws.foldingToggle = false
+        ws.foldCurrentLevel(line: 5)
+        ws.foldCurrentLevel(line: 5)
+        assertTest("Setting foldingToggle off: repeated foldCurrentLevel keeps line folded",
+                   ws.activeDocument?.foldedLines.contains(5) == true)
+        ws.unfoldCurrentLevel(line: 5)
+        assertTest("Setting foldingToggle off: unfoldCurrentLevel unfolds line",
+                   ws.activeDocument?.foldedLines.contains(5) == false)
+
+        // 9. caretBlinkRate
+        ws.caretBlinkRate = 350
+        assertTest("Setting caretBlinkRate: updates user defaults blink period",
+                   UserDefaults.standard.double(forKey: "NSTextInsertionPointBlinkPeriodOn") == 350)
+
+        // 10. columnToMultiEditing & smoothFont & selectedTextForegroundCustom
+        ws.columnToMultiEditing = false
+        assertTest("Setting columnToMultiEditing: property reflects configuration", ws.columnToMultiEditing == false)
+        ws.columnToMultiEditing = true
+        assertTest("Setting columnToMultiEditing: resets to true", ws.columnToMultiEditing == true)
+        ws.smoothFont = false
+        assertTest("Setting smoothFont: disables antialiasing toggle", ws.smoothFont == false)
+        ws.smoothFont = true
+        ws.selectedTextForegroundCustom = true
+        assertTest("Setting selectedTextForegroundCustom: enables custom foreground selection", ws.selectedTextForegroundCustom == true)
+
+        // 11. eolAppearance & npcAppearance
+        ws.eolAppearance = 1 // Plain text
+        assertTest("Setting eolAppearance: 1 is Plain text", ws.eolAppearance == 1)
+        ws.npcAppearance = 1 // Codepoint
+        assertTest("Setting npcAppearance: 1 is Codepoint hex", ws.npcAppearance == 1)
+        ws.eolCustomColor = true
+        assertTest("Setting eolCustomColor: enables custom color", ws.eolCustomColor == true)
+        ws.npcCustomColor = true
+        assertTest("Setting npcCustomColor: enables custom color", ws.npcCustomColor == true)
+        ws.npcIncludeUnicodeEol = true
+        assertTest("Setting npcIncludeUnicodeEol: enabled", ws.npcIncludeUnicodeEol == true)
+
+        ws.closeAll(force: true)
     }
 
     static func runResourceBundleTests(assertTest: (String, Bool) -> Void) {

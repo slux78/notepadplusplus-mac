@@ -163,6 +163,28 @@ public struct NppEditorView: NSViewRepresentable {
             textView.textContainerInset = targetPadding
         }
 
+        // Scroll beyond last line
+        if workspace.scrollBeyondLastLine {
+            let visibleH = scrollView.contentView.bounds.height
+            let bottomInset = max(0, visibleH - 40)
+            if scrollView.contentInsets.bottom != bottomInset {
+                scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
+            }
+        } else if scrollView.contentInsets.bottom != 0 {
+            scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        }
+
+        // Custom selected text foreground color
+        if workspace.selectedTextForegroundCustom {
+            var attrs = textView.selectedTextAttributes
+            attrs[.foregroundColor] = workspace.currentTheme.foregroundColor
+            textView.selectedTextAttributes = attrs
+        } else {
+            var attrs = textView.selectedTextAttributes
+            attrs.removeValue(forKey: .foregroundColor)
+            textView.selectedTextAttributes = attrs
+        }
+
         // Update word wrap
         if context.coordinator.lastWordWrap != workspace.isWordWrapEnabled {
             context.coordinator.lastWordWrap = workspace.isWordWrapEnabled
@@ -192,6 +214,16 @@ public struct NppEditorView: NSViewRepresentable {
     }
 
     private func configureWordWrap(textView: NSTextView, scrollView: NSScrollView, enabled: Bool) {
+        let style = NSMutableParagraphStyle()
+        if workspace.lineWrapMode == 2 {
+            let font = textView.font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+            let charWidth = (" " as NSString).size(withAttributes: [.font: font]).width
+            style.headIndent = CGFloat(workspace.effectiveTabSize) * charWidth
+        } else {
+            style.headIndent = 0
+        }
+        textView.defaultParagraphStyle = style
+
         if enabled {
             scrollView.hasHorizontalScroller = false
             textView.isHorizontallyResizable = false
@@ -416,6 +448,20 @@ public struct NppEditorView: NSViewRepresentable {
 }
 
 public final class NppTextView: NSTextView {
+    public override func layout() {
+        super.layout()
+        if let ws = resolvedWorkspace, let sv = enclosingScrollView {
+            if ws.scrollBeyondLastLine {
+                let visibleH = sv.contentView.bounds.height
+                let bottomInset = max(0, visibleH - 40)
+                if sv.contentInsets.bottom != bottomInset {
+                    sv.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
+                }
+            } else if sv.contentInsets.bottom != 0 {
+                sv.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+            }
+        }
+    }
     weak var editorCoordinator: NppEditorView.Coordinator?
     public weak var workspace: NppWorkspace?
     var completionModeOverride: Int?
@@ -661,6 +707,21 @@ public final class NppTextView: NSTextView {
         else if lineSub.hasSuffix("\n") || lineSub.hasSuffix("\r") { lineEndWithoutEol -= 1 }
 
         if containerPoint.x >= lineUsedRect.maxX {
+            if resolvedWorkspace?.virtualSpace == true && self.isEditable {
+                let font = self.font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+                let charWidth = (" " as NSString).size(withAttributes: [.font: font]).width
+                let extraWidth = containerPoint.x - lineUsedRect.maxX
+                let extraSpaces = max(0, Int(round(extraWidth / max(1, charWidth))))
+                if extraSpaces > 0 {
+                    let padding = String(repeating: " ", count: extraSpaces)
+                    let insertPos = lineEndWithoutEol
+                    if self.shouldChangeText(in: NSRange(location: insertPos, length: 0), replacementString: padding) {
+                        self.replaceCharacters(in: NSRange(location: insertPos, length: 0), with: padding)
+                        self.didChangeText()
+                        return insertPos + extraSpaces
+                    }
+                }
+            }
             return lineEndWithoutEol
         }
         if containerPoint.x <= lineUsedRect.minX {
@@ -797,6 +858,16 @@ public final class NppTextView: NSTextView {
             return
         }
 
+        if resolvedWorkspace?.disableSelectedTextDragDrop == true && self.selectedRange().length > 0 {
+            let pt = self.convert(event.locationInWindow, from: nil)
+            let clickedChar = characterOffset(for: pt)
+            let sel = self.selectedRange()
+            if clickedChar >= sel.location && clickedChar <= NSMaxRange(sel) {
+                self.selectedRanges = [NSValue(range: NSRange(location: clickedChar, length: 0))]
+                return
+            }
+        }
+
         let isTest = (resolvedWorkspace?.isTestRunning == true) || CommandLine.arguments.contains("--run-tests") || (NSApp.currentEvent !== event)
         if isTest {
             let pt = self.convert(event.locationInWindow, from: nil)
@@ -867,6 +938,20 @@ public final class NppTextView: NSTextView {
         isCmdDragging = false
     }
 
+    public override func dragSelection(with event: NSEvent, offset: NSSize, slideBack: Bool) -> Bool {
+        if resolvedWorkspace?.disableSelectedTextDragDrop == true {
+            return false
+        }
+        return super.dragSelection(with: event, offset: offset, slideBack: slideBack)
+    }
+
+    public override func scrollWheel(with event: NSEvent) {
+        if resolvedWorkspace?.disableTouchpadScroll == true && event.hasPreciseScrollingDeltas {
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
     public override func mouseDragged(with event: NSEvent) {
         if isOptionDragging {
             let pt = self.convert(event.locationInWindow, from: nil)
@@ -875,13 +960,20 @@ public final class NppTextView: NSTextView {
                 fromLine: optionDragStartLine, fromCol: optionDragStartCol,
                 toLine: curL, toCol: curC
             )
-            self.selectedRanges = colRanges
+            if resolvedWorkspace?.columnToMultiEditing == false {
+                if let first = colRanges.first {
+                    self.selectedRanges = [first]
+                }
+            } else {
+                self.selectedRanges = colRanges
+            }
             return
         }
         if isCmdDragging {
             handleMultiCaretMouseDragged(event: event)
             return
         }
+
         let isTest = (resolvedWorkspace?.isTestRunning == true) || CommandLine.arguments.contains("--run-tests") || (NSApp.currentEvent !== event)
         if isTest {
             return
@@ -898,6 +990,7 @@ public final class NppTextView: NSTextView {
             handleMultiCaretMouseUp(event: event)
             return
         }
+
         let isTest = (resolvedWorkspace?.isTestRunning == true) || CommandLine.arguments.contains("--run-tests") || (NSApp.currentEvent !== event)
         if isTest {
             return
@@ -1497,19 +1590,33 @@ public final class NppTextView: NSTextView {
     }
 
     public override func insertText(_ string: Any, replacementRange: NSRange) {
-        let textToInsert: String
+        var textToInsert: String
         if let str = string as? String {
             textToInsert = str
-            resolvedWorkspace?.recordMacroStep(.insertText(str))
         } else if let attr = string as? NSAttributedString {
             textToInsert = attr.string
-            resolvedWorkspace?.recordMacroStep(.insertText(attr.string))
         } else {
             textToInsert = "\(string)"
         }
 
+        if resolvedWorkspace?.npcNoInputC0 == true {
+            let filtered = textToInsert.unicodeScalars.filter { scalar in
+                let val = scalar.value
+                if val < 0x20 {
+                    return val == 0x09 || val == 0x0A || val == 0x0D
+                }
+                return true
+            }
+            textToInsert = String(String.UnicodeScalarView(filtered))
+            if textToInsert.isEmpty {
+                return
+            }
+        }
+
+        resolvedWorkspace?.recordMacroStep(.insertText(textToInsert))
+
         guard self.selectedRanges.count > 1 else {
-            super.insertText(string, replacementRange: replacementRange)
+            super.insertText(textToInsert, replacementRange: replacementRange)
             return
         }
 
@@ -1638,6 +1745,12 @@ public final class NppTextView: NSTextView {
         }
 
         if selector == #selector(NSStandardKeyBindingResponding.deleteBackward(_:)) {
+            if handleBackspaceUnindent() {
+                if let ws = resolvedWorkspace, ws.isMacroRecording {
+                    ws.recordMacroStep(.deleteBackward)
+                }
+                return
+            }
             if handleSmartPairDeleteBackward() {
                 if let ws = resolvedWorkspace, ws.isMacroRecording {
                     ws.recordMacroStep(.deleteBackward)
@@ -1707,8 +1820,35 @@ public final class NppTextView: NSTextView {
 
     public override func insertBacktab(_ sender: Any?) {
         guard self.isEditable else { return }
-        let tabSize = resolvedWorkspace?.tabSize ?? 4
+        let tabSize = resolvedWorkspace?.effectiveTabSize ?? 4
         NppEditOperations.decreaseLineIndent(in: self, spaceCount: tabSize)
+    }
+
+    private func handleBackspaceUnindent() -> Bool {
+        guard let ws = resolvedWorkspace, ws.backspaceUnindents else { return false }
+        guard self.selectedRanges.count <= 1 else { return false }
+        let range = self.selectedRange()
+        guard range.length == 0, range.location > 0 else { return false }
+        let text = self.string as NSString
+        let lineRange = text.lineRange(for: NSRange(location: range.location, length: 0))
+        let prefixRange = NSRange(location: lineRange.location, length: range.location - lineRange.location)
+        guard prefixRange.length > 0 else { return false }
+        let prefix = text.substring(with: prefixRange)
+        guard prefix.allSatisfy({ $0 == " " }) else { return false }
+
+        let tabSize = max(1, ws.effectiveTabSize)
+        let currentCol = prefix.count
+        let remainder = currentCol % tabSize
+        let spacesToDelete = remainder == 0 ? tabSize : remainder
+        let deleteCount = min(spacesToDelete, currentCol)
+        let deleteRange = NSRange(location: range.location - deleteCount, length: deleteCount)
+
+        if self.shouldChangeText(in: deleteRange, replacementString: "") {
+            self.replaceCharacters(in: deleteRange, with: "")
+            self.didChangeText()
+            return true
+        }
+        return false
     }
 
     public override func cut(_ sender: Any?) {
@@ -1717,6 +1857,22 @@ public final class NppTextView: NSTextView {
         }
 
         guard self.selectedRanges.count > 1 else {
+            if (resolvedWorkspace?.lineCutCopyWithNoSelection ?? true) && self.selectedRange().length == 0 {
+                let text = self.string as NSString
+                if text.length > 0 {
+                    let caret = min(self.selectedRange().location, text.length)
+                    let lineRange = text.lineRange(for: NSRange(location: caret, length: 0))
+                    let lineContent = text.substring(with: lineRange)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(lineContent, forType: .string)
+                    resolvedWorkspace?.addToClipboardHistory(lineContent)
+                    if self.shouldChangeText(in: lineRange, replacementString: "") {
+                        self.replaceCharacters(in: lineRange, with: "")
+                        self.didChangeText()
+                    }
+                    return
+                }
+            }
             super.cut(sender)
             if let clip = NSPasteboard.general.string(forType: .string) {
                 resolvedWorkspace?.addToClipboardHistory(clip)
@@ -1734,6 +1890,18 @@ public final class NppTextView: NSTextView {
         }
 
         guard self.selectedRanges.count > 1 else {
+            if (resolvedWorkspace?.lineCutCopyWithNoSelection ?? true) && self.selectedRange().length == 0 {
+                let text = self.string as NSString
+                if text.length > 0 {
+                    let caret = min(self.selectedRange().location, text.length)
+                    let lineRange = text.lineRange(for: NSRange(location: caret, length: 0))
+                    let lineContent = text.substring(with: lineRange)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(lineContent, forType: .string)
+                    resolvedWorkspace?.addToClipboardHistory(lineContent)
+                    return
+                }
+            }
             super.copy(sender)
             if let clip = NSPasteboard.general.string(forType: .string) {
                 resolvedWorkspace?.addToClipboardHistory(clip)
@@ -1858,6 +2026,9 @@ public final class NppTextView: NSTextView {
     }
 
     public override func draw(_ dirtyRect: NSRect) {
+        if resolvedWorkspace?.smoothFont == false {
+            NSGraphicsContext.current?.shouldAntialias = false
+        }
         // 1. Draw base text view contents (background and text glyphs)
         super.draw(dirtyRect)
 
@@ -1919,9 +2090,18 @@ public final class NppTextView: NSTextView {
         let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
 
         let theme = editorCoordinator?.parent.workspace.currentTheme
-        let color: NSColor = (theme?.isDark ?? true)
+        let defaultAmber: NSColor = (theme?.isDark ?? true)
             ? NSColor(calibratedRed: 0.95, green: 0.62, blue: 0.32, alpha: 0.85) // Notepad++ Scintilla Amber
             : NSColor(calibratedRed: 0.85, green: 0.45, blue: 0.15, alpha: 0.85) // Notepad++ Scintilla Dark Amber
+
+        let eolColor: NSColor = ws.eolCustomColor
+            ? NSColor(calibratedRed: 0.90, green: 0.30, blue: 0.30, alpha: 0.85)
+            : defaultAmber
+
+        let npcColor: NSColor = ws.npcCustomColor
+            ? NSColor(calibratedRed: 0.50, green: 0.30, blue: 0.90, alpha: 0.85)
+            : defaultAmber
+        let color = defaultAmber
 
         let currentFont = self.font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         let charWidth = currentFont.maximumAdvancement.width
@@ -1966,29 +2146,41 @@ public final class NppTextView: NSTextView {
                 arrowPath.stroke()
             } else if ch == 10 && drawEOL { // LF -> '¶'
                 let isCRLF = (i > 0 && str.character(at: i - 1) == 13)
-                let eolText = isCRLF ? "CRLF" : "¶"
-                let eolFont = isCRLF ? NSFont.systemFont(ofSize: 8.5, weight: .bold) : pilcrowFont
-                let attrs: [NSAttributedString.Key: Any] = [.font: eolFont, .foregroundColor: color]
+                let eolText: String
+                if ws.eolAppearance == 1 {
+                    eolText = isCRLF ? "CRLF" : "LF"
+                } else {
+                    eolText = isCRLF ? "CRLF" : "¶"
+                }
+                let eolFont = (isCRLF || ws.eolAppearance == 1) ? NSFont.systemFont(ofSize: 8.5, weight: .bold) : pilcrowFont
+                let attrs: [NSAttributedString.Key: Any] = [.font: eolFont, .foregroundColor: eolColor]
                 let eolY = y + (lineRect.height - eolFont.pointSize) / 2.0 - 0.5
                 eolText.draw(at: NSPoint(x: x + 2.0, y: eolY), withAttributes: attrs)
             } else if ch == 13 && drawEOL { // CR alone
                 if i + 1 >= str.length || str.character(at: i + 1) != 10 {
-                    let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 8.5, weight: .bold), .foregroundColor: color]
+                    let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 8.5, weight: .bold), .foregroundColor: eolColor]
                     let eolY = y + (lineRect.height - 8.5) / 2.0 - 0.5
                     "CR".draw(at: NSPoint(x: x + 2.0, y: eolY), withAttributes: attrs)
                 }
             } else if drawNPC, let mnemonic = Self.controlMnemonicTable[ch] {
+                let labelText = ws.npcAppearance == 1 ? String(format: "%02X", ch) : mnemonic
                 let badgeFont = NSFont.monospacedSystemFont(ofSize: 7.5, weight: .bold)
                 let badgeAttrs: [NSAttributedString.Key: Any] = [.font: badgeFont, .foregroundColor: NSColor.white]
-                let textSize = (mnemonic as NSString).size(withAttributes: badgeAttrs)
+                let textSize = (labelText as NSString).size(withAttributes: badgeAttrs)
                 let badgeRect = NSRect(x: x, y: y + (lineRect.height - textSize.height - 2) / 2.0, width: textSize.width + 4, height: textSize.height + 2)
-                color.setFill()
+                npcColor.setFill()
                 NSBezierPath(roundedRect: badgeRect, xRadius: 2, yRadius: 2).fill()
-                mnemonic.draw(at: NSPoint(x: badgeRect.origin.x + 2, y: badgeRect.origin.y + 1), withAttributes: badgeAttrs)
+                labelText.draw(at: NSPoint(x: badgeRect.origin.x + 2, y: badgeRect.origin.y + 1), withAttributes: badgeAttrs)
             } else if drawCCUniEOL && (ch == 0x2028 || ch == 0x2029 || ch == 0x0085) {
-                let badge = ch == 0x2028 ? "LS" : (ch == 0x2029 ? "PS" : "NEL")
+                let badge: String
+                if ws.npcIncludeUnicodeEol && ws.npcAppearance == 1 {
+                    badge = String(format: "%04X", ch)
+                } else {
+                    badge = ch == 0x2028 ? "LS" : (ch == 0x2029 ? "PS" : "NEL")
+                }
+                let uniColor = (ws.npcIncludeUnicodeEol && ws.npcCustomColor) ? npcColor : defaultAmber
                 let badgeFont = NSFont.systemFont(ofSize: 7.5, weight: .bold)
-                let attrs: [NSAttributedString.Key: Any] = [.font: badgeFont, .foregroundColor: color]
+                let attrs: [NSAttributedString.Key: Any] = [.font: badgeFont, .foregroundColor: uniColor]
                 "[\(badge)]".draw(at: NSPoint(x: x + 2.0, y: y + (lineRect.height - 7.5) / 2.0), withAttributes: attrs)
             }
             i += 1
@@ -2094,6 +2286,19 @@ public final class NppTextView: NSTextView {
             return !isDocReadOnly
         }
         return super.validateUserInterfaceItem(item)
+    }
+
+    public override func rightMouseDown(with event: NSEvent) {
+        if let ws = resolvedWorkspace, ws.rightClickKeepsSelection {
+            if self.selectedRange().length > 0 {
+                let isTest = (ws.isTestRunning == true) || CommandLine.arguments.contains("--run-tests") || (NSApp.currentEvent !== event)
+                if !isTest, let menu = self.menu(for: event) {
+                    NSMenu.popUpContextMenu(menu, with: event, for: self)
+                }
+                return
+            }
+        }
+        super.rightMouseDown(with: event)
     }
 
     // MARK: - Notepad++ Right Click Context Menu (Scintilla Edit Zone)

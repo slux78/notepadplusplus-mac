@@ -10,8 +10,8 @@
 | 0. General (IDD_PREFERENCE_SUB_GENERAL) | `dialogFontSize` | Size: | todo |
 | 0. General (IDD_PREFERENCE_SUB_GENERAL) | `hideMenuBar` | Hide (use Alt or F10 key to toggle) | todo |
 | 11. Language (IDD_PREFERENCE_SUB_LANGUAGE) | `treatBackslashAsEscapeForSql` | Treat backslash as escape character for SQL | todo |
-| 12. Indentation (IDD_PREFERENCE_SUB_INDENTATION) | `backspaceUnindents` |  | todo |
-| 12. Indentation (IDD_PREFERENCE_SUB_INDENTATION) | `useDefaultTabValue` |  | todo |
+| 12. Indentation (IDD_PREFERENCE_SUB_INDENTATION) | `backspaceUnindents` |  | done (tested) |
+| 12. Indentation (IDD_PREFERENCE_SUB_INDENTATION) | `useDefaultTabValue` |  | done (tested) |
 | 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightMatchingTags` | Enable | todo |
 | 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightNoneHtmlZone` | Highlight comment/php/asp zone | todo |
 | 13. Highlighting (IDD_PREFERENCE_SUB_HIGHLIGHTING) | `highlightTagAttributes` | Highlight tag attributes | todo |
@@ -89,24 +89,24 @@
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `saveAllConfirmDialog` | Enable Save All confirm dialog | todo |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `shortTitleInBar` | Show only filename in title bar | done (tested) |
 | 23. MISC. (IDD_PREFERENCE_SUB_MISC) | `workspaceFileExt` | Workspace file ext.: | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `caretBlinkRate` | F | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `disableSelectedTextDragDrop` | Disable selected text drag-and-drop | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `disableTouchpadScroll` | Disable advanced scrolling feature due to touchpad issue | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `foldingToggle` | Make current level folding/unfolding commands toggleable | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `lineCutCopyWithNoSelection` | Enable Copy/Cut Line without selection | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `lineWrapMode` |  | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `rightClickKeepsSelection` | Keep selection when right-click outside of selection | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `scrollBeyondLastLine` | Enable scrolling beyond last line | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `selectedTextForegroundCustom` | Apply custom color to selected text foreground | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `smoothFont` | Enable smooth font | todo |
-| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `virtualSpace` | Enable virtual space | todo |
-| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `columnToMultiEditing` | Enable Column Selection to Multi-Editing | todo |
-| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `eolAppearance` |  | todo |
-| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `eolCustomColor` | Custom Color | todo |
-| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcAppearance` |  | todo |
-| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcCustomColor` | Custom Color | todo |
-| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcIncludeUnicodeEol` | Apply Appearance settings to C0, C1 & Unicode EOL | todo |
-| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcNoInputC0` | Prevent control character (C0 code) typing into document | todo |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `caretBlinkRate` | F | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `disableSelectedTextDragDrop` | Disable selected text drag-and-drop | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `disableTouchpadScroll` | Disable advanced scrolling feature due to touchpad issue | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `foldingToggle` | Make current level folding/unfolding commands toggleable | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `lineCutCopyWithNoSelection` | Enable Copy/Cut Line without selection | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `lineWrapMode` |  | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `rightClickKeepsSelection` | Keep selection when right-click outside of selection | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `scrollBeyondLastLine` | Enable scrolling beyond last line | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `selectedTextForegroundCustom` | Apply custom color to selected text foreground | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `smoothFont` | Enable smooth font | done (tested) |
+| 3. Editing 1 (IDD_PREFERENCE_SUB_EDITING) | `virtualSpace` | Enable virtual space | done (tested) |
+| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `columnToMultiEditing` | Enable Column Selection to Multi-Editing | done (tested) |
+| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `eolAppearance` |  | done (tested) |
+| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `eolCustomColor` | Custom Color | done (tested) |
+| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcAppearance` |  | done (tested) |
+| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcCustomColor` | Custom Color | done (tested) |
+| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcIncludeUnicodeEol` | Apply Appearance settings to C0, C1 & Unicode EOL | done (tested) |
+| 4. Editing 2 (IDD_PREFERENCE_SUB_EDITING2) | `npcNoInputC0` | Prevent control character (C0 code) typing into document | done (tested) |
 | 5. Dark Mode (IDD_PREFERENCE_SUB_DARKMODE) | `darkModeTone` |  | todo |
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `borderWidth` |  | todo |
 | 6. Margins/Border/Edge (IDD_PREFERENCE_SUB_MARGING_BORDER_EDGE) | `changeHistoryMargin` | Show in the margin | todo |

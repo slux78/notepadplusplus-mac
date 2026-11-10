@@ -680,15 +680,31 @@ public final class NppWorkspace: ObservableObject {
     @Published public var caretWidth: Int = 1 {
         didSet { activeTextView?.needsDisplay = true }
     }
-    @Published public var caretBlinkRate: Double = 500
-    @Published public var lineWrapMode: Int = 0 // 0: Default, 1: Aligned, 2: Indent
-    @Published public var smoothFont: Bool = true
+    @Published public var caretBlinkRate: Double = 500 {
+        didSet {
+            UserDefaults.standard.set(caretBlinkRate, forKey: "NSTextInsertionPointBlinkPeriodOn")
+            UserDefaults.standard.set(caretBlinkRate, forKey: "NSTextInsertionPointBlinkPeriodOff")
+        }
+    }
+    @Published public var lineWrapMode: Int = 0 { // 0: Default, 1: Aligned, 2: Indent
+        didSet { activeTextView?.needsDisplay = true }
+    }
+    @Published public var smoothFont: Bool = true {
+        didSet { activeTextView?.needsDisplay = true }
+    }
     @Published public var virtualSpace: Bool = false
     @Published public var foldingToggle: Bool = true
     @Published public var rightClickKeepsSelection: Bool = true
     @Published public var lineCutCopyWithNoSelection: Bool = true
-    @Published public var selectedTextForegroundCustom: Bool = false
-    @Published public var scrollBeyondLastLine: Bool = false
+    @Published public var selectedTextForegroundCustom: Bool = false {
+        didSet { activeTextView?.needsDisplay = true }
+    }
+    @Published public var scrollBeyondLastLine: Bool = false {
+        didSet {
+            activeTextView?.needsLayout = true
+            activeTextView?.needsDisplay = true
+        }
+    }
     @Published public var disableTouchpadScroll: Bool = false
     @Published public var disableSelectedTextDragDrop: Bool = false
     @Published public var highlightCurrentLine: Bool = true {
@@ -700,11 +716,21 @@ public final class NppWorkspace: ObservableObject {
     // 4: Editing 2
     @Published public var multiSelection: Bool = true
     @Published public var columnToMultiEditing: Bool = true
-    @Published public var eolAppearance: Int = 0 // 0: Default, 1: Plain text
-    @Published public var eolCustomColor: Bool = false
-    @Published public var npcAppearance: Int = 0 // 0: Abbreviation, 1: Codepoint
-    @Published public var npcCustomColor: Bool = false
-    @Published public var npcIncludeUnicodeEol: Bool = true
+    @Published public var eolAppearance: Int = 0 { // 0: Default, 1: Plain text
+        didSet { activeTextView?.needsDisplay = true }
+    }
+    @Published public var eolCustomColor: Bool = false {
+        didSet { activeTextView?.needsDisplay = true }
+    }
+    @Published public var npcAppearance: Int = 0 { // 0: Abbreviation, 1: Codepoint
+        didSet { activeTextView?.needsDisplay = true }
+    }
+    @Published public var npcCustomColor: Bool = false {
+        didSet { activeTextView?.needsDisplay = true }
+    }
+    @Published public var npcIncludeUnicodeEol: Bool = true {
+        didSet { activeTextView?.needsDisplay = true }
+    }
     @Published public var npcNoInputC0: Bool = false
 
     // 5: Dark Mode & Style Configurator (WordStyleDlg.cpp / stylers.model.xml)
@@ -944,6 +970,13 @@ public final class NppWorkspace: ObservableObject {
     @Published public var replaceTabBySpace: Bool = false
     @Published public var backspaceUnindents: Bool = true
     @Published public var autoIndentMode: Int = 1 // 0: None, 1: Basic, 2: Advanced
+
+    public var effectiveTabSize: Int {
+        if useDefaultTabValue {
+            return 4
+        }
+        return max(1, tabSize)
+    }
 
     // 13: Highlighting
     @Published public var markAllMatchCase: Bool = false
@@ -5028,11 +5061,11 @@ public final class NppWorkspace: ObservableObject {
             }
         case .tabToSpace:
             executeDocumentOperation(tv: tv, doc: doc) {
-                NppEditOperations.tabToSpace(in: doc, spaceCount: tabSize)
+                NppEditOperations.tabToSpace(in: doc, spaceCount: self.effectiveTabSize)
             }
         case .spaceToTab:
             executeDocumentOperation(tv: tv, doc: doc) {
-                NppEditOperations.spaceToTab(in: doc, spaceCount: tabSize)
+                NppEditOperations.spaceToTab(in: doc, spaceCount: self.effectiveTabSize)
             }
         case .uppercase:
             withTextView(tv: tv, doc: doc) { NppEditOperations.convertCase(in: $0, to: .uppercase) }
@@ -5070,6 +5103,34 @@ public final class NppWorkspace: ObservableObject {
         }
         if let tv = tv {
             syncTextViewToDocument(tv: tv, doc: doc)
+        }
+    }
+
+    public func foldCurrentLevel(line: Int? = nil) {
+        guard let doc = activeDocument else { return }
+        let targetLine = line ?? doc.cursorLine
+        if foldingToggle {
+            if doc.foldedLines.contains(targetLine) {
+                doc.foldedLines.remove(targetLine)
+            } else {
+                doc.foldedLines.insert(targetLine)
+            }
+        } else {
+            doc.foldedLines.insert(targetLine)
+        }
+    }
+
+    public func unfoldCurrentLevel(line: Int? = nil) {
+        guard let doc = activeDocument else { return }
+        let targetLine = line ?? doc.cursorLine
+        if foldingToggle {
+            if doc.foldedLines.contains(targetLine) {
+                doc.foldedLines.remove(targetLine)
+            } else {
+                doc.foldedLines.insert(targetLine)
+            }
+        } else {
+            doc.foldedLines.remove(targetLine)
         }
     }
 
