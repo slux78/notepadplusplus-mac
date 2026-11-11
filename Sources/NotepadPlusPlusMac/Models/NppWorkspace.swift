@@ -474,7 +474,13 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // Typing Mode
-    @Published public var insertMode: Bool = true // true = INS, false = OVR
+    @Published public var insertMode: Bool = true { // true = INS, false = OVR
+        didSet {
+            if isOverwriteMode != !insertMode {
+                isOverwriteMode = !insertMode
+            }
+        }
+    }
 
     public enum NppSearchBarMode: String {
         case find = "Find"
@@ -863,6 +869,18 @@ public final class NppWorkspace: ObservableObject {
         let effectiveActiveLine = currentLineOverride?.bgColor ?? base.activeLineColor
         let effectiveSelection = selectionOverride?.bgColor ?? base.selectionColor
 
+        let activeLang = activeDocument?.language ?? ""
+        let langKey = (activeLang == "Shell") ? "Bash / Shell" : activeLang
+        let kwOverride = styleOverrides[styleOverrideKey(themeId: themeMode, language: langKey, style: "INSTRUCTION WORD")]
+            ?? styleOverrides[styleOverrideKey(themeId: themeMode, language: activeLang, style: "INSTRUCTION WORD")]
+        let strOverride = styleOverrides[styleOverrideKey(themeId: themeMode, language: langKey, style: "STRING")]
+            ?? styleOverrides[styleOverrideKey(themeId: themeMode, language: activeLang, style: "STRING")]
+        let cmtOverride = styleOverrides[styleOverrideKey(themeId: themeMode, language: langKey, style: "COMMENT")]
+            ?? styleOverrides[styleOverrideKey(themeId: themeMode, language: langKey, style: "COMMENT LINE")]
+            ?? styleOverrides[styleOverrideKey(themeId: themeMode, language: activeLang, style: "COMMENT")]
+        let numOverride = styleOverrides[styleOverrideKey(themeId: themeMode, language: langKey, style: "NUMBER")]
+            ?? styleOverrides[styleOverrideKey(themeId: themeMode, language: activeLang, style: "NUMBER")]
+
         return NppTheme(
             id: base.id,
             name: base.name,
@@ -873,10 +891,10 @@ public final class NppWorkspace: ObservableObject {
             gutterForeground: effectiveGutterFg,
             activeLineColor: effectiveActiveLine,
             selectionColor: effectiveSelection,
-            keywordColor: (globalOverrideFg ? globalOverride?.fgColor : nil) ?? base.keywordColor,
-            stringColor: (globalOverrideFg ? globalOverride?.fgColor : nil) ?? base.stringColor,
-            commentColor: (globalOverrideFg ? globalOverride?.fgColor : nil) ?? base.commentColor,
-            numberColor: (globalOverrideFg ? globalOverride?.fgColor : nil) ?? base.numberColor
+            keywordColor: (globalOverrideFg ? globalOverride?.fgColor : nil) ?? kwOverride?.fgColor ?? base.keywordColor,
+            stringColor: (globalOverrideFg ? globalOverride?.fgColor : nil) ?? strOverride?.fgColor ?? base.stringColor,
+            commentColor: (globalOverrideFg ? globalOverride?.fgColor : nil) ?? cmtOverride?.fgColor ?? base.commentColor,
+            numberColor: (globalOverrideFg ? globalOverride?.fgColor : nil) ?? numOverride?.fgColor ?? base.numberColor
         )
     }
 
@@ -921,7 +939,9 @@ public final class NppWorkspace: ObservableObject {
                     isDarkMode: theme.isDark,
                     baseFont: resolvedFont,
                     theme: theme,
-                    userDefinedLanguage: userDefinedLanguage(named: activeDocument?.language ?? "")
+                    userDefinedLanguage: userDefinedLanguage(named: activeDocument?.language ?? ""),
+                    treatBackslashAsEscapeForSql: treatBackslashAsEscapeForSql,
+                    userKeywords: styleUserKeywords
                 )
             }
             if let scroll = tv.enclosingScrollView, let gutter = scroll.verticalRulerView as? NppGutterView {
@@ -1220,6 +1240,11 @@ public final class NppWorkspace: ObservableObject {
     private var isLoadingSession = false
     public var sessionPlaceholderDecisionHandler: (([URL]) -> Bool)? = nil
     @Published public var workspaceFileExt: String = "workspace"
+
+    public func defaultWorkspaceSaveFilename() -> String {
+        let ext = workspaceFileExt.trimmingCharacters(in: CharacterSet(charactersIn: ". ")).lowercased()
+        return ext.isEmpty ? "workspace.npp_project" : "workspace.\(ext)"
+    }
 
     // Run Command State
     @Published public var lastRunCommand: String = "python3 $(CURRENT_FILE)"
@@ -1729,6 +1754,19 @@ public final class NppWorkspace: ObservableObject {
         userDefinedLanguages.first { $0.name == name }
     }
 
+    public func userExtensionLanguage(for url: URL) -> String? {
+        let ext = url.pathExtension.lowercased()
+        guard !ext.isEmpty else { return nil }
+        for (lang, extString) in styleUserExtensions {
+            let tokens = extString.split(whereSeparator: { $0.isWhitespace || $0 == ";" || $0 == "," })
+                .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased() }
+            if tokens.contains(ext) {
+                return lang == "Bash / Shell" ? "Shell" : lang
+            }
+        }
+        return nil
+    }
+
     public func newDocument() {
         let title = "new \(newDocCounter)"
         newDocCounter += 1
@@ -1748,11 +1786,24 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func openFile(url: URL) {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+            handleDroppedFolder(url: url)
+            return
+        }
         let configuredSessionExtension = sessionFileExt.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
         if !isLoadingSession && !configuredSessionExtension.isEmpty &&
             url.pathExtension.lowercased() == configuredSessionExtension {
             _ = loadSession(from: url)
             return
+        }
+        let configuredWorkspaceExtension = workspaceFileExt.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+        if !configuredWorkspaceExtension.isEmpty &&
+            (url.pathExtension.lowercased() == configuredWorkspaceExtension || url.pathExtension.lowercased() == "npp_project") {
+            if (try? projectWorkspace1.loadWorkspace(from: url)) != nil {
+                showProjectPanel1 = true
+                return
+            }
         }
         addRecentFile(url)
         lastOpenDirectory = url.deletingLastPathComponent()
@@ -1778,7 +1829,11 @@ public final class NppWorkspace: ObservableObject {
 
         do {
             let doc = try NppDocument.fromFile(url: url, openAnsiAsUtf8: openAnsiAsUtf8, autoDetectEncoding: autoDetectEncoding)
-            if let udl = userDefinedLanguage(for: url) { doc.language = udl.name }
+            if let userLang = userExtensionLanguage(for: url) {
+                doc.language = userLang
+            } else if let udl = userDefinedLanguage(for: url) {
+                doc.language = udl.name
+            }
             // If only single untitled document is open and empty, replace it
             if documents.count == 1 && documents[0].filePath == nil && documents[0].content.isEmpty && !documents[0].isDirty {
                 documents = [doc]
@@ -2896,18 +2951,57 @@ public final class NppWorkspace: ObservableObject {
         guard let doc = activeDocument, !query.isEmpty else { return 0 }
         if purgeExisting {
             doc.clearBookmarks()
+            clearStyle(styleIndex: 0)
         }
         var matches = searchInDocument(doc: doc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
         if let limitRange = inRange, limitRange.length > 0 {
             matches = matches.filter { NSIntersectionRange(NSRange(location: $0.charPosition, length: $0.matchLength), limitRange).length > 0 }
         }
-        if bookmarkLine {
-            for match in matches {
+        var markedRanges = doc.styledTokenRanges[0] ?? []
+        for match in matches {
+            let r = NSRange(location: match.charPosition, length: match.matchLength)
+            if r.length > 0 && !markedRanges.contains(r) {
+                markedRanges.append(r)
+            }
+            if bookmarkLine {
                 doc.bookmarkedLines.insert(match.lineNumber)
             }
         }
+        doc.styledTokenRanges[0] = markedRanges
+        if let ts = activeTextView?.textStorage {
+            let color = Self.tokenStyleColor(for: 0)
+            ts.beginEditing()
+            for r in markedRanges where NSMaxRange(r) <= ts.length {
+                ts.addAttribute(.backgroundColor, value: color, range: r)
+            }
+            ts.endEditing()
+        }
         objectWillChange.send()
         return matches.count
+    }
+
+    public func clearAllMarks() {
+        clearAllBookmarks()
+        clearStyle(styleIndex: 0)
+    }
+
+    public func copyMarkedText() {
+        guard let doc = activeDocument else { return }
+        if let ranges = doc.styledTokenRanges[0], !ranges.isEmpty {
+            let nsStr = doc.content as NSString
+            let sorted = ranges.sorted { $0.location < $1.location }
+            var extracted: [String] = []
+            for r in sorted where NSMaxRange(r) <= nsStr.length && r.length > 0 {
+                extracted.append(nsStr.substring(with: r))
+            }
+            if !extracted.isEmpty {
+                let text = extracted.joined(separator: "\n")
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                return
+            }
+        }
+        copyBookmarkedLines()
     }
 
     // MARK: - Notepad++ Find in Files
@@ -4187,7 +4281,13 @@ public final class NppWorkspace: ObservableObject {
         closedFilePaths.removeAll()
     }
 
-    @Published public var isOverwriteMode: Bool = false
+    @Published public var isOverwriteMode: Bool = false {
+        didSet {
+            if insertMode != !isOverwriteMode {
+                insertMode = !isOverwriteMode
+            }
+        }
+    }
 
     // MARK: - Authentic Notepad++ Macro Subsystem (NppCommands.cpp L1441-1506, RunMacroDlg.cpp, NppBigSwitch.cpp L1589-1705)
     public enum NppMacroStep: Codable, Equatable {
@@ -5370,9 +5470,9 @@ public final class NppWorkspace: ObservableObject {
         case .toggleComment:
             withTextView(tv: tv, doc: doc) { NppEditOperations.toggleComment(in: $0, language: doc.language) }
         case .insertDateTime:
-            withTextView(tv: tv, doc: doc) { NppEditOperations.insertDateTime(in: $0, isLong: false) }
+            withTextView(tv: tv, doc: doc) { NppEditOperations.insertDateTime(in: $0, isLong: false, reverse: self.dateTimeReverseOrder) }
         case .insertDateTimeLong:
-            withTextView(tv: tv, doc: doc) { NppEditOperations.insertDateTime(in: $0, isLong: true) }
+            withTextView(tv: tv, doc: doc) { NppEditOperations.insertDateTime(in: $0, isLong: true, reverse: self.dateTimeReverseOrder) }
         case .insertDateTimeCustomized:
             withTextView(tv: tv, doc: doc) { NppEditOperations.insertCustomDateTime(in: $0, format: self.customDateFormat) }
         case .saveDocument:
@@ -5428,6 +5528,37 @@ public final class NppWorkspace: ObservableObject {
         } else {
             doc.foldedLines.remove(targetLine)
         }
+    }
+
+    public func foldAll() {
+        guard let doc = activeDocument else { return }
+        let lines = doc.content.nppLines()
+        var folded = Set<Int>()
+        for (idx, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasSuffix("{") || trimmed.hasSuffix(":") || trimmed.hasSuffix("[") || trimmed.hasSuffix("(") {
+                folded.insert(idx + 1)
+            } else if !trimmed.isEmpty && idx + 1 < lines.count {
+                let curIndent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
+                let nextLine = lines[idx + 1]
+                let nextTrimmed = nextLine.trimmingCharacters(in: .whitespaces)
+                let nextIndent = nextLine.prefix(while: { $0 == " " || $0 == "\t" }).count
+                if !nextTrimmed.isEmpty && nextIndent > curIndent {
+                    folded.insert(idx + 1)
+                }
+            }
+        }
+        if folded.isEmpty && !lines.isEmpty {
+            folded.insert(1)
+        }
+        doc.foldedLines = folded
+        objectWillChange.send()
+    }
+
+    public func unfoldAll() {
+        guard let doc = activeDocument else { return }
+        doc.foldedLines.removeAll()
+        objectWillChange.send()
     }
 
     // Direct editor actions working reliably regardless of UI focus
@@ -5794,6 +5925,7 @@ public final class NppWorkspace: ObservableObject {
 
     public static func tokenStyleColor(for styleIndex: Int) -> NSColor {
         switch styleIndex {
+        case 0: return NSColor(calibratedRed: 1.00, green: 0.25, blue: 0.25, alpha: 0.45) // Mark Style (SCE_UNIVERSAL_FOUND_STYLE): Red/Salmon
         case 1: return NSColor(calibratedRed: 0.00, green: 1.00, blue: 1.00, alpha: 0.40) // 1st Style: Cyan (#00FFFF)
         case 2: return NSColor(calibratedRed: 1.00, green: 0.50, blue: 0.00, alpha: 0.40) // 2nd Style: Orange (#FF8000)
         case 3: return NSColor(calibratedRed: 1.00, green: 1.00, blue: 0.00, alpha: 0.40) // 3rd Style: Yellow (#FFFF00)
@@ -5920,7 +6052,7 @@ public final class NppWorkspace: ObservableObject {
 
     /// `IDM_SEARCH_UNMARKALLEXT1..5` (`Clear Style` -> `Clear 1st..5th Style`)
     public func clearStyle(styleIndex: Int) {
-        guard (1...5).contains(styleIndex), let doc = activeDocument else { return }
+        guard (0...5).contains(styleIndex), let doc = activeDocument else { return }
         let removedRanges = doc.styledTokenRanges.removeValue(forKey: styleIndex) ?? []
         if let ts = activeTextView?.textStorage {
             ts.beginEditing()

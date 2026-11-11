@@ -839,6 +839,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         viewMenu.addItem(withTitle: tr("Toggle Word Wrap"), action: #selector(menuToggleWordWrap), keyEquivalent: "")
         viewMenu.addItem(NSMenuItem.separator())
+        let foldAllItem = NSMenuItem(title: tr("Fold All"), action: #selector(menuFoldAll), keyEquivalent: "0")
+        foldAllItem.keyEquivalentModifierMask = [.option]
+        viewMenu.addItem(foldAllItem)
+        let unfoldAllItem = NSMenuItem(title: tr("Unfold All"), action: #selector(menuUnfoldAll), keyEquivalent: "0")
+        unfoldAllItem.keyEquivalentModifierMask = [.option, .shift]
+        viewMenu.addItem(unfoldAllItem)
+        let foldCurItem = NSMenuItem(title: tr("Fold Current Level"), action: #selector(menuFoldCurrentLevel), keyEquivalent: "f")
+        foldCurItem.keyEquivalentModifierMask = [.command, .control]
+        viewMenu.addItem(foldCurItem)
+        let unfoldCurItem = NSMenuItem(title: tr("Unfold Current Level"), action: #selector(menuUnfoldCurrentLevel), keyEquivalent: "f")
+        unfoldCurItem.keyEquivalentModifierMask = [.command, .control, .shift]
+        viewMenu.addItem(unfoldCurItem)
+        viewMenu.addItem(NSMenuItem.separator())
         viewMenu.addItem(withTitle: tr("Document List"), action: #selector(menuToggleDocumentList), keyEquivalent: "")
         viewMenu.addItem(withTitle: tr("Folder as Workspace"), action: #selector(menuToggleFolderAsWorkspace), keyEquivalent: "")
 
@@ -1056,6 +1069,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for saved in workspace.savedMacros {
                 let savedItem = NSMenuItem(title: tr(saved.name), action: #selector(menuRunSavedMacro(_:)), keyEquivalent: "")
                 savedItem.representedObject = saved.name
+                if !saved.shortcut.isEmpty && saved.shortcut != "None" {
+                    configureRunShortcut(saved.shortcut, for: savedItem)
+                }
                 macroMenu.addItem(savedItem)
             }
             macroMenu.addItem(NSMenuItem.separator())
@@ -1175,7 +1191,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         helpMenuItem.submenu = helpMenu
         mainMenu.addItem(helpMenuItem)
 
+        applyCustomShortcuts(to: mainMenu)
         NSApp.mainMenu = mainMenu
+    }
+
+    public func applyCustomShortcuts(to menu: NSMenu) {
+        guard !workspace.customShortcuts.isEmpty else { return }
+        for (entryId, shortcut) in workspace.customShortcuts {
+            let parts = entryId.split(separator: "|", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let rawName = parts[1]
+            let targetTitles: [String]
+            switch rawName {
+            case "Word Wrap":
+                targetTitles = ["Toggle Word Wrap", "Word Wrap", workspace.tr("Toggle Word Wrap"), workspace.tr("Word Wrap")]
+            case "SCI_LINECUT":
+                targetTitles = ["Cut Current Line", workspace.tr("Cut Current Line")]
+            case "SCI_LINEDELETE":
+                targetTitles = ["Remove Current Line", workspace.tr("Remove Current Line")]
+            default:
+                targetTitles = [rawName, workspace.tr(rawName)]
+            }
+            for item in Self.findMenuItems(matching: targetTitles, in: menu) {
+                if shortcut == "None" || shortcut.isEmpty {
+                    item.keyEquivalent = ""
+                    item.keyEquivalentModifierMask = []
+                } else if configureRunShortcut(shortcut, for: item), !item.keyEquivalent.isEmpty {
+                    Self.clearConflictingShortcuts(
+                        keyEquivalent: item.keyEquivalent,
+                        modifierMask: item.keyEquivalentModifierMask,
+                        excluding: item,
+                        in: menu
+                    )
+                }
+            }
+        }
+    }
+
+    private static func clearConflictingShortcuts(
+        keyEquivalent: String,
+        modifierMask: NSEvent.ModifierFlags,
+        excluding targetItem: NSMenuItem,
+        in menu: NSMenu
+    ) {
+        for item in menu.items {
+            if item !== targetItem,
+               item.submenu == nil,
+               item.keyEquivalent == keyEquivalent,
+               item.keyEquivalentModifierMask == modifierMask {
+                item.keyEquivalent = ""
+                item.keyEquivalentModifierMask = []
+            }
+            if let sub = item.submenu {
+                clearConflictingShortcuts(
+                    keyEquivalent: keyEquivalent,
+                    modifierMask: modifierMask,
+                    excluding: targetItem,
+                    in: sub
+                )
+            }
+        }
+    }
+
+    private static func findMenuItems(matching titles: [String], in menu: NSMenu) -> [NSMenuItem] {
+        var results: [NSMenuItem] = []
+        for item in menu.items {
+            if item.submenu == nil,
+               titles.contains(where: { item.title.caseInsensitiveCompare($0) == .orderedSame }) {
+                results.append(item)
+            }
+            if let sub = item.submenu {
+                results.append(contentsOf: findMenuItems(matching: titles, in: sub))
+            }
+        }
+        return results
     }
 
     // MARK: - Action Handlers
@@ -1316,10 +1405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if workspace.moveActiveFileToTrash() { updateWindowTitle() }
     }
     @objc func menuPrint() {
-        if let tv = getActiveTextView() {
-            let printOp = NSPrintOperation(view: tv)
-            printOp.run()
-        }
+        workspace.printActive()
     }
 
     @objc func menuFind() { workspace.openFind() }
@@ -1449,6 +1535,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     @objc func menuToggleWordWrap() { workspace.isWordWrapEnabled.toggle() }
+    @objc func menuFoldAll() { workspace.foldAll() }
+    @objc func menuUnfoldAll() { workspace.unfoldAll() }
+    @objc func menuFoldCurrentLevel() { workspace.foldCurrentLevel() }
+    @objc func menuUnfoldCurrentLevel() { workspace.unfoldCurrentLevel() }
     @objc func menuToggleFullScreen() {
         window?.toggleFullScreen(nil)
         workspace.isFullScreen.toggle()
@@ -1528,7 +1618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func menuIncreaseLineIndent() {
         if let tv = getActiveTextView() {
-            NppEditOperations.increaseLineIndent(in: tv, spaceCount: workspace.tabSize, useTabs: true)
+            NppEditOperations.increaseLineIndent(in: tv, spaceCount: workspace.tabSize, useTabs: !workspace.replaceTabBySpace)
         }
     }
     @objc func menuDecreaseLineIndent() {
@@ -1719,7 +1809,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func menuTabToSpace() {
         workspace.recordMacroStep(.tabToSpace)
         let sel = getActiveTextView()?.selectedRange()
-        if let doc = workspace.activeDocument { NppEditOperations.tabToSpace(in: doc, selectedRange: sel) }
+        if let doc = workspace.activeDocument { NppEditOperations.tabToSpace(in: doc, spaceCount: workspace.tabSize, selectedRange: sel) }
     }
     @objc func menuSpaceToTab() {
         workspace.recordMacroStep(.spaceToTab)
@@ -1738,11 +1828,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func menuInsertDateShort() {
         workspace.recordMacroStep(.insertDateTime)
-        if let tv = getActiveTextView() { NppEditOperations.insertDateTime(in: tv, isLong: false) }
+        if let tv = getActiveTextView() { NppEditOperations.insertDateTime(in: tv, isLong: false, reverse: workspace.dateTimeReverseOrder) }
     }
     @objc func menuInsertDateLong() {
         workspace.recordMacroStep(.insertDateTimeLong)
-        if let tv = getActiveTextView() { NppEditOperations.insertDateTime(in: tv, isLong: true) }
+        if let tv = getActiveTextView() { NppEditOperations.insertDateTime(in: tv, isLong: true, reverse: workspace.dateTimeReverseOrder) }
     }
     @objc func menuInsertDateCustomized() {
         workspace.recordMacroStep(.insertDateTimeCustomized)

@@ -277,6 +277,9 @@ public struct NppFindReplaceDialogView: View {
                             workspace.findAllInAllOpenedDocs(query: processedQuery(), matchCase: matchCase, wholeWord: matchWholeWord, useRegex: searchMode == 2)
                             let total = workspace.searchFileGroups.reduce(0) { $0 + $1.matches.count }
                             statusMessage = "Found \(total) matches across opened files."
+                            if !workspace.findDlgAlwaysVisible {
+                                closeDialog()
+                            }
                         }
                         actionBtn(workspace.tr("Find All in Current Document")) {
                             workspace.findAllInCurrentDoc(query: processedQuery(), matchCase: matchCase, wholeWord: matchWholeWord, useRegex: searchMode == 2)
@@ -336,6 +339,9 @@ public struct NppFindReplaceDialogView: View {
                             )
                             let total = workspace.searchFileGroups.reduce(0) { $0 + $1.matches.count }
                             statusMessage = "Find in Projects: \(total) hits in \(workspace.searchFileGroups.count) files."
+                            if !workspace.findDlgAlwaysVisible {
+                                closeDialog()
+                            }
                         }
                         .disabled(!hasAnyPanel)
 
@@ -368,12 +374,12 @@ public struct NppFindReplaceDialogView: View {
                         findNextButtonCluster
                         actionBtn(workspace.tr("Mark All")) { runMarkAll() }
                         actionBtn(workspace.tr("Clear all marks")) {
-                            workspace.clearAllBookmarks()
+                            workspace.clearAllMarks()
                             statusMessage = "All marks cleared."
                         }
                         actionBtn(workspace.tr("Copy Marked Text")) {
-                            workspace.copyBookmarkedLines()
-                            statusMessage = "Copied bookmarked lines to clipboard."
+                            workspace.copyMarkedText()
+                            statusMessage = "Copied marked text to clipboard."
                         }
                     }
 

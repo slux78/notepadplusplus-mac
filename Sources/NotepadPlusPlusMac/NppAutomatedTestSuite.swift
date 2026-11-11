@@ -1484,6 +1484,9 @@ final class NppAutomatedTestSuite {
             // Milestone 3: UDL Visual Style Configuration Dialog Suite
             runMilestone3UDLTestSuite(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
+            // Non-Preference Menus, Context Menus, Toolbars, Status Bar & Dialogs Audit Suite
+            runNonPreferenceMenuAndDialogAuditTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
             appDelegate.setupMenuBar()
@@ -10973,6 +10976,147 @@ final class NppAutomatedTestSuite {
         assertTest("M3.UI.5.7: isUserDefineDialogDocked toggle transitions dock state machine cleanly",
                    ws.isUserDefineDialogDocked != defaultDocked)
         ws.isUserDefineDialogDocked = defaultDocked
+
+        ws.closeAll(force: true)
+    }
+
+    static func runNonPreferenceMenuAndDialogAuditTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: (String, Bool) -> Void
+    ) {
+        print("\n--- Testing Non-Preference Menus, Context Menus, Status Bar & Dialogs Audit ---")
+        ws.closeAll(force: true)
+
+        // 1. Status Bar INS / OVR bidirectional sync with insertMode
+        ws.insertMode = true
+        ws.isOverwriteMode.toggle()
+        assertTest("Audit.1: Toggling isOverwriteMode to true sets insertMode to false",
+                   ws.isOverwriteMode == true && ws.insertMode == false)
+        ws.isOverwriteMode.toggle()
+        assertTest("Audit.2: Toggling isOverwriteMode back to false sets insertMode to true",
+                   ws.isOverwriteMode == false && ws.insertMode == true)
+
+        // 2. View Menu -> Fold All / Unfold All / Fold Current Level / Unfold Current Level
+        appDelegate.setupMenuBar()
+        let viewMenu = NSApp.mainMenu?.items.first { $0.submenu?.title == ws.tr("View") }?.submenu
+        let hasFoldMenuItems = (viewMenu?.items.contains { $0.title == ws.tr("Fold All") } == true) &&
+                               (viewMenu?.items.contains { $0.title == ws.tr("Unfold All") } == true) &&
+                               (viewMenu?.items.contains { $0.title == ws.tr("Fold Current Level") } == true) &&
+                               (viewMenu?.items.contains { $0.title == ws.tr("Unfold Current Level") } == true)
+        assertTest("Audit.3: View menu contains Fold All, Unfold All, Fold Current Level, Unfold Current Level",
+                   hasFoldMenuItems)
+
+        ws.activeDocument?.content = "func foo() {\n    let x = 1\n}\nfunc bar() {\n    let y = 2\n}"
+        appDelegate.menuFoldAll()
+        assertTest("Audit.4: menuFoldAll folds block header lines",
+                   ws.activeDocument?.foldedLines.contains(1) == true && ws.activeDocument?.foldedLines.contains(4) == true)
+        appDelegate.menuUnfoldAll()
+        assertTest("Audit.5: menuUnfoldAll clears all folded lines",
+                   ws.activeDocument?.foldedLines.isEmpty == true)
+
+        // 3. Edit -> Increase Line Indent honors replaceTabBySpace & Blank Operations -> TAB to Space honors tabSize
+        let tv = NppTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        tv.workspace = ws
+        ws.activeTextView = tv
+        ws.tabSize = 3
+        ws.replaceTabBySpace = true
+        tv.string = "hello"
+        tv.setSelectedRange(NSRange(location: 0, length: 5))
+        ws.activeDocument?.content = "hello"
+        appDelegate.menuIncreaseLineIndent()
+        assertTest("Audit.6: menuIncreaseLineIndent uses spaces when replaceTabBySpace is true",
+                   tv.string == "   hello")
+
+        ws.activeDocument?.content = "\thello"
+        tv.string = "\thello"
+        tv.setSelectedRange(NSRange(location: 0, length: 0))
+        appDelegate.menuTabToSpace()
+        assertTest("Audit.7: menuTabToSpace uses workspace.tabSize (3 spaces)",
+                   ws.activeDocument?.content == "   hello")
+        ws.tabSize = 4
+        ws.replaceTabBySpace = false
+
+        // 4. Saved Macro shortcut & Shortcut Mapper customShortcuts applied in setupMenuBar
+        ws.savedMacros.append(NppWorkspace.NppSavedMacro(name: "AuditTestMacro", shortcut: "Cmd+Shift+M", steps: [.uppercase]))
+        ws.customShortcuts["MIME Tools|Base64 Encode"] = "Cmd+Alt+B"
+        appDelegate.setupMenuBar()
+        let macroMenu = NSApp.mainMenu?.items.first { $0.submenu?.title == ws.tr("Macro") }?.submenu
+        let savedMacroItem = macroMenu?.items.first { $0.title == "AuditTestMacro" }
+        assertTest("Audit.8: Saved macro shortcut is applied to Macro menu item",
+                   savedMacroItem?.keyEquivalent == "m" && savedMacroItem?.keyEquivalentModifierMask.contains(.command) == true)
+
+        let pluginsMenu = NSApp.mainMenu?.items.first { $0.submenu?.title == ws.tr("Plugins") }?.submenu
+        let mimeMenu = pluginsMenu?.items.first { $0.title == ws.tr("MIME Tools") }?.submenu
+        let b64Item = mimeMenu?.items.first { $0.title == ws.tr("Base64 Encode") }
+        assertTest("Audit.9: Shortcut Mapper customShortcuts updates menu item keyEquivalent",
+                   b64Item?.keyEquivalent == "b" && b64Item?.keyEquivalentModifierMask.contains(.option) == true)
+        ws.savedMacros.removeAll { $0.name == "AuditTestMacro" }
+        ws.customShortcuts.removeValue(forKey: "MIME Tools|Base64 Encode")
+        appDelegate.setupMenuBar()
+
+        // 5. Style Configurator: styleUserExtensions, styleUserKeywords, and language token color overrides
+        ws.styleUserExtensions["Python"] = "mycustompy pyext"
+        let customExtUrl = URL(fileURLWithPath: "/tmp/test_audit_ext.mycustompy")
+        try? "x = 1".write(to: customExtUrl, atomically: true, encoding: .utf8)
+        ws.openFile(url: customExtUrl)
+        assertTest("Audit.10: styleUserExtensions maps custom extension to language on openFile",
+                   ws.activeDocument?.language == "Python")
+        try? FileManager.default.removeItem(at: customExtUrl)
+        ws.styleUserExtensions.removeValue(forKey: "Python")
+
+        ws.styleUserKeywords["Swift|INSTRUCTION WORD"] = "mycustomkw"
+        let kwStorage = NSTextStorage(string: "mycustomkw normalword")
+        let baseTheme = NppTheme.theme(withId: "dark")
+        NppSyntaxHighlighter.highlight(
+            textStorage: kwStorage,
+            language: "Swift",
+            isDarkMode: true,
+            theme: baseTheme,
+            userKeywords: ws.styleUserKeywords
+        )
+        let kwColor = kwStorage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        let normalColor = kwStorage.attribute(.foregroundColor, at: 12, effectiveRange: nil) as? NSColor
+        assertTest("Audit.11: styleUserKeywords highlights user-defined keyword in NppSyntaxHighlighter",
+                   kwColor != nil && kwColor != normalColor)
+        ws.styleUserKeywords.removeValue(forKey: "Swift|INSTRUCTION WORD")
+
+        ws.activeDocument?.language = "Swift"
+        let customNumColor = NSColor(calibratedRed: 0.99, green: 0.11, blue: 0.22, alpha: 1.0)
+        let numKey = ws.styleOverrideKey(themeId: ws.themeMode, language: "Swift", style: "NUMBER")
+        ws.styleOverrides[numKey] = NppWorkspace.NppStyleOverride(fgColor: customNumColor)
+        assertTest("Audit.12: Language style override for NUMBER updates currentTheme.numberColor",
+                   ws.currentTheme.numberColor == customNumColor)
+        ws.styleOverrides.removeValue(forKey: numKey)
+
+        // 6. Search -> Mark...: markAll (without bookmarkLine), copyMarkedText, clearAllMarks
+        ws.activeDocument?.content = "apple banana apple cherry"
+        tv.string = "apple banana apple cherry"
+        ws.activeDocument?.clearBookmarks()
+        ws.activeDocument?.styledTokenRanges.removeAll()
+        let markCount = ws.markAll(query: "apple", matchCase: true, wholeWord: true, useRegex: false, bookmarkLine: false, purgeExisting: true)
+        assertTest("Audit.13: markAll stores marked token ranges in styledTokenRanges[0] even when bookmarkLine is false",
+                   markCount == 2 && ws.activeDocument?.styledTokenRanges[0]?.count == 2 && ws.activeDocument?.bookmarkedLines.isEmpty == true)
+
+        ws.copyMarkedText()
+        let copiedMarks = NSPasteboard.general.string(forType: .string) ?? ""
+        assertTest("Audit.14: copyMarkedText copies marked token substrings to clipboard",
+                   copiedMarks == "apple\napple")
+
+        ws.clearAllMarks()
+        assertTest("Audit.15: clearAllMarks clears styledTokenRanges[0] and bookmarks",
+                   (ws.activeDocument?.styledTokenRanges[0] == nil) && ws.activeDocument?.bookmarkedLines.isEmpty == true)
+
+        // 7. Folder drop via openFile(url:) calls handleDroppedFolder
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("npp_audit_drop_dir_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        ws.dropFolderOpenAllFiles = false
+        ws.openFile(url: tempDir)
+        assertTest("Audit.16: Passing a directory URL to openFile triggers handleDroppedFolder",
+                   ws.workspaceFolders.contains(where: { $0.path == tempDir.path }) && ws.showFolderAsWorkspace == true)
+        ws.workspaceFolders.removeAll { $0.path == tempDir.path }
+        ws.showFolderAsWorkspace = false
+        try? FileManager.default.removeItem(at: tempDir)
 
         ws.closeAll(force: true)
     }

@@ -27,7 +27,10 @@ final class TabMenuTarget: NSObject {
     }
 
     @objc func openWindowsDialog() {
-        workspace?.showDocumentList = true
+        if let ws = workspace {
+            ws.showWindowsDialog = true
+            NppWindowsDialogWindowController.shared.show(workspace: ws)
+        }
     }
 }
 
@@ -523,7 +526,8 @@ public struct NppTabItemView: View {
             Divider()
 
             Button(workspace.tr("Save")) {
-                if doc.filePath != nil {
+                if let path = doc.filePath {
+                    workspace.performBackupOnSave(for: path)
                     _ = doc.save()
                 } else {
                     workspace.promptSaveAs(for: doc)

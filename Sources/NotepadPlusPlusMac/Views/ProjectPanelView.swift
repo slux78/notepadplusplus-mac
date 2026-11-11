@@ -340,7 +340,7 @@ public struct NppProjectPanelView: View {
 
     private func handleSaveAsWorkspace() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "workspace.npp_project"
+        panel.nameFieldStringValue = workspace.defaultWorkspaceSaveFilename()
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 try projectWorkspace.saveWorkspace(to: url)
@@ -353,7 +353,7 @@ public struct NppProjectPanelView: View {
 
     private func handleSaveCopyAsWorkspace() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "copy_workspace.npp_project"
+        panel.nameFieldStringValue = "copy_\(workspace.defaultWorkspaceSaveFilename())"
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 let xml = try projectWorkspace.exportToXml()

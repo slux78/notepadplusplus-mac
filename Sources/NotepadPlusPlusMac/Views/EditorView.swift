@@ -97,7 +97,8 @@ public struct NppEditorView: NSViewRepresentable {
                 baseFont: targetFont,
                 theme: theme,
                 userDefinedLanguage: workspace.userDefinedLanguage(named: document.language),
-                treatBackslashAsEscapeForSql: workspace.treatBackslashAsEscapeForSql
+                treatBackslashAsEscapeForSql: workspace.treatBackslashAsEscapeForSql,
+                userKeywords: workspace.styleUserKeywords
             )
         }
 
@@ -535,7 +536,8 @@ public struct NppEditorView: NSViewRepresentable {
                                            isDarkMode: isDark, baseFont: tv.font,
                                            theme: parent.workspace.currentTheme,
                                            userDefinedLanguage: parent.workspace.userDefinedLanguage(named: parent.document.language),
-                                           treatBackslashAsEscapeForSql: parent.workspace.treatBackslashAsEscapeForSql)
+                                           treatBackslashAsEscapeForSql: parent.workspace.treatBackslashAsEscapeForSql,
+                                           userKeywords: parent.workspace.styleUserKeywords)
             if !parent.document.styledTokenRanges.isEmpty {
                 ts.beginEditing()
                 for (styleIdx, tokenRanges) in parent.document.styledTokenRanges {
@@ -2720,8 +2722,55 @@ public final class NppTextView: NSTextView {
                 alert.runModal()
             }
         default:
-            print("Custom XML action: \(name)")
+            if let idStr = item.id, let cmdId = Int(idStr) {
+                switch cmdId {
+                case 42001: self.cut(nil); return
+                case 42002: self.copy(nil); return
+                case 42003: self.undoManager?.undo(); return
+                case 42004: self.undoManager?.redo(); return
+                case 42005: self.paste(nil); return
+                case 42006: self.delete(nil); return
+                case 42007: self.selectAll(nil); return
+                case 42024: contextTrimTrailing(); return
+                case 43001: resolvedWorkspace?.openFind(); return
+                case 43003: resolvedWorkspace?.openReplace(); return
+                case 43022, 43024, 43026, 43028, 43030:
+                    _ = resolvedWorkspace?.styleAllOccurrencesOfToken(styleIndex: (cmdId - 43022) / 2 + 1)
+                    return
+                case 43023, 43025, 43027, 43029, 43031:
+                    resolvedWorkspace?.clearStyle(styleIndex: (cmdId - 43023) / 2 + 1)
+                    return
+                case 43032:
+                    resolvedWorkspace?.clearAllStyles()
+                    return
+                case 43054:
+                    resolvedWorkspace?.openMark()
+                    return
+                default: break
+                }
+            }
+            if let mainMenu = NSApp?.mainMenu,
+               let matchedItem = Self.findMenuItem(named: name, in: mainMenu, workspace: resolvedWorkspace),
+               let action = matchedItem.action {
+                _ = NSApp.sendAction(action, to: matchedItem.target, from: matchedItem)
+            }
         }
+    }
+
+    private static func findMenuItem(named title: String, in menu: NSMenu, workspace: NppWorkspace?) -> NSMenuItem? {
+        let localized = workspace?.tr(title) ?? title
+        for item in menu.items {
+            if item.title.caseInsensitiveCompare(title) == .orderedSame ||
+                item.title.caseInsensitiveCompare(localized) == .orderedSame {
+                if item.action != nil && item.submenu == nil {
+                    return item
+                }
+            }
+            if let sub = item.submenu, let found = findMenuItem(named: title, in: sub, workspace: workspace) {
+                return found
+            }
+        }
+        return nil
     }
 
     // Context Menu Handlers
@@ -2816,18 +2865,21 @@ public final class NppTextView: NSTextView {
 
     @objc func contextTrimTrailing() {
         guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        let sel = self.selectedRange()
         resolvedWorkspace?.recordMacroStep(.trimTrailingSpace)
-        performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .trailing) }
+        performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .trailing, selectedRange: sel) }
     }
     @objc func contextTrimLeading() {
         guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        let sel = self.selectedRange()
         resolvedWorkspace?.recordMacroStep(.trimLeadingSpace)
-        performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .leading) }
+        performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .leading, selectedRange: sel) }
     }
     @objc func contextTrimBoth() {
         guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        let sel = self.selectedRange()
         resolvedWorkspace?.recordMacroStep(.trimBothSpace)
-        performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .both) }
+        performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .both, selectedRange: sel) }
     }
     @objc func contextEolToSpace() {
         guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
@@ -2847,19 +2899,21 @@ public final class NppTextView: NSTextView {
 
     @objc func contextInsertDateShort() {
         guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
-        NppEditOperations.insertDateTime(in: self, isLong: false)
+        NppEditOperations.insertDateTime(in: self, isLong: false, reverse: resolvedWorkspace?.dateTimeReverseOrder ?? false)
     }
     @objc func contextInsertDateLong() {
         guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
-        NppEditOperations.insertDateTime(in: self, isLong: true)
+        NppEditOperations.insertDateTime(in: self, isLong: true, reverse: resolvedWorkspace?.dateTimeReverseOrder ?? false)
     }
 
     @objc func contextSearchGoogle() {
         let sel = self.selectedRange()
         guard sel.length > 0 else { return }
         let text = (self.string as NSString).substring(with: sel)
-        if let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-           let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
+        if let url = resolvedWorkspace?.resolvedSearchUrl(for: text) {
+            NSWorkspace.shared.open(url)
+        } else if let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                  let url = URL(string: "https://www.google.com/search?q=\(encoded)") {
             NSWorkspace.shared.open(url)
         }
     }

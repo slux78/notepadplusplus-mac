@@ -68,7 +68,8 @@ public final class NppSyntaxHighlighter {
     public static func highlight(textStorage: NSTextStorage, language: String, isDarkMode: Bool,
                                  baseFont: NSFont? = nil, theme: NppTheme? = nil,
                                  maxFileSizeMB: Int = 200, userDefinedLanguage: NppUserDefineLanguage? = nil,
-                                 treatBackslashAsEscapeForSql: Bool = false) {
+                                 treatBackslashAsEscapeForSql: Bool = false,
+                                 userKeywords: [String: String] = [:]) {
         let string = textStorage.string
         guard !string.isEmpty else { return }
         if maxFileSizeMB > 0 && (string as NSString).length > maxFileSizeMB * 1024 * 1024 {
@@ -156,6 +157,24 @@ public final class NppSyntaxHighlighter {
         if let flows = NppSyntaxRules.controlFlowKeywords[language] {
             let pattern = "\\b(" + flows.joined(separator: "|") + ")\\b"
             applyPattern(pattern, in: string, color: controlFlowColor, textStorage: textStorage)
+        }
+
+        // 7b. User-defined Keywords from Style Configurator (workspace.styleUserKeywords)
+        if !userKeywords.isEmpty {
+            let langKeys = (language == "Shell") ? ["Shell", "Bash / Shell"] : [language]
+            for lk in langKeys {
+                for (styleName, targetColor) in [("INSTRUCTION WORD", declarationColor), ("TYPE WORD", typeColor)] {
+                    if let kwStr = userKeywords["\(lk)|\(styleName)"], !kwStr.isEmpty {
+                        let words = kwStr.split(whereSeparator: { $0.isWhitespace })
+                            .map { NSRegularExpression.escapedPattern(for: String($0)) }
+                            .filter { !$0.isEmpty }
+                        if !words.isEmpty {
+                            let pattern = "\\b(" + words.joined(separator: "|") + ")\\b"
+                            applyPattern(pattern, in: string, color: targetColor, textStorage: textStorage)
+                        }
+                    }
+                }
+            }
         }
 
         // 8. Preprocessor & Decorators

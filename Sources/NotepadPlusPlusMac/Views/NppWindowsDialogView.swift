@@ -259,7 +259,12 @@ public struct NppWindowsDialogView: View {
     private func saveSelected() {
         for id in selectedDocIds {
             if let doc = workspace.documents.first(where: { $0.id == id }) {
-                _ = doc.save()
+                if let path = doc.filePath {
+                    workspace.performBackupOnSave(for: path)
+                    _ = doc.save()
+                } else {
+                    workspace.promptSaveAs(for: doc)
+                }
             }
         }
     }

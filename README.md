@@ -6,6 +6,19 @@ A high-performance, native macOS port of **Notepad++**, honoring the upstream fe
 
 ---
 
+## Upstream Base Version (Original Notepad++)
+
+- **Original Version**: **Notepad++ v8.9.8.1** (`VERSION_INTERNAL_VALUE`: `8.981`, `VERSION_DIGITALVALUE`: `8, 9, 8, 1`)
+- **Upstream Repository**: [notepad-plus-plus/notepad-plus-plus](https://github.com/notepad-plus-plus/notepad-plus-plus)
+- **Upstream Commit Reference**: [`fd2f5c2783`](https://github.com/notepad-plus-plus/notepad-plus-plus/commit/fd2f5c27839e943518b5a53325ffd5e95bb3e0d9)
+- **Ported Upstream Components & Resources**:
+  - Menu & dialog layouts (`Notepad_plus.rc`, `menuCmdID.h`, `Preferences.rc`, `FindReplaceDlg.rc`, `UserDefineDialog.rc`, `ShortcutMapper.rc`)
+  - Encoding detection core (`PowerEditor/src/uchardet`)
+  - Auto-completion definitions (`PowerEditor/installer/APIs/*.xml`)
+  - Localization strings (`PowerEditor/installer/nativeLang/*.xml`) and theme stylers (`stylers.model.xml`, `themes/*.xml`)
+
+---
+
 ## Features
 
 - **Native macOS Experience**: Built with modern Swift, SwiftUI, AppKit, and Apple TextKit 2, combined with C++17 encoding cores (`uchardet` & `iconv`).

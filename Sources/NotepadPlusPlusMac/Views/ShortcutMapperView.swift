@@ -378,13 +378,15 @@ public struct NppShortcutMapperView: View {
             workspace.updateSavedMacro(named: entry.name,
                                        newName: newName ?? entry.name,
                                        newShortcut: newShortcut == "None" ? "" : newShortcut)
+            (NSApp?.delegate as? AppDelegate)?.setupMenuBar()
         } else if selectedTab == 2,
                   let saved = workspace.savedRunCommands.first(where: { $0.name == entry.name }) {
             _ = workspace.updateRunCommand(id: saved.id, name: newName ?? entry.name,
                                            shortcut: newShortcut == "None" ? "" : newShortcut)
-            (NSApp.delegate as? AppDelegate)?.setupMenuBar()
+            (NSApp?.delegate as? AppDelegate)?.setupMenuBar()
         } else {
             workspace.customShortcuts[entry.id] = newShortcut
+            (NSApp?.delegate as? AppDelegate)?.setupMenuBar()
         }
     }
 

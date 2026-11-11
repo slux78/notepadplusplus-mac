@@ -410,13 +410,23 @@ public struct NppDocumentMapView: View {
             Divider()
 
             ScrollView([.vertical, .horizontal], showsIndicators: false) {
-                Text(workspace.activeDocument?.content ?? "")
-                    .font(.system(size: 4, weight: .regular, design: .monospaced))
-                    .lineSpacing(1)
-                    .foregroundColor(.secondary)
-                    .padding(4)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                let lines = (workspace.activeDocument?.content ?? "").nppLines()
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { idx, lineText in
+                        Text(lineText.isEmpty ? " " : lineText)
+                            .font(.system(size: 4, weight: .regular, design: .monospaced))
+                            .foregroundColor(workspace.activeDocument?.cursorLine == (idx + 1) ? .accentColor : .secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                workspace.jumpToLine(idx + 1)
+                            }
+                    }
+                }
+                .padding(4)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .help(workspace.docPeekerOnMap ? (workspace.activeDocument.map { "\($0.title)\n\(String($0.content.prefix(200)))" } ?? "") : "")
             .background(Color(NSColor.textBackgroundColor).opacity(0.8))
         }
         .background(Color(NSColor.windowBackgroundColor))
