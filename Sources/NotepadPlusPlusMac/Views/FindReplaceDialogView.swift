@@ -103,7 +103,15 @@ public struct NppFindReplaceDialogView: View {
                             .onChange(of: findText) { newVal in
                                 workspace.findQueryText = newVal
                                 workspace.lastSearchQuery = newVal
+                                workspace.updateFindDialogHighlight(query: newVal)
                             }
+                        if workspace.findReplaceTab == 0 || workspace.findReplaceTab == 1 {
+                            Toggle(workspace.tr("Highlight all"), isOn: $workspace.findDlgHighlightAllMatches)
+                                .font(.system(size: 10))
+                                .toggleStyle(CheckboxToggleStyle())
+                                .fixedSize()
+                                .help(workspace.tr("Highlight all matches in the active document while typing"))
+                        }
                     }
 
                     // Replace With Row (shown in Replace, Find in Files & Find in Projects)
@@ -253,6 +261,14 @@ public struct NppFindReplaceDialogView: View {
                                     .toggleStyle(CheckboxToggleStyle())
                                 Toggle(workspace.tr("In selection"), isOn: $workspace.searchInSelection)
                                     .font(.system(size: 11))
+                                    .toggleStyle(CheckboxToggleStyle())
+                            }
+                            if workspace.findReplaceTab == 1 {
+                                Toggle(workspace.tr("Don't move to the following occurrence"), isOn: $workspace.replaceAndStop)
+                                    .font(.system(size: 10))
+                                    .toggleStyle(CheckboxToggleStyle())
+                                Toggle(workspace.tr("Confirm Replace All in All Opened Documents"), isOn: $workspace.confirmReplaceAllInAllOpenedDocs)
+                                    .font(.system(size: 10))
                                     .toggleStyle(CheckboxToggleStyle())
                             }
                         }
@@ -426,6 +442,27 @@ public struct NppFindReplaceDialogView: View {
                 findText = newQuery
             }
         }
+        .onChange(of: workspace.findDlgHighlightAllMatches) { _ in
+            workspace.updateFindDialogHighlight(query: findText)
+        }
+        .onChange(of: workspace.matchCase) { _ in
+            workspace.updateFindDialogHighlight(query: findText)
+        }
+        .onChange(of: workspace.matchWholeWord) { _ in
+            workspace.updateFindDialogHighlight(query: findText)
+        }
+        .onChange(of: workspace.searchMode) { _ in
+            workspace.updateFindDialogHighlight(query: findText)
+        }
+        .onChange(of: workspace.dotMatchesNewline) { _ in
+            workspace.updateFindDialogHighlight(query: findText)
+        }
+        .onChange(of: workspace.findReplaceTab) { _ in
+            workspace.updateFindDialogHighlight(query: findText)
+        }
+        .onChange(of: workspace.activeDocumentId) { _ in
+            workspace.updateFindDialogHighlight(query: findText)
+        }
         .onExitCommand {
             closeDialog()
         }
@@ -482,9 +519,11 @@ public struct NppFindReplaceDialogView: View {
         if workspace.findReplaceTab == 1 {
             inSelection = workspace.findAutoInSelection
         }
+        workspace.updateFindDialogHighlight(query: findText)
     }
 
     private func closeDialog() {
+        workspace.clearFindDialogHighlight()
         if let tv = workspace.activeTextView {
             tv.window?.makeFirstResponder(tv)
         }

@@ -396,6 +396,10 @@ public final class NppDocument: ObservableObject, Identifiable {
         case "cs": return "C#"
         case "rb": return "Ruby"
         case "php": return "PHP"
+        case "st": return "Structured Text"
+        case "r": return "R"
+        case "ini", "cfg": return "INI"
+        case "ps1", "psm1", "psd1": return "PowerShell"
         default:
             break
         }

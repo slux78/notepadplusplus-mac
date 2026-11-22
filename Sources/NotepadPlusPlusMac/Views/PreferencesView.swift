@@ -770,10 +770,21 @@ public struct NppPreferencesView: View {
                             Text("C++").tag("C++")
                             Text("Swift").tag("Swift")
                             Text("Python").tag("Python")
+                            Text("R").tag("R")
+                            Text("INI").tag("INI")
+                            Text("PowerShell").tag("PowerShell")
+                            Text("Shell").tag("Shell")
+                            Text("Structured Text").tag("Structured Text")
                             Text("HTML").tag("HTML")
                             Text("XML").tag("XML")
                             Text("JSON").tag("JSON")
                             Text("Markdown").tag("Markdown")
+                            if !workspace.userDefinedLanguages.isEmpty {
+                                Divider()
+                                ForEach(workspace.userDefinedLanguages) { udl in
+                                    Text("\(udl.name) (UDL)").tag(udl.name)
+                                }
+                            }
                         }
                         .labelsHidden()
                         .frame(width: 150)
@@ -1222,11 +1233,8 @@ public struct NppPreferencesView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Use Monospaced font in Find dialog (Need to restart Notepad++)", isOn: $workspace.useMonospacedFontInFindDlg)
                 Toggle("Find dialog remains open after search that outputs to results window", isOn: $workspace.findDlgAlwaysVisible)
-                Toggle("Confirm Replace All in All Opened Documents", isOn: $workspace.confirmReplaceAllInAllOpenedDocs)
-                Toggle("Replace: Don't move to the following occurrence", isOn: $workspace.replaceAndStop)
                 Toggle("Search Result window: show only one entry per found line if possible", isOn: $workspace.showOncePerFoundLine)
                 Toggle("Find in Files: Prefer on-disk file content over open buffers", isOn: $workspace.fifIgnoreOpenedFiles)
-                Toggle("Incremental Search: show the bar at the top", isOn: $workspace.incSearchBarAtTop)
             }
             .font(.system(size: 11))
             .toggleStyle(CheckboxToggleStyle())

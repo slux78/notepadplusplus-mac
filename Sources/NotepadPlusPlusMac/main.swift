@@ -314,6 +314,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateWindowTitle()
     }
 
+    func windowWillStartLiveResize(_ notification: Notification) {
+        (getActiveTextView() as? NppTextView)?.dismissPopups()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        (getActiveTextView() as? NppTextView)?.dismissPopups()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        (getActiveTextView() as? NppTextView)?.dismissPopups()
+    }
+
     func updateWindowTitle(for documentId: UUID? = nil) {
         let activeDoc: NppDocument?
         if let docId = documentId {
@@ -2506,7 +2518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func menuDebugInfo() {
         let alert = NSAlert()
         alert.messageText = "Debug Info"
-        alert.informativeText = "Notepad++ for Mac v8.9.8.1 (64-bit ARM Mach-O)\nBuild time: Oct 2026\nSystem: macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nCore Engine: Notepad++ upstream v8.9.8.1 uchardet + iconv streaming\nUI Engine: Apple TextKit 2 + SwiftUI AppKit Bridge"
+        alert.informativeText = "Notepad++ for Mac v8.9.9.1 (64-bit ARM Mach-O)\nBuild time: Nov 2026\nSystem: macOS \(ProcessInfo.processInfo.operatingSystemVersionString)\nCore Engine: Notepad++ upstream v8.9.9.1 uchardet + iconv streaming\nUI Engine: Apple TextKit 2 + SwiftUI AppKit Bridge"
         alert.alertStyle = .informational
         alert.runModal()
     }
@@ -2514,7 +2526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notepad++"
-        alert.informativeText = "Notepad++ v8.9.8.1 (64-bit)\n\nOriginal Author: Don HO\nLicense: GNU General Public License (GPLv3)\nHome: https://notepad-plus-plus.org/"
+        alert.informativeText = "Notepad++ v8.9.9.1 (64-bit)\n\nOriginal Author: Don HO\nLicense: GNU General Public License (GPLv3)\nHome: https://notepad-plus-plus.org/"
         alert.alertStyle = .informational
         alert.runModal()
     }
@@ -2931,31 +2943,37 @@ public struct NppCommandLineParser {
             if arg == "--run-tests" {
                 parsed.runTests = true
             } else if arg == "-openSession" {
-                if i + 1 < args.count && !args[i + 1].hasPrefix("-") {
+                if i + 1 < args.count && !args[i + 1].hasPrefix("-") && !args[i + 1].isEmpty {
                     i += 1
                     parsed.sessionPath = args[i]
                 }
             } else if arg.hasPrefix("-n") {
                 let rest = String(arg.dropFirst(2))
                 if !rest.isEmpty {
-                    parsed.line = Int(rest)
-                } else if i + 1 < args.count {
+                    if let num = Int(rest), num > 0 {
+                        parsed.line = num
+                    }
+                } else if i + 1 < args.count && !args[i + 1].hasPrefix("-") && !args[i + 1].isEmpty,
+                          let num = Int(args[i + 1]), num > 0 {
                     i += 1
-                    parsed.line = Int(args[i])
+                    parsed.line = num
                 }
             } else if arg.hasPrefix("-c") {
                 let rest = String(arg.dropFirst(2))
                 if !rest.isEmpty {
-                    parsed.column = Int(rest)
-                } else if i + 1 < args.count {
+                    if let num = Int(rest), num > 0 {
+                        parsed.column = num
+                    }
+                } else if i + 1 < args.count && !args[i + 1].hasPrefix("-") && !args[i + 1].isEmpty,
+                          let num = Int(args[i + 1]), num > 0 {
                     i += 1
-                    parsed.column = Int(args[i])
+                    parsed.column = num
                 }
             } else if arg.hasPrefix("-l") {
                 let rest = String(arg.dropFirst(2))
                 if !rest.isEmpty {
                     parsed.language = rest
-                } else if i + 1 < args.count {
+                } else if i + 1 < args.count && !args[i + 1].hasPrefix("-") && !args[i + 1].isEmpty {
                     i += 1
                     parsed.language = args[i]
                 }
@@ -2963,8 +2981,10 @@ public struct NppCommandLineParser {
                 parsed.isReadOnly = true
             } else if arg.hasPrefix("-L") {
                 let langCode = String(arg.dropFirst(2)).lowercased()
-                parsed.localization = langCode
-            } else if !arg.hasPrefix("-") {
+                if !langCode.isEmpty {
+                    parsed.localization = langCode
+                }
+            } else if !arg.hasPrefix("-") && !arg.isEmpty {
                 parsed.files.append(arg)
             }
             i += 1

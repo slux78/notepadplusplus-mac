@@ -148,6 +148,7 @@ public struct NppEditorView: NSViewRepresentable {
 
         // Update content if changed externally (e.g., encoding conversion, reload or edit operations)
         if textView.string != document.content {
+            let savedOrigin = scrollView.contentView.bounds.origin
             let selectedRange = textView.selectedRange()
             let newLen = (document.content as NSString).length
             textView.string = document.content
@@ -156,6 +157,13 @@ public struct NppEditorView: NSViewRepresentable {
             textView.setSelectedRange(NSRange(location: safeLoc, length: safeLen))
             context.coordinator.applyHighlighting()
             context.coordinator.gutter?.needsDisplay = true
+            if let tc = textView.textContainer {
+                textView.layoutManager?.ensureLayout(for: tc)
+            }
+            let maxY = max(0, textView.frame.height - scrollView.contentView.bounds.height)
+            let clampedOrigin = NSPoint(x: savedOrigin.x, y: min(max(0, savedOrigin.y), maxY))
+            scrollView.contentView.scroll(to: clampedOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
 
         // Update font family and size
@@ -440,6 +448,15 @@ public struct NppEditorView: NSViewRepresentable {
                         ts.addAttribute(.backgroundColor, value: styleColor, range: r)
                     }
                 }
+                if parent.document.id == parent.workspace.activeDocumentId {
+                    let searchColor = NSColor.systemYellow.withAlphaComponent(0.35)
+                    for r in parent.workspace.findDlgHighlightedRanges where NSMaxRange(r) <= ts.length {
+                        ts.addAttribute(.backgroundColor, value: searchColor, range: r)
+                    }
+                    for r in parent.workspace.incrementalHighlightedRanges where NSMaxRange(r) <= ts.length {
+                        ts.addAttribute(.backgroundColor, value: searchColor, range: r)
+                    }
+                }
                 ts.endEditing()
                 smartHighlightedRanges.removeAll()
                 lastSmartHighlightedWord = ""
@@ -547,6 +564,21 @@ public struct NppEditorView: NSViewRepresentable {
                     }
                 }
                 ts.endEditing()
+            }
+            if parent.document.id == parent.workspace.activeDocumentId {
+                let fdRanges = parent.workspace.findDlgHighlightedRanges
+                let incRanges = parent.workspace.incrementalHighlightedRanges
+                if !fdRanges.isEmpty || !incRanges.isEmpty {
+                    let searchColor = NSColor.systemYellow.withAlphaComponent(0.35)
+                    ts.beginEditing()
+                    for r in fdRanges where NSMaxRange(r) <= ts.length {
+                        ts.addAttribute(.backgroundColor, value: searchColor, range: r)
+                    }
+                    for r in incRanges where NSMaxRange(r) <= ts.length {
+                        ts.addAttribute(.backgroundColor, value: searchColor, range: r)
+                    }
+                    ts.endEditing()
+                }
             }
         }
     }
@@ -659,6 +691,20 @@ public final class NppTextView: NSTextView {
         let localRect = convert(window.convertFromScreen(screenRect), from: nil)
         popover.show(relativeTo: localRect, of: self, preferredEdge: .maxY)
         parameterHintPopover = popover
+    }
+
+    public func dismissPopups() {
+        parameterHintPopover?.close()
+        parameterHintPopover = nil
+        if completionPopupActive {
+            completionPopupActive = false
+            completionModeOverride = nil
+            for child in window?.childWindows ?? [] where child !== window {
+                if child.className.contains("Completion") {
+                    child.orderOut(nil)
+                }
+            }
+        }
     }
 
     // MARK: - Auto-Completion Matched Pairs Tracking (Notepad++ / Scintilla Parity)
@@ -2826,6 +2872,7 @@ public final class NppTextView: NSTextView {
         }
         op(doc)
         if self.string != doc.content {
+            let savedOrigin = enclosingScrollView?.contentView.bounds.origin
             let sel = self.selectedRange()
             let newLen = (doc.content as NSString).length
             self.string = doc.content
@@ -2834,6 +2881,12 @@ public final class NppTextView: NSTextView {
             self.setSelectedRange(NSRange(location: safeLoc, length: safeLen))
             editorCoordinator?.applyHighlighting()
             editorCoordinator?.gutter?.needsDisplay = true
+            if let sv = enclosingScrollView, let savedOrigin = savedOrigin, let tc = textContainer {
+                layoutManager?.ensureLayout(for: tc)
+                let maxY = max(0, frame.height - sv.contentView.bounds.height)
+                sv.contentView.scroll(to: NSPoint(x: savedOrigin.x, y: min(max(0, savedOrigin.y), maxY)))
+                sv.reflectScrolledClipView(sv.contentView)
+            }
         }
     }
 

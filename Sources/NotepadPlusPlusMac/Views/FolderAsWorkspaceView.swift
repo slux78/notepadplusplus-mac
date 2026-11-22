@@ -47,7 +47,10 @@ public struct NppFolderAsWorkspaceView: View {
             // 3-Button Toolbar (session.md:110-140): Unfold All, Fold All, Locate Current File
             HStack(spacing: 8) {
                 Button(action: {
-                    expandedPaths = NppWorkspace.unfoldAllDirectories(in: workspace.workspaceFolders)
+                    expandedPaths = NppWorkspace.unfoldAllDirectories(
+                        in: workspace.workspaceFolders,
+                        allowSymlinks: workspace.allowSymlinksInFAW
+                    )
                 }) {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.down.right.and.arrow.up.left")
@@ -100,9 +103,16 @@ public struct NppFolderAsWorkspaceView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(workspace.workspaceFolders, id: \.self) { rootUrl in
-                        FolderItemView(url: rootUrl, depth: 0, expandedPaths: $expandedPaths, workspace: workspace, onSelectFile: { fileUrl in
-                            workspace.openFile(url: fileUrl)
-                        })
+                        FolderItemView(
+                            url: rootUrl,
+                            depth: 0,
+                            visitedRealPaths: [rootUrl.resolvingSymlinksInPath().standardizedFileURL.path],
+                            expandedPaths: $expandedPaths,
+                            workspace: workspace,
+                            onSelectFile: { fileUrl in
+                                workspace.openFile(url: fileUrl)
+                            }
+                        )
                     }
                 }
                 .padding(6)
@@ -115,6 +125,7 @@ public struct NppFolderAsWorkspaceView: View {
 private struct FolderItemView: View {
     let url: URL
     let depth: Int
+    let visitedRealPaths: Set<String>
     @Binding var expandedPaths: Set<String>
     let workspace: NppWorkspace
     let onSelectFile: (URL) -> Void
@@ -201,22 +212,25 @@ private struct FolderItemView: View {
 
             if isDirectory && isExpanded {
                 ForEach(getChildren(), id: \.self) { child in
-                    FolderItemView(url: child, depth: depth + 1, expandedPaths: $expandedPaths, workspace: workspace, onSelectFile: onSelectFile)
+                    let childRealPath = child.resolvingSymlinksInPath().standardizedFileURL.path
+                    let childIsSymlink = ((try? child.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) ?? false)
+                    let isCircular = childIsSymlink && visitedRealPaths.contains(childRealPath)
+                    if !isCircular {
+                        FolderItemView(
+                            url: child,
+                            depth: depth + 1,
+                            visitedRealPaths: visitedRealPaths.union([childRealPath]),
+                            expandedPaths: $expandedPaths,
+                            workspace: workspace,
+                            onSelectFile: onSelectFile
+                        )
+                    }
                 }
             }
         }
     }
 
     private func getChildren() -> [URL] {
-        var rawChildren = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles])) ?? []
-        if !workspace.allowSymlinksInFAW {
-            rawChildren = rawChildren.filter { child in
-                let isSymlink = (try? child.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) ?? false
-                return !isSymlink
-            }
-        }
-        return rawChildren.sorted { a, b in
-            a.lastPathComponent.localizedCaseInsensitiveCompare(b.lastPathComponent) == .orderedAscending
-        }
+        return NppWorkspace.listFolderChildren(at: url, allowSymlinks: workspace.allowSymlinksInFAW)
     }
 }

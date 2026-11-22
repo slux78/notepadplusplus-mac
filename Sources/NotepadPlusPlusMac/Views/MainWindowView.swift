@@ -345,7 +345,8 @@ public struct NppFunctionListView: View {
             let functions = NppWorkspace.parseFunctions(
                 content: workspace.activeDocument?.content ?? "",
                 filter: filterQuery,
-                sortedAlphabetically: isAlphabetical
+                sortedAlphabetically: isAlphabetical,
+                language: workspace.activeDocument?.language ?? ""
             )
 
             if functions.isEmpty {

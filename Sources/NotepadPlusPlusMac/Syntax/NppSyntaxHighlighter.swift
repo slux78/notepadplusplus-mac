@@ -5,7 +5,9 @@ public struct NppSyntaxRules {
         "C++": ["if", "else", "switch", "case", "default", "break", "continue", "return", "goto", "for", "while", "do", "try", "catch", "throw"],
         "C": ["if", "else", "switch", "case", "default", "break", "continue", "return", "goto", "for", "while", "do"],
         "Swift": ["if", "else", "switch", "case", "default", "break", "continue", "return", "fallthrough", "for", "while", "repeat", "in", "where", "guard", "defer", "try", "catch", "throw", "throws", "rethrows", "async", "await", "yield"],
-        "Python": ["if", "elif", "else", "for", "while", "break", "continue", "pass", "return", "yield", "try", "except", "finally", "raise", "with", "assert", "async", "await"],
+        "Python": ["if", "elif", "else", "for", "while", "break", "continue", "pass", "return", "yield", "try", "except", "finally", "raise", "with", "assert", "async", "await", "match", "case"],
+        "R": ["if", "else", "repeat", "while", "for", "in", "next", "break", "return"],
+        "Structured Text": ["IF", "THEN", "ELSIF", "ELSE", "END_IF", "CASE", "OF", "END_CASE", "FOR", "TO", "BY", "DO", "END_FOR", "WHILE", "END_WHILE", "REPEAT", "UNTIL", "END_REPEAT", "EXIT", "RETURN"],
         "JavaScript": ["if", "else", "switch", "case", "default", "break", "continue", "return", "for", "while", "do", "try", "catch", "finally", "throw", "yield", "await"],
         "TypeScript": ["if", "else", "switch", "case", "default", "break", "continue", "return", "for", "while", "do", "try", "catch", "finally", "throw", "yield", "await"],
         "Java": ["if", "else", "switch", "case", "default", "break", "continue", "return", "for", "while", "do", "try", "catch", "finally", "throw", "throws", "assert"],
@@ -21,7 +23,9 @@ public struct NppSyntaxRules {
         "C++": ["class", "struct", "union", "enum", "namespace", "template", "typename", "public", "private", "protected", "friend", "virtual", "inline", "explicit", "export", "operator", "const", "constexpr", "static", "extern", "volatile", "mutable", "register", "typedef", "decltype"],
         "C": ["struct", "union", "enum", "const", "static", "extern", "volatile", "register", "typedef", "inline"],
         "Swift": ["class", "struct", "enum", "protocol", "extension", "actor", "func", "var", "let", "init", "deinit", "subscript", "typealias", "associatedtype", "import", "public", "private", "fileprivate", "internal", "open", "final", "static", "mutating", "nonmutating", "override", "required", "convenience", "dynamic", "weak", "unowned", "lazy"],
-        "Python": ["def", "class", "import", "from", "as", "global", "nonlocal", "lambda", "del"],
+        "Python": ["def", "class", "import", "from", "as", "global", "nonlocal", "lambda", "del", "type"],
+        "R": ["function"],
+        "Structured Text": ["PROGRAM", "END_PROGRAM", "FUNCTION", "END_FUNCTION", "FUNCTION_BLOCK", "END_FUNCTION_BLOCK", "VAR", "VAR_INPUT", "VAR_OUTPUT", "VAR_IN_OUT", "VAR_GLOBAL", "END_VAR", "TYPE", "END_TYPE", "STRUCT", "END_STRUCT", "CONSTANT", "RETAIN"],
         "JavaScript": ["function", "var", "let", "const", "class", "extends", "super", "import", "export", "from", "new", "typeof", "instanceof", "in", "of", "delete", "void"],
         "TypeScript": ["function", "var", "let", "const", "class", "extends", "super", "import", "export", "from", "new", "typeof", "instanceof", "in", "of", "delete", "void", "type", "interface", "declare", "module", "namespace", "keyof", "readonly", "enum", "implements", "override", "abstract", "as", "is"],
         "Java": ["class", "interface", "enum", "extends", "implements", "package", "import", "public", "private", "protected", "static", "final", "abstract", "synchronized", "volatile", "transient", "native", "strictfp", "new", "instanceof"],
@@ -43,7 +47,8 @@ public struct NppSyntaxRules {
         "Java": ["byte", "short", "int", "long", "float", "double", "char", "boolean", "void", "Byte", "Short", "Integer", "Long", "Float", "Double", "Character", "Boolean", "String", "Object", "List", "ArrayList", "Map", "HashMap", "Set", "HashSet", "Thread", "Runnable", "Exception"],
         "Rust": ["i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32", "f64", "bool", "char", "str", "String", "Vec", "Option", "Result", "Box", "Rc", "Arc", "Cell", "RefCell"],
         "Go": ["bool", "string", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "byte", "rune", "float32", "float64", "complex64", "complex128", "error"],
-        "C#": ["void", "bool", "byte", "sbyte", "char", "decimal", "double", "float", "int", "uint", "long", "ulong", "short", "ushort", "object", "string", "dynamic", "Int32", "Int64", "String", "Boolean", "Object", "List", "Dictionary", "Task", "Thread", "Exception"]
+        "C#": ["void", "bool", "byte", "sbyte", "char", "decimal", "double", "float", "int", "uint", "long", "ulong", "short", "ushort", "object", "string", "dynamic", "Int32", "Int64", "String", "Boolean", "Object", "List", "Dictionary", "Task", "Thread", "Exception"],
+        "Structured Text": ["BOOL", "BYTE", "WORD", "DWORD", "LWORD", "SINT", "USINT", "INT", "UINT", "DINT", "UDINT", "LINT", "ULINT", "REAL", "LREAL", "TIME", "DATE", "STRING", "WSTRING"]
     ]
 
     public static let constants: [String: [String]] = [
@@ -51,6 +56,8 @@ public struct NppSyntaxRules {
         "C": ["true", "false", "NULL"],
         "Swift": ["true", "false", "nil", "self", "Self"],
         "Python": ["True", "False", "None", "self", "cls"],
+        "R": ["TRUE", "FALSE", "NULL", "NA", "NaN", "Inf", "NA_integer_", "NA_real_", "NA_complex_", "NA_character_"],
+        "Structured Text": ["TRUE", "FALSE"],
         "JavaScript": ["true", "false", "null", "undefined", "NaN", "Infinity", "this"],
         "TypeScript": ["true", "false", "null", "undefined", "NaN", "Infinity", "this"],
         "Java": ["true", "false", "null", "this", "super"],
@@ -104,6 +111,7 @@ public final class NppSyntaxHighlighter {
         let preprocColor = isDarkMode ? NSColor(calibratedRed: 0.77, green: 0.52, blue: 0.75, alpha: 1.0) : NSColor(calibratedRed: 0.50, green: 0.0, blue: 0.50, alpha: 1.0)
         let variableColor = isDarkMode ? NSColor(calibratedRed: 0.61, green: 0.86, blue: 0.99, alpha: 1.0) : NSColor(calibratedRed: 0.0, green: 0.10, blue: 0.60, alpha: 1.0) // Cyan #9CDCFE
         let operatorColor = isDarkMode ? NSColor(calibratedWhite: 0.83, alpha: 1.0) : NSColor(calibratedWhite: 0.20, alpha: 1.0)
+        let userLiteralColor = isDarkMode ? NSColor(calibratedRed: 0.99, green: 0.42, blue: 0.63, alpha: 1.0) : NSColor(calibratedRed: 0.72, green: 0.10, blue: 0.45, alpha: 1.0)
 
         if let udl = userDefinedLanguage {
             applyUserDefinedLanguage(udl, to: textStorage, string: string,
@@ -127,10 +135,12 @@ public final class NppSyntaxHighlighter {
             applyPattern(#"\b[A-Z][a-zA-Z0-9_]*\b"#, in: string, color: typeColor, textStorage: textStorage)
         }
 
+        let ruleOptions: NSRegularExpression.Options = (language == "Structured Text") ? [.caseInsensitive] : []
+
         // 2. Builtin Types
         if let types = NppSyntaxRules.builtinTypes[language] {
             let pattern = "\\b(" + types.joined(separator: "|") + ")\\b"
-            applyPattern(pattern, in: string, color: typeColor, textStorage: textStorage)
+            applyPattern(pattern, in: string, color: typeColor, textStorage: textStorage, options: ruleOptions)
         }
 
         // 3. Function Calls & Declarations: name(...)
@@ -144,19 +154,19 @@ public final class NppSyntaxHighlighter {
         // 5. Constants & Booleans
         if let consts = NppSyntaxRules.constants[language] {
             let pattern = "\\b(" + consts.joined(separator: "|") + ")\\b"
-            applyPattern(pattern, in: string, color: constantColor, textStorage: textStorage)
+            applyPattern(pattern, in: string, color: constantColor, textStorage: textStorage, options: ruleOptions)
         }
 
         // 6. Declaration & Storage Keywords
         if let decls = NppSyntaxRules.declarationKeywords[language] {
             let pattern = "\\b(" + decls.joined(separator: "|") + ")\\b"
-            applyPattern(pattern, in: string, color: declarationColor, textStorage: textStorage)
+            applyPattern(pattern, in: string, color: declarationColor, textStorage: textStorage, options: ruleOptions)
         }
 
         // 7. Control Flow Keywords
         if let flows = NppSyntaxRules.controlFlowKeywords[language] {
             let pattern = "\\b(" + flows.joined(separator: "|") + ")\\b"
-            applyPattern(pattern, in: string, color: controlFlowColor, textStorage: textStorage)
+            applyPattern(pattern, in: string, color: controlFlowColor, textStorage: textStorage, options: ruleOptions)
         }
 
         // 7b. User-defined Keywords from Style Configurator (workspace.styleUserKeywords)
@@ -233,12 +243,15 @@ public final class NppSyntaxHighlighter {
         }
         if let regex = try? NSRegularExpression(pattern: stringPattern, options: []) {
             let matches = regex.matches(in: string, options: [], range: fullRange)
+            let escapePattern = (language == "R")
+                ? #"\\[nrt0abfv"'\\]|\\x[0-9a-fA-F]{1,2}|\\u[0-9a-fA-F]{1,4}|\\U[0-9a-fA-F]{1,8}|\\[0-7]{1,3}"#
+                : #"\\[nrt0"'\\]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}"#
+            let escRegex = try? NSRegularExpression(pattern: escapePattern, options: [])
             for m in matches {
                 textStorage.addAttribute(.foregroundColor, value: stringColor, range: m.range)
                 // Highlight escape sequences inside this string
                 let subStr = (string as NSString).substring(with: m.range)
-                if let escRegex = try? NSRegularExpression(pattern: #"\\[nrt0"'\\]|\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}"#, options: []) {
-                    let escMatches = escRegex.matches(in: subStr, options: [], range: NSRange(location: 0, length: (subStr as NSString).length))
+                if let escMatches = escRegex?.matches(in: subStr, options: [], range: NSRange(location: 0, length: (subStr as NSString).length)) {
                     for esc in escMatches {
                         let actualRange = NSRange(location: m.range.location + esc.range.location, length: esc.range.length)
                         textStorage.addAttribute(.foregroundColor, value: escapeCharColor, range: actualRange)
@@ -247,10 +260,19 @@ public final class NppSyntaxHighlighter {
             }
         }
 
+        // 10b. C++ User-Defined Literals (SCE_C_USERLITERAL, styleID=25)
+        if language == "C++" {
+            applyPattern(#"(?<![a-zA-Z0-9_])(?:0[xX][0-9a-fA-F']+|[0-9][0-9']*(?:\.[0-9']+)?(?:[eE][+-]?[0-9']+)?)(?:_[a-zA-Z0-9_]+|(?:ms|us|ns|min|h|s|sv|if|i|il)\b)"#, in: string, color: userLiteralColor, textStorage: textStorage)
+            applyPattern(#"(?:\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*')(?:_[a-zA-Z0-9_]+|(?:s|sv)\b)"#, in: string, color: userLiteralColor, textStorage: textStorage)
+        }
+
         // 11. Comments (Overriding all tokens inside comments, styled with Italic Font)
         var commentRanges: [NSRange] = []
-        if language == "Python" || language == "Shell" || language == "Ruby" || language == "YAML" {
+        if language == "Python" || language == "Shell" || language == "Ruby" || language == "YAML" || language == "R" {
             collectRanges(#"#.*$"#, in: string, options: [.anchorsMatchLines], into: &commentRanges)
+        } else if language == "Structured Text" {
+            collectRanges(#"\(\*[\s\S]*?\*\)"#, in: string, options: [], into: &commentRanges)
+            collectRanges(#"//.*$"#, in: string, options: [.anchorsMatchLines], into: &commentRanges)
         } else if language == "SQL" {
             collectRanges(#"--.*$"#, in: string, options: [.anchorsMatchLines], into: &commentRanges)
             collectRanges(#"/\*[\s\S]*?\*/"#, in: string, options: [], into: &commentRanges)

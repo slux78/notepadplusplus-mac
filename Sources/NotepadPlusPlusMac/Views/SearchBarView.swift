@@ -6,11 +6,21 @@ public struct NppSearchBarView: View {
 
     @State private var findText: String = ""
     @State private var replaceText: String = ""
-    @State private var matchCase: Bool = false
-    @State private var matchWholeWord: Bool = false
-    @State private var useRegex: Bool = false
     @State private var statusMessage: String = ""
     @FocusState private var isFieldFocused: Bool
+
+    private var matchCase: Bool {
+        get { workspace.incrementalMatchCase }
+        nonmutating set { workspace.incrementalMatchCase = newValue }
+    }
+    private var matchWholeWord: Bool {
+        get { workspace.incrementalWholeWord }
+        nonmutating set { workspace.incrementalWholeWord = newValue }
+    }
+    private var useRegex: Bool {
+        get { workspace.incrementalUseRegex }
+        nonmutating set { workspace.incrementalUseRegex = newValue }
+    }
 
     public init(workspace: NppWorkspace) {
         self.workspace = workspace
@@ -129,24 +139,28 @@ public struct NppSearchBarView: View {
 
                 HStack(spacing: 12) {
                     Spacer().frame(width: 75)
-                    Toggle(workspace.tr("Match case"), isOn: $matchCase)
+                    Toggle(workspace.tr("Match case"), isOn: $workspace.incrementalMatchCase)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
-                        .onChange(of: matchCase) { _ in findIncremental() }
-                    Toggle(workspace.tr("Match whole word only"), isOn: $matchWholeWord)
+                        .onChange(of: workspace.incrementalMatchCase) { _ in findIncremental() }
+                    Toggle(workspace.tr("Match whole word only"), isOn: $workspace.incrementalWholeWord)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
-                        .onChange(of: matchWholeWord) { _ in findIncremental() }
-                    Toggle(workspace.tr("Regular expression"), isOn: $useRegex)
+                        .onChange(of: workspace.incrementalWholeWord) { _ in findIncremental() }
+                    Toggle(workspace.tr("Regular expression"), isOn: $workspace.incrementalUseRegex)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
-                        .onChange(of: useRegex) { _ in findIncremental() }
+                        .onChange(of: workspace.incrementalUseRegex) { _ in findIncremental() }
                     Toggle(workspace.tr("Highlight all"), isOn: $workspace.incrementalHighlightAll)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
                         .onChange(of: workspace.incrementalHighlightAll) { _ in
                             workspace.updateIncrementalSearch(query: findText, matchCase: matchCase, wholeWord: matchWholeWord, useRegex: useRegex)
                         }
+                    Toggle(workspace.tr("Show at top"), isOn: $workspace.incSearchBarAtTop)
+                        .toggleStyle(CheckboxToggleStyle())
+                        .font(.system(size: 11))
+                        .help(workspace.tr("Incremental Search: show the bar at the top"))
                     Spacer()
                 }
             } else {
@@ -185,15 +199,19 @@ public struct NppSearchBarView: View {
 
                 HStack(spacing: 12) {
                     Spacer().frame(width: 75)
-                    Toggle(workspace.tr("Match case"), isOn: $matchCase)
+                    Toggle(workspace.tr("Match case"), isOn: $workspace.incrementalMatchCase)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
-                    Toggle(workspace.tr("Match whole word only"), isOn: $matchWholeWord)
+                    Toggle(workspace.tr("Match whole word only"), isOn: $workspace.incrementalWholeWord)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
-                    Toggle(workspace.tr("Regular expression"), isOn: $useRegex)
+                    Toggle(workspace.tr("Regular expression"), isOn: $workspace.incrementalUseRegex)
                         .toggleStyle(CheckboxToggleStyle())
                         .font(.system(size: 11))
+                    Toggle(workspace.tr("Show at top"), isOn: $workspace.incSearchBarAtTop)
+                        .toggleStyle(CheckboxToggleStyle())
+                        .font(.system(size: 11))
+                        .help(workspace.tr("Incremental Search: show the bar at the top"))
                     Spacer()
                 }
             }

@@ -8,8 +8,9 @@ public struct ClipboardItem: Identifiable, Equatable {
     public let timestamp: Date
     public var preview: String {
         let firstLine = text.components(separatedBy: .newlines).first ?? text
-        let trimmed = firstLine.trimmingCharacters(in: .whitespaces)
-        return trimmed.count > 48 ? String(trimmed.prefix(45)) + "..." : trimmed
+        let sanitized = firstLine.replacingOccurrences(of: "\t", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return sanitized.count > 128 ? String(sanitized.prefix(125)) + "..." : sanitized
     }
 
     public init(text: String, timestamp: Date = Date()) {
@@ -378,7 +379,13 @@ public final class NppWorkspace: ObservableObject {
     @Published public var incrementalSearchMatches: [NSRange] = []
     @Published public var incrementalCurrentMatchIndex: Int = 0
     @Published public var incrementalHighlightAll: Bool = false
+    @Published public var incrementalMatchCase: Bool = false
+    @Published public var incrementalWholeWord: Bool = false
+    @Published public var incrementalUseRegex: Bool = false
     public var incrementalHighlightedRanges: [NSRange] = []
+    @Published public var findDlgHighlightAllMatches: Bool = false
+    public var findDlgHighlightedRanges: [NSRange] = []
+    public var confirmUnpinToSortHandler: (() -> Bool)? = nil
     // Authentic Notepad++ Panels
     @Published public var showDocumentList: Bool = false
     @Published public var showFolderAsWorkspace: Bool = false
@@ -1480,6 +1487,14 @@ public final class NppWorkspace: ObservableObject {
     public static let prefsShowProjectPanel1Key = "npp.prefs.showProjectPanel1"
     public static let prefsShowProjectPanel2Key = "npp.prefs.showProjectPanel2"
     public static let prefsShowProjectPanel3Key = "npp.prefs.showProjectPanel3"
+    public static let prefsFindDlgHighlightAllMatchesKey = "npp.prefs.findDlgHighlightAllMatches"
+    public static let prefsIncrementalHighlightAllKey = "npp.prefs.incrementalHighlightAll"
+    public static let prefsIncrementalMatchCaseKey = "npp.prefs.incrementalMatchCase"
+    public static let prefsIncrementalWholeWordKey = "npp.prefs.incrementalWholeWord"
+    public static let prefsIncrementalUseRegexKey = "npp.prefs.incrementalUseRegex"
+    public static let prefsIncSearchBarAtTopKey = "npp.prefs.incSearchBarAtTop"
+    public static let prefsConfirmReplaceAllInAllOpenedDocsKey = "npp.prefs.confirmReplaceAllInAllOpenedDocs"
+    public static let prefsReplaceAndStopKey = "npp.prefs.replaceAndStop"
 
     public func getProjectWorkspace(panelIndex: Int) -> NppProjectWorkspace {
         switch panelIndex {
@@ -1512,6 +1527,14 @@ public final class NppWorkspace: ObservableObject {
         ud.set(isWordWrapEnabled, forKey: Self.prefsWordWrapKey)
         ud.set(showLineNumbers, forKey: Self.prefsShowLineNumbersKey)
         ud.set(tabSize, forKey: Self.prefsTabSizeKey)
+        ud.set(findDlgHighlightAllMatches, forKey: Self.prefsFindDlgHighlightAllMatchesKey)
+        ud.set(incrementalHighlightAll, forKey: Self.prefsIncrementalHighlightAllKey)
+        ud.set(incrementalMatchCase, forKey: Self.prefsIncrementalMatchCaseKey)
+        ud.set(incrementalWholeWord, forKey: Self.prefsIncrementalWholeWordKey)
+        ud.set(incrementalUseRegex, forKey: Self.prefsIncrementalUseRegexKey)
+        ud.set(incSearchBarAtTop, forKey: Self.prefsIncSearchBarAtTopKey)
+        ud.set(confirmReplaceAllInAllOpenedDocs, forKey: Self.prefsConfirmReplaceAllInAllOpenedDocsKey)
+        ud.set(replaceAndStop, forKey: Self.prefsReplaceAndStopKey)
         if rememberProjectPanels {
             ud.set(true, forKey: Self.prefsRememberProjectPanelsKey)
             ud.set(showProjectPanel1, forKey: Self.prefsShowProjectPanel1Key)
@@ -1564,6 +1587,30 @@ public final class NppWorkspace: ObservableObject {
         if ud.object(forKey: Self.prefsTabSizeKey) != nil {
             tabSize = ud.integer(forKey: Self.prefsTabSizeKey)
         }
+        if ud.object(forKey: Self.prefsFindDlgHighlightAllMatchesKey) != nil {
+            findDlgHighlightAllMatches = ud.bool(forKey: Self.prefsFindDlgHighlightAllMatchesKey)
+        }
+        if ud.object(forKey: Self.prefsIncrementalHighlightAllKey) != nil {
+            incrementalHighlightAll = ud.bool(forKey: Self.prefsIncrementalHighlightAllKey)
+        }
+        if ud.object(forKey: Self.prefsIncrementalMatchCaseKey) != nil {
+            incrementalMatchCase = ud.bool(forKey: Self.prefsIncrementalMatchCaseKey)
+        }
+        if ud.object(forKey: Self.prefsIncrementalWholeWordKey) != nil {
+            incrementalWholeWord = ud.bool(forKey: Self.prefsIncrementalWholeWordKey)
+        }
+        if ud.object(forKey: Self.prefsIncrementalUseRegexKey) != nil {
+            incrementalUseRegex = ud.bool(forKey: Self.prefsIncrementalUseRegexKey)
+        }
+        if ud.object(forKey: Self.prefsIncSearchBarAtTopKey) != nil {
+            incSearchBarAtTop = ud.bool(forKey: Self.prefsIncSearchBarAtTopKey)
+        }
+        if ud.object(forKey: Self.prefsConfirmReplaceAllInAllOpenedDocsKey) != nil {
+            confirmReplaceAllInAllOpenedDocs = ud.bool(forKey: Self.prefsConfirmReplaceAllInAllOpenedDocsKey)
+        }
+        if ud.object(forKey: Self.prefsReplaceAndStopKey) != nil {
+            replaceAndStop = ud.bool(forKey: Self.prefsReplaceAndStopKey)
+        }
         if ud.bool(forKey: Self.prefsRememberProjectPanelsKey) {
             rememberProjectPanels = true
             if ud.object(forKey: Self.prefsShowProjectPanel1Key) != nil {
@@ -1607,7 +1654,15 @@ public final class NppWorkspace: ObservableObject {
             Self.prefsRememberProjectPanelsKey,
             Self.prefsShowProjectPanel1Key,
             Self.prefsShowProjectPanel2Key,
-            Self.prefsShowProjectPanel3Key
+            Self.prefsShowProjectPanel3Key,
+            Self.prefsFindDlgHighlightAllMatchesKey,
+            Self.prefsIncrementalHighlightAllKey,
+            Self.prefsIncrementalMatchCaseKey,
+            Self.prefsIncrementalWholeWordKey,
+            Self.prefsIncrementalUseRegexKey,
+            Self.prefsIncSearchBarAtTopKey,
+            Self.prefsConfirmReplaceAllInAllOpenedDocsKey,
+            Self.prefsReplaceAndStopKey
         ]
         for k in keys { ud.removeObject(forKey: k) }
     }
@@ -1767,6 +1822,21 @@ public final class NppWorkspace: ObservableObject {
         return nil
     }
 
+    public func resolvedDefaultNewDocumentLanguage() -> String {
+        if defaultNewDocLanguage.isEmpty {
+            return defaultLanguage
+        }
+        if Self.allCanonicalLanguages.contains(defaultNewDocLanguage) ||
+            defaultNewDocLanguage == "Plain Text" ||
+            defaultNewDocLanguage == "Normal Text" ||
+            defaultNewDocLanguage == "INI" ||
+            userDefinedLanguages.contains(where: { $0.name == defaultNewDocLanguage }) {
+            return defaultNewDocLanguage
+        }
+        defaultNewDocLanguage = "Plain Text"
+        return "Plain Text"
+    }
+
     public func newDocument() {
         let title = "new \(newDocCounter)"
         newDocCounter += 1
@@ -1779,7 +1849,7 @@ public final class NppWorkspace: ObservableObject {
             hasBOM: enc == "UTF-8-BOM",
             eol: eol
         )
-        doc.language = defaultNewDocLanguage.isEmpty ? defaultLanguage : defaultNewDocLanguage
+        doc.language = resolvedDefaultNewDocumentLanguage()
         documents.append(doc)
         activeDocumentId = doc.id
         activeView = 0
@@ -2297,7 +2367,7 @@ public final class NppWorkspace: ObservableObject {
             hasBOM: enc == "UTF-8-BOM",
             eol: eol
         )
-        newDoc.language = defaultNewDocLanguage.isEmpty ? defaultLanguage : defaultNewDocLanguage
+        newDoc.language = resolvedDefaultNewDocumentLanguage()
         documents.append(newDoc)
         secondaryDocumentIds.append(newDoc.id)
         secondaryActiveDocumentId = newDoc.id
@@ -2955,7 +3025,13 @@ public final class NppWorkspace: ObservableObject {
         }
         var matches = searchInDocument(doc: doc, query: query, matchCase: matchCase, wholeWord: wholeWord, useRegex: useRegex)
         if let limitRange = inRange, limitRange.length > 0 {
-            matches = matches.filter { NSIntersectionRange(NSRange(location: $0.charPosition, length: $0.matchLength), limitRange).length > 0 }
+            let maxLimit = NSMaxRange(limitRange)
+            matches = matches.filter {
+                if $0.matchLength == 0 {
+                    return $0.charPosition >= limitRange.location && $0.charPosition <= maxLimit
+                }
+                return NSIntersectionRange(NSRange(location: $0.charPosition, length: $0.matchLength), limitRange).length > 0
+            }
         }
         var markedRanges = doc.styledTokenRanges[0] ?? []
         for match in matches {
@@ -3451,13 +3527,119 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func clearIncrementalHighlight() {
-        guard let tv = activeTextView, let ts = tv.textStorage, !incrementalHighlightedRanges.isEmpty else { return }
-        ts.beginEditing()
-        for r in incrementalHighlightedRanges where NSMaxRange(r) <= ts.length {
-            ts.removeAttribute(.backgroundColor, range: r)
-        }
-        ts.endEditing()
+        let oldRanges = incrementalHighlightedRanges
+        guard !oldRanges.isEmpty else { return }
         incrementalHighlightedRanges.removeAll()
+        if let tv = activeTextView, let ts = tv.textStorage {
+            ts.beginEditing()
+            for r in oldRanges where NSMaxRange(r) <= ts.length {
+                ts.removeAttribute(.backgroundColor, range: r)
+            }
+            if let doc = activeDocument {
+                restoreNonSearchBackgroundHighlights(in: ts, doc: doc, includeFindDlg: true, includeIncremental: false)
+            }
+            ts.endEditing()
+        }
+    }
+
+    private func findHighlightColor() -> NSColor {
+        let key1 = styleOverrideKey(themeId: themeMode, language: "Global Styles", style: "Find matches highlight all")
+        let key2 = styleOverrideKey(themeId: themeMode, language: "Global Styles", style: "Incremental highlight all")
+        if let overrideBg = (styleOverrides[key1] ?? styleOverrides[key2])?.bgColor {
+            return overrideBg.alphaComponent < 0.99 ? overrideBg : overrideBg.withAlphaComponent(0.45)
+        }
+        return NSColor.systemYellow.withAlphaComponent(0.35)
+    }
+
+    private func restoreNonSearchBackgroundHighlights(
+        in ts: NSTextStorage,
+        doc: NppDocument,
+        includeFindDlg: Bool,
+        includeIncremental: Bool
+    ) {
+        for (styleIdx, tokenRanges) in doc.styledTokenRanges {
+            let styleColor = Self.tokenStyleColor(for: styleIdx)
+            for r in tokenRanges where NSMaxRange(r) <= ts.length {
+                ts.addAttribute(.backgroundColor, value: styleColor, range: r)
+            }
+        }
+        if includeFindDlg && !findDlgHighlightedRanges.isEmpty {
+            let c = findHighlightColor()
+            for r in findDlgHighlightedRanges where NSMaxRange(r) <= ts.length {
+                ts.addAttribute(.backgroundColor, value: c, range: r)
+            }
+        }
+        if includeIncremental && !incrementalHighlightedRanges.isEmpty {
+            let c = NSColor.systemYellow.withAlphaComponent(0.35)
+            for r in incrementalHighlightedRanges where NSMaxRange(r) <= ts.length {
+                ts.addAttribute(.backgroundColor, value: c, range: r)
+            }
+        }
+    }
+
+    public func updateFindDialogHighlight(query: String? = nil) {
+        let rawQuery = query ?? findQueryText
+        guard findDlgHighlightAllMatches,
+              (findReplaceTab == 0 || findReplaceTab == 1),
+              !rawQuery.isEmpty,
+              let doc = activeDocument else {
+            clearFindDialogHighlight()
+            return
+        }
+        let effectiveQuery = (searchMode == 1) ? Self.expandExtendedEscapes(rawQuery) : rawQuery
+        guard !effectiveQuery.isEmpty else {
+            clearFindDialogHighlight()
+            return
+        }
+
+        clearFindDialogHighlight()
+
+        let content = doc.content as NSString
+        guard content.length > 0 else { return }
+
+        var ranges: [NSRange] = []
+        if searchMode == 2 || matchWholeWord {
+            if let regex = buildSearchRegex(for: effectiveQuery) {
+                let matches = regex.matches(in: doc.content, options: [], range: NSRange(location: 0, length: content.length))
+                ranges = matches.map { $0.range }.filter { $0.length > 0 }
+            }
+        } else {
+            var searchRange = NSRange(location: 0, length: content.length)
+            let options: NSString.CompareOptions = matchCase ? [] : [.caseInsensitive]
+            while searchRange.location < content.length {
+                let r = content.range(of: effectiveQuery, options: options, range: searchRange)
+                if r.location == NSNotFound || r.length == 0 { break }
+                ranges.append(r)
+                let nextLoc = NSMaxRange(r)
+                searchRange = NSRange(location: nextLoc, length: content.length - nextLoc)
+            }
+        }
+
+        findDlgHighlightedRanges = ranges
+        if !ranges.isEmpty, let ts = activeTextView?.textStorage {
+            let color = findHighlightColor()
+            ts.beginEditing()
+            for r in ranges where NSMaxRange(r) <= ts.length {
+                ts.addAttribute(.backgroundColor, value: color, range: r)
+            }
+            ts.endEditing()
+        }
+    }
+
+    public func clearFindDialogHighlight() {
+        let oldRanges = findDlgHighlightedRanges
+        guard !oldRanges.isEmpty else { return }
+        findDlgHighlightedRanges.removeAll()
+        if let tv = activeTextView, let ts = tv.textStorage {
+            ts.beginEditing()
+            for r in oldRanges where NSMaxRange(r) <= ts.length {
+                ts.removeAttribute(.backgroundColor, range: r)
+            }
+            if let doc = activeDocument {
+                restoreNonSearchBackgroundHighlights(in: ts, doc: doc, includeFindDlg: false, includeIncremental: true)
+            }
+            ts.endEditing()
+        }
     }
 
     // MARK: - Performance Large File Guard (programing-languages.md:80-95)
@@ -4829,10 +5011,12 @@ public final class NppWorkspace: ObservableObject {
         } else {
             let targetId = id ?? activeDocumentId ?? documents.first?.id
             guard let targetId = targetId,
-                  let index = documents.firstIndex(where: { $0.id == targetId }),
-                  index > 0 else { return }
+                  let index = documents.firstIndex(where: { $0.id == targetId }) else { return }
+            let isPinned = documents[index].isPinned
+            let targetIdx = isPinned ? 0 : (documents.firstIndex(where: { !$0.isPinned }) ?? 0)
+            guard index > targetIdx else { return }
             let doc = documents.remove(at: index)
-            documents.insert(doc, at: 0)
+            documents.insert(doc, at: targetIdx)
             activeDocumentId = targetId
         }
         objectWillChange.send()
@@ -4851,10 +5035,12 @@ public final class NppWorkspace: ObservableObject {
         } else {
             let targetId = id ?? activeDocumentId ?? documents.last?.id
             guard let targetId = targetId,
-                  let index = documents.firstIndex(where: { $0.id == targetId }),
-                  index + 1 < documents.count else { return }
+                  let index = documents.firstIndex(where: { $0.id == targetId }) else { return }
+            let isPinned = documents[index].isPinned
+            let targetIdx = isPinned ? (documents.lastIndex(where: { $0.isPinned }) ?? index) : (documents.count - 1)
+            guard index < targetIdx else { return }
             let doc = documents.remove(at: index)
-            documents.append(doc)
+            documents.insert(doc, at: targetIdx)
             activeDocumentId = targetId
         }
         objectWillChange.send()
@@ -4869,7 +5055,8 @@ public final class NppWorkspace: ObservableObject {
             secondaryDocumentIds.insert(id, at: to)
         } else {
             guard let from = documents.firstIndex(where: { $0.id == draggedId }),
-                  let to = documents.firstIndex(where: { $0.id == targetId }) else { return }
+                  let to = documents.firstIndex(where: { $0.id == targetId }),
+                  documents[from].isPinned == documents[to].isPinned else { return }
             let doc = documents.remove(at: from)
             documents.insert(doc, at: to)
         }
@@ -4924,6 +5111,7 @@ public final class NppWorkspace: ObservableObject {
         guard let currentId = activeDocumentId,
               let index = documents.firstIndex(where: { $0.id == currentId }),
               index + 1 < documents.count else { return }
+        guard documents[index].isPinned == documents[index + 1].isPinned else { return }
         documents.swapAt(index, index + 1)
     }
 
@@ -4931,11 +5119,18 @@ public final class NppWorkspace: ObservableObject {
         guard let currentId = activeDocumentId,
               let index = documents.firstIndex(where: { $0.id == currentId }),
               index > 0 else { return }
+        guard documents[index].isPinned == documents[index - 1].isPinned else { return }
         documents.swapAt(index, index - 1)
     }
 
+    private func sortTabsPreservingPinned(by areInIncreasingOrder: (NppDocument, NppDocument) -> Bool) {
+        let pinned = documents.filter { $0.isPinned }
+        let unpinned = documents.filter { !$0.isPinned }.sorted(by: areInIncreasingOrder)
+        documents = pinned + unpinned
+    }
+
     public func sortTabsByName(ascending: Bool) {
-        documents.sort {
+        sortTabsPreservingPinned {
             let res = $0.title.localizedStandardCompare($1.title)
             if res != .orderedSame {
                 return ascending ? res == .orderedAscending : res == .orderedDescending
@@ -4948,7 +5143,7 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func sortTabsByPath(ascending: Bool) {
-        documents.sort {
+        sortTabsPreservingPinned {
             let p1 = $0.filePath?.path ?? $0.title
             let p2 = $1.filePath?.path ?? $1.title
             let res = p1.localizedStandardCompare(p2)
@@ -4977,7 +5172,7 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func sortTabsByType(ascending: Bool) {
-        documents.sort { a, b in
+        sortTabsPreservingPinned { a, b in
             let langA = a.language
             let langB = b.language
             if langA != langB {
@@ -4999,7 +5194,7 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func sortTabsBySize(ascending: Bool) {
-        documents.sort {
+        sortTabsPreservingPinned {
             if $0.content.count != $1.content.count {
                 return ascending ? $0.content.count < $1.content.count : $0.content.count > $1.content.count
             }
@@ -5009,7 +5204,7 @@ public final class NppWorkspace: ObservableObject {
     }
 
     public func sortTabsByModifiedTime(ascending: Bool) {
-        documents.sort {
+        sortTabsPreservingPinned {
             let d1 = $0.lastKnownModificationDate ?? Date.distantPast
             let d2 = $1.lastKnownModificationDate ?? Date.distantPast
             if d1 != d2 {
@@ -5868,6 +6063,18 @@ public final class NppWorkspace: ObservableObject {
         let allMatches = searchFileGroups.flatMap { $0.matches }
         guard !allMatches.isEmpty else { return }
         showSearchResultsPanel = true
+        if currentSearchResultIndex < 0, let doc = activeDocument {
+            let caret = activeTextView?.selectedRange().location ?? doc.cursorPos
+            if let nextOrCur = allMatches.firstIndex(where: { $0.documentId == doc.id && $0.charPosition >= caret }) {
+                currentSearchResultIndex = (nextOrCur <= 0) ? (allMatches.count - 1) : (nextOrCur - 1)
+                jumpToMatch(allMatches[currentSearchResultIndex])
+                return
+            } else if let lastInDoc = allMatches.lastIndex(where: { $0.documentId == doc.id }) {
+                currentSearchResultIndex = lastInDoc
+                jumpToMatch(allMatches[currentSearchResultIndex])
+                return
+            }
+        }
         if currentSearchResultIndex <= 0 {
             currentSearchResultIndex = allMatches.count - 1
         } else {
@@ -6384,14 +6591,57 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // MARK: - Function List Parser & Sorter (function-list.md:30-55)
-    public static func parseFunctions(content: String, filter: String = "", sortedAlphabetically: Bool = false) -> [NppFunctionItem] {
+    public static func parseFunctions(content: String, filter: String = "", sortedAlphabetically: Bool = false, language: String = "") -> [NppFunctionItem] {
         let lines = content.nppLines()
         var results: [NppFunctionItem] = []
+        let controlKeywords: Set<String> = ["if", "else", "for", "while", "switch", "catch", "return", "sizeof", "typeof", "elif", "case", "until", "select"]
+        let isINI = language.caseInsensitiveCompare("INI") == .orderedSame || language.caseInsensitiveCompare("INI file") == .orderedSame
+        let isBash = language.isEmpty || language == "Shell" || language == "Bash / Shell"
+        let iniRegex = try? NSRegularExpression(pattern: #"^\s*\[([^\]]+)\]\s*$"#, options: [])
+        let psRegex = try? NSRegularExpression(pattern: #"^(?i)(?:function|filter)\s+([^\s({]+)"#, options: [])
+        let bashPosixRegex = try? NSRegularExpression(pattern: #"^([A-Za-z_][A-Za-z0-9_+-]*)\s*\(\)\s*(\{.*)?$"#, options: [])
+
         for (idx, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix("//") || trimmed.hasPrefix("--") || trimmed.hasPrefix(";") {
+                continue
+            }
+
+            let trimmedNS = trimmed as NSString
+            let trimmedRange = NSRange(location: 0, length: trimmedNS.length)
+
+            if isINI {
+                if let match = iniRegex?.firstMatch(in: trimmed, options: [], range: trimmedRange),
+                   match.numberOfRanges > 1 {
+                    let sectionName = trimmedNS.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespaces)
+                    if !sectionName.isEmpty {
+                        results.append(NppFunctionItem(name: sectionName, line: idx + 1, isClass: false))
+                    }
+                }
+                continue
+            }
+
+            if let match = psRegex?.firstMatch(in: trimmed, options: [], range: trimmedRange),
+               match.numberOfRanges > 1 {
+                let rawPsName = trimmedNS.substring(with: match.range(at: 1))
+                let cleanName = rawPsName.components(separatedBy: CharacterSet(charactersIn: "<(")).first ?? rawPsName
+                if !cleanName.isEmpty && !controlKeywords.contains(cleanName.lowercased()) {
+                    results.append(NppFunctionItem(name: cleanName, line: idx + 1, isClass: false))
+                }
+                continue
+            }
+
+            let leadingWord = trimmed.components(separatedBy: CharacterSet.alphanumerics.inverted).first?.lowercased() ?? ""
+            if controlKeywords.contains(leadingWord) {
+                continue
+            }
+
             let isClass = trimmed.hasPrefix("class ") || trimmed.hasPrefix("struct ")
-            let isFunc = trimmed.hasPrefix("func ") || trimmed.hasPrefix("def ") || trimmed.hasPrefix("function ") ||
-                         (trimmed.contains("(") && trimmed.contains(")") && (trimmed.hasPrefix("void ") || trimmed.hasPrefix("int ") || trimmed.hasPrefix("public ") || trimmed.hasPrefix("private ")))
+            let isExportedTSFunc = trimmed.hasPrefix("export ") && trimmed.contains(" function ")
+            let isFunc = trimmed.hasPrefix("func ") || trimmed.hasPrefix("def ") || trimmed.hasPrefix("function ") || isExportedTSFunc ||
+                         (trimmed.contains("(") && trimmed.contains(")") && !trimmed.hasSuffix(";") &&
+                          (trimmed.hasPrefix("void ") || trimmed.hasPrefix("int ") || trimmed.hasPrefix("public ") || trimmed.hasPrefix("private ")))
+
             if isClass || isFunc {
                 var name = trimmed
                 if let paren = name.firstIndex(of: "(") {
@@ -6400,11 +6650,14 @@ public final class NppWorkspace: ObservableObject {
                 if let brace = name.firstIndex(of: "{") {
                     name = String(name[..<brace])
                 }
+                if let angle = name.firstIndex(of: "<") {
+                    name = String(name[..<angle])
+                }
                 name = name.trimmingCharacters(in: .whitespaces)
                 var changed = true
                 while changed {
                     changed = false
-                    for prefix in ["public ", "private ", "fileprivate ", "internal ", "open ", "static ", "final ", "class ", "struct ", "func ", "def ", "function ", "void ", "int ", "bool ", "double ", "float "] {
+                    for prefix in ["export ", "default ", "async ", "public ", "private ", "fileprivate ", "internal ", "open ", "static ", "final ", "class ", "struct ", "func ", "def ", "function ", "void ", "int ", "bool ", "double ", "float "] {
                         if name.hasPrefix(prefix) {
                             name = String(name.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
                             changed = true
@@ -6412,7 +6665,31 @@ public final class NppWorkspace: ObservableObject {
                         }
                     }
                 }
-                results.append(NppFunctionItem(name: name, line: idx + 1, isClass: isClass))
+                if !name.isEmpty && !controlKeywords.contains(name.lowercased()) {
+                    results.append(NppFunctionItem(name: name, line: idx + 1, isClass: isClass))
+                }
+            } else if isBash && !trimmed.hasSuffix(";"),
+                      let match = bashPosixRegex?.firstMatch(in: trimmed, options: [], range: trimmedRange),
+                      match.numberOfRanges > 1 {
+                let bashName = trimmedNS.substring(with: match.range(at: 1))
+                if !bashName.isEmpty && !controlKeywords.contains(bashName.lowercased()) {
+                    var hasBody = trimmed.hasSuffix("()") || trimmed.contains("{")
+                    if !hasBody {
+                        var nextIdx = idx + 1
+                        while nextIdx < lines.count {
+                            let nextTrim = lines[nextIdx].trimmingCharacters(in: .whitespaces)
+                            if nextTrim.isEmpty || nextTrim.hasPrefix("#") {
+                                nextIdx += 1
+                                continue
+                            }
+                            hasBody = nextTrim.hasPrefix("{")
+                            break
+                        }
+                    }
+                    if hasBody {
+                        results.append(NppFunctionItem(name: bashName, line: idx + 1, isClass: false))
+                    }
+                }
             }
         }
 
@@ -6430,18 +6707,55 @@ public final class NppWorkspace: ObservableObject {
     }
 
     // MARK: - Folder As Workspace Helpers (session.md:110-140)
-    public static func unfoldAllDirectories(in roots: [URL]) -> Set<String> {
+    public static func listFolderChildren(at url: URL, allowSymlinks: Bool) -> [URL] {
+        guard let rawChildren = try? FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+        var filtered: [URL] = []
+        filtered.reserveCapacity(rawChildren.count)
+        for rawChild in rawChildren {
+            if !allowSymlinks {
+                let isSymlink = (try? rawChild.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) ?? false
+                if isSymlink {
+                    continue
+                }
+            }
+            var isDirObjC: ObjCBool = false
+            let existsDir = FileManager.default.fileExists(atPath: rawChild.path, isDirectory: &isDirObjC) && isDirObjC.boolValue
+            filtered.append(url.appendingPathComponent(rawChild.lastPathComponent, isDirectory: existsDir))
+        }
+        return filtered.sorted {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }
+    }
+
+    public static func unfoldAllDirectories(in roots: [URL], allowSymlinks: Bool = true) -> Set<String> {
         var allDirs: Set<String> = []
-        let fm = FileManager.default
+        var visitedRealPaths: Set<String> = []
+        var queue: [URL] = []
+
         for root in roots {
+            let realRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
             allDirs.insert(root.path)
-            if let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
-                for case let fileUrl as URL in enumerator {
-                    var isDir: AnyObject?
-                    try? (fileUrl as NSURL).getResourceValue(&isDir, forKey: .isDirectoryKey)
-                    if let isDir = isDir as? Bool, isDir {
-                        allDirs.insert(fileUrl.path)
-                    }
+            visitedRealPaths.insert(realRoot)
+            queue.append(root)
+        }
+
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            for child in listFolderChildren(at: current, allowSymlinks: allowSymlinks) {
+                var isDir: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: child.path, isDirectory: &isDir), isDir.boolValue else {
+                    continue
+                }
+                let realChild = child.resolvingSymlinksInPath().standardizedFileURL.path
+                allDirs.insert(child.path)
+                if visitedRealPaths.insert(realChild).inserted {
+                    queue.append(child)
                 }
             }
         }

@@ -93,6 +93,7 @@ public final class NppFindReplaceWindowController: NSObject, NSWindowDelegate {
     }
 
     public func close() {
+        workspace?.clearFindDialogHighlight()
         if let ws = workspace, let tv = ws.activeTextView {
             tv.window?.makeFirstResponder(tv)
         }
@@ -161,6 +162,7 @@ public final class NppFindReplaceWindowController: NSObject, NSWindowDelegate {
     }
 
     public func windowWillClose(_ notification: Notification) {
+        workspace?.clearFindDialogHighlight()
         if let ws = workspace, ws.showFindReplaceDialog {
             ws.showFindReplaceDialog = false
         }

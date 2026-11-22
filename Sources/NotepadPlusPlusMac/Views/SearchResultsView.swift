@@ -19,7 +19,7 @@ public struct NppSearchResultsView: View {
                     .foregroundColor(.accentColor)
                     .font(.system(size: 12))
 
-                Text("Search \"\(workspace.lastSearchQuery)\" (\(workspace.totalSearchHits) hits in \(workspace.searchFileGroups.count) files)")
+                Text("\(workspace.tr("Search")) \"\(workspace.lastSearchQuery)\" (\(workspace.totalSearchHits) \(workspace.tr("hits in")) \(workspace.searchFileGroups.count) \(workspace.tr("files")))")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(.primary)
 
@@ -97,7 +97,7 @@ public struct NppSearchResultsView: View {
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundColor(.primary)
 
-                                Text("(\(group.matches.count) hits)")
+                                Text("(\(group.matches.count) \(workspace.tr("hits")))")
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundColor(.secondary)
 
@@ -137,7 +137,7 @@ public struct NppSearchResultsView: View {
                                                          allMatches[workspace.currentSearchResultIndex].id == match.id
 
                                     HStack(spacing: 6) {
-                                        Text("Line \(match.lineNumber):")
+                                        Text("\(workspace.tr("Line")) \(match.lineNumber):")
                                             .font(.system(size: 11, design: .monospaced))
                                             .foregroundColor(.secondary)
                                             .frame(width: 65, alignment: .trailing)

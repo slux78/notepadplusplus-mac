@@ -191,9 +191,9 @@ final class NppAutomatedTestSuite {
             assertTest("reverseLineOrder reverses lines", doc.content.hasPrefix("line 3"))
 
             // TEST 12: Dialogs Verification
-            // Verify About Notepad++ version string matches v8.9.8.1
-            let bundleVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "8.9.8.1"
-            assertTest("About Dialog: Version strictly conforms to 8.9.8.1", bundleVer == "8.9.8.1")
+            // Verify About Notepad++ version string matches v8.9.9.1
+            let bundleVer = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "8.9.9.1"
+            assertTest("About Dialog: Version strictly conforms to 8.9.9.1", bundleVer == "8.9.9.1")
 
             // TEST 13: Dynamic Coding Fonts Discovery & Font Selection
             let availableFonts = NppWorkspace.availableCodingFonts
@@ -1486,6 +1486,9 @@ final class NppAutomatedTestSuite {
 
             // Non-Preference Menus, Context Menus, Toolbars, Status Bar & Dialogs Audit Suite
             runNonPreferenceMenuAndDialogAuditTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
+
+            // Upstream v8.9.9 / v8.9.9.1 & master Parity Suite
+            runUpstreamV8991ParityTests(ws: ws, appDelegate: appDelegate, assertTest: assertTest)
 
             // Restore English for default screenshot state
             ws.localizationLanguage = "English"
@@ -11118,6 +11121,287 @@ final class NppAutomatedTestSuite {
         ws.showFolderAsWorkspace = false
         try? FileManager.default.removeItem(at: tempDir)
 
+        ws.closeAll(force: true)
+    }
+
+    static func runUpstreamV8991ParityTests(
+        ws: NppWorkspace,
+        appDelegate: AppDelegate,
+        assertTest: (String, Bool) -> Void
+    ) {
+        print("\n--- Testing Upstream v8.9.9 / v8.9.9.1 & master Parity ---")
+        ws.closeAll(force: true)
+        ws.localizationLanguage = "English"
+
+        // 1. Find Dialog Live "Highlight all matches" (4ea49ccadb)
+        let tv = NppTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
+        tv.workspace = ws
+        ws.activeTextView = tv
+        guard let findDoc = ws.activeDocument else { return }
+        findDoc.content = "alpha beta alpha gamma alpha"
+        tv.string = findDoc.content
+        ws.findReplaceTab = 0
+        ws.searchMode = 0
+        ws.matchCase = true
+        ws.matchWholeWord = true
+
+        assertTest("v8.9.9.1 [1.A]: findDlgHighlightAllMatches defaults to false",
+                   ws.findDlgHighlightAllMatches == false)
+
+        findDoc.styledTokenRanges[1] = [NSRange(location: 6, length: 4)] // "beta"
+        ws.incrementalHighlightAll = true
+        ws.updateIncrementalSearch(query: "gamma", matchCase: true, wholeWord: true, useRegex: false)
+        ws.findDlgHighlightAllMatches = true
+        ws.updateFindDialogHighlight(query: "alpha")
+        assertTest("v8.9.9.1 [1.B]: updateFindDialogHighlight highlights all 3 matches while keeping styledTokenRanges and incremental highlights",
+                   ws.findDlgHighlightedRanges.count == 3 &&
+                   findDoc.styledTokenRanges[1]?.count == 1 &&
+                   ws.incrementalHighlightedRanges.count == 1)
+
+        ws.clearFindDialogHighlight()
+        let betaBgAfterClear = tv.textStorage?.attribute(.backgroundColor, at: 6, effectiveRange: nil) as? NSColor
+        let gammaBgAfterClear = tv.textStorage?.attribute(.backgroundColor, at: 17, effectiveRange: nil) as? NSColor
+        let alphaBgAfterClear = tv.textStorage?.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? NSColor
+        assertTest("v8.9.9.1 [1.C]: clearFindDialogHighlight clears Find highlights without clearing token styles or incremental highlights",
+                   ws.findDlgHighlightedRanges.isEmpty &&
+                   alphaBgAfterClear == nil &&
+                   betaBgAfterClear != nil &&
+                   gammaBgAfterClear != nil)
+        ws.clearIncrementalHighlight()
+        ws.incrementalHighlightAll = false
+        ws.findDlgHighlightAllMatches = false
+        findDoc.styledTokenRanges.removeAll()
+
+        // 2. Incremental Search & Find Dialog Options Persistence (f45b4d1a9a)
+        let ud = UserDefaults.standard
+        ws.findDlgHighlightAllMatches = true
+        ws.incrementalHighlightAll = true
+        ws.incrementalMatchCase = true
+        ws.incrementalWholeWord = true
+        ws.incrementalUseRegex = true
+        ws.incSearchBarAtTop = true
+        ws.confirmReplaceAllInAllOpenedDocs = false
+        ws.replaceAndStop = true
+        ws.savePreferences()
+
+        let wsLoaded = NppWorkspace()
+        assertTest("v8.9.9 [2.A]: Incremental Search and moved Search options persist across sessions",
+                   wsLoaded.findDlgHighlightAllMatches == true &&
+                   wsLoaded.incrementalHighlightAll == true &&
+                   wsLoaded.incrementalMatchCase == true &&
+                   wsLoaded.incrementalWholeWord == true &&
+                   wsLoaded.incrementalUseRegex == true &&
+                   wsLoaded.incSearchBarAtTop == true &&
+                   wsLoaded.confirmReplaceAllInAllOpenedDocs == false &&
+                   wsLoaded.replaceAndStop == true)
+
+        // Restore defaults cleanly
+        ws.findDlgHighlightAllMatches = false
+        ws.incrementalHighlightAll = false
+        ws.incrementalMatchCase = false
+        ws.incrementalWholeWord = false
+        ws.incrementalUseRegex = false
+        ws.incSearchBarAtTop = false
+        ws.confirmReplaceAllInAllOpenedDocs = true
+        ws.replaceAndStop = false
+        ws.resetPreferencesToDefaults()
+        ud.synchronize()
+
+        // 3. Folder as Workspace Symlink Handling (f031fcbf61)
+        let fm = FileManager.default
+        let fawRoot = fm.temporaryDirectory.appendingPathComponent("npp_faw_symlink_\(UUID().uuidString)")
+        let siblingSubdir = fawRoot.appendingPathComponent("sub_dir")
+        let nestedFile = siblingSubdir.appendingPathComponent("nested.txt")
+        let siblingFile = fawRoot.appendingPathComponent("z_sibling.txt")
+        let targetDir = fm.temporaryDirectory.appendingPathComponent("npp_faw_ext_\(UUID().uuidString)")
+        let symlinkEntry = fawRoot.appendingPathComponent("a_link")
+        let circularSymlink = siblingSubdir.appendingPathComponent("loop_to_root")
+        try? fm.createDirectory(at: siblingSubdir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: targetDir, withIntermediateDirectories: true)
+        try? "ok".write(to: siblingFile, atomically: true, encoding: .utf8)
+        try? "ok".write(to: nestedFile, atomically: true, encoding: .utf8)
+        try? fm.createSymbolicLink(at: symlinkEntry, withDestinationURL: targetDir)
+        try? fm.createSymbolicLink(at: circularSymlink, withDestinationURL: fawRoot)
+
+        let childrenNoSym = NppWorkspace.listFolderChildren(at: fawRoot, allowSymlinks: false)
+        let unfoldedNoSym = NppWorkspace.unfoldAllDirectories(in: [fawRoot], allowSymlinks: false)
+        assertTest("v8.9.9.1 [3.A]: FAW skips symlinks without aborting sibling files or subfolders",
+                   !childrenNoSym.contains(where: { $0.lastPathComponent == "a_link" }) &&
+                   childrenNoSym.contains(where: { $0.lastPathComponent == "z_sibling.txt" }) &&
+                   unfoldedNoSym.contains(siblingSubdir.path))
+
+        let unfoldedWithSym = NppWorkspace.unfoldAllDirectories(in: [fawRoot], allowSymlinks: true)
+        assertTest("v8.9.9.1 [3.B]: unfoldAllDirectories guards against circular symlinks without infinite loop",
+                   unfoldedWithSym.contains(siblingSubdir.path) && unfoldedWithSym.contains(fawRoot.path))
+
+        try? fm.removeItem(at: fawRoot)
+        try? fm.removeItem(at: targetDir)
+
+        // 4. Pinned Tab Protection on Tab Movement & Sorting (289282a6e3, ff2530a478)
+        ws.closeAll(force: true)
+        let pinDoc = ws.documents[0]
+        pinDoc.title = "zeta_pinned"
+        ws.newDocument()
+        let unpinB = ws.activeDocument!
+        unpinB.title = "beta_unpinned"
+        ws.newDocument()
+        let unpinA = ws.activeDocument!
+        unpinA.title = "alpha_unpinned"
+        ws.togglePin(id: pinDoc.id) // Order: [zeta_pinned (pinned), beta_unpinned, alpha_unpinned]
+
+        ws.activeDocumentId = pinDoc.id
+        ws.moveTabForward() // Should NOT swap pinned tab into unpinned zone
+        assertTest("master [4.A]: moveTabForward prevents pinned tab from entering unpinned zone",
+                   ws.documents.first?.id == pinDoc.id)
+
+        ws.activeDocumentId = unpinB.id
+        ws.moveTabBackward() // Should NOT swap unpinned tab into pinned zone
+        assertTest("master [4.B]: moveTabBackward prevents unpinned tab from entering pinned zone",
+                   ws.documents.first?.id == pinDoc.id && ws.documents[1].id == unpinB.id)
+
+        ws.activeDocumentId = unpinA.id
+        ws.moveTabToStart()
+        assertTest("master [4.C]: moveTabToStart places unpinned tab at first unpinned index, after pinned tabs",
+                   ws.documents[0].id == pinDoc.id && ws.documents[1].id == unpinA.id)
+
+        ws.sortTabsByName(ascending: true)
+        assertTest("master [4.D]: sortTabsByName sorts unpinned tabs while preserving pinned tab position",
+                   ws.documents[0].id == pinDoc.id &&
+                   ws.documents[1].title == "alpha_unpinned" &&
+                   ws.documents[2].title == "beta_unpinned")
+
+        // 5. Windows Dialog Sort Tabs Pinned Confirmation (ff2530a478)
+        ws.documents = [pinDoc, unpinB, unpinA]
+        let winDlg = NppWindowsDialogView(workspace: ws, onClose: {})
+        ws.confirmUnpinToSortHandler = { false }
+        winDlg.sortTabsToCurrentOrder()
+        assertTest("master [5.A]: WindowsDlg sortTabs aborts and preserves pinned state when declined",
+                   pinDoc.isPinned == true && ws.documents.map { $0.id } == [pinDoc.id, unpinB.id, unpinA.id])
+
+        ws.confirmUnpinToSortHandler = { true }
+        winDlg.sortTabsToCurrentOrder()
+        assertTest("master [5.B]: WindowsDlg sortTabs unpins and sorts all tabs when approved",
+                   pinDoc.isPinned == false &&
+                   ws.documents.map { $0.title } == ["alpha_unpinned", "beta_unpinned", "zeta_pinned"])
+        ws.confirmUnpinToSortHandler = nil
+
+        // 6. Zero-Length Regex Matches in markAll with inRange (f78ce79a26)
+        ws.closeAll(force: true)
+        if let zDoc = ws.activeDocument {
+            zDoc.content = "line1\nline2\nline3\nline4"
+            let selStart = (zDoc.content as NSString).range(of: "line2").location
+            let selLen = ("line2\nline3" as NSString).length
+            let zeroCount = ws.markAll(
+                query: "^",
+                matchCase: true,
+                wholeWord: false,
+                useRegex: true,
+                bookmarkLine: true,
+                purgeExisting: true,
+                inRange: NSRange(location: selStart, length: selLen)
+            )
+            assertTest("v8.9.9 [6.A]: markAll includes zero-length regex matches ('^') inside selection",
+                       zeroCount == 2 && zDoc.bookmarkedLines == Set([2, 3]))
+            ws.clearAllMarks()
+        }
+
+        // 7. Function List Parser Improvements (bedc418da1, 4a8052a971, a69bc23808, 23691bf877)
+        let bashSrc = "#!/bin/bash\n#\n# comment after bare hash\nerror_exit()\n{\n  echo err\n}\n"
+        let bashFuncs = NppWorkspace.parseFunctions(content: bashSrc, language: "Shell")
+        let iniSrc = "[General]\nfoo=1\n[Notepad++]\nversion=8.9.9.1\n"
+        let iniSections = NppWorkspace.parseFunctions(content: iniSrc, language: "INI")
+        let psSrc = "Function Sauve+Confirm {\n  Write-Host 'hi'\n}\n"
+        let psFuncs = NppWorkspace.parseFunctions(content: psSrc, language: "PowerShell")
+        let tsSrc = "export async function fetchData(id: number): Promise<string> {\n  return '';\n}\n"
+        let tsFuncs = NppWorkspace.parseFunctions(content: tsSrc, language: "TypeScript")
+        let cSrc = "void validFunc(int x) {\n  if (x > 0) {\n    return;\n  }\n}\n"
+        let cFuncs = NppWorkspace.parseFunctions(content: cSrc, language: "C")
+
+        assertTest("v8.9.9 [7.A]: parseFunctions parses Bash function after bare '#' comment",
+                   bashFuncs.contains(where: { $0.name == "error_exit" }))
+        assertTest("v8.9.9 [7.B]: parseFunctions parses INI section containing '+' ([Notepad++])",
+                   iniSections.contains(where: { $0.name == "Notepad++" }))
+        assertTest("v8.9.9 [7.C]: parseFunctions parses PowerShell function name containing '+'",
+                   psFuncs.contains(where: { $0.name == "Sauve+Confirm" }))
+        assertTest("v8.9.9 [7.D]: parseFunctions parses TypeScript exported function with return type & excludes C control flow",
+                   tsFuncs.contains(where: { $0.name == "fetchData" }) &&
+                   cFuncs.contains(where: { $0.name == "validFunc" }) &&
+                   !cFuncs.contains(where: { $0.name == "if" }))
+
+        // 8. R escapes, C++ USERLITERAL, Structured Text detection & highlighting (00becd6036, fabb461bce, ddef5e0fc8)
+        assertTest("v8.9.9 [8.A]: .st files are detected as Structured Text",
+                   NppDocument.detectLanguage(for: "plc_main.st") == "Structured Text")
+
+        let rCode = "msg <- \"hello\\n\\x41\" # R comment\n"
+        let rStorage = NSTextStorage(string: rCode)
+        NppSyntaxHighlighter.highlight(textStorage: rStorage, language: "R", isDarkMode: true)
+        let rQuoteLoc = (rCode as NSString).range(of: "hello").location
+        let rEscLoc = (rCode as NSString).range(of: "\\x41").location
+        let rCmtLoc = (rCode as NSString).range(of: "# R comment").location
+        let rStrColor = rStorage.attribute(.foregroundColor, at: rQuoteLoc, effectiveRange: nil) as? NSColor
+        let rEscColor = rStorage.attribute(.foregroundColor, at: rEscLoc, effectiveRange: nil) as? NSColor
+        let rCmtColor = rStorage.attribute(.foregroundColor, at: rCmtLoc, effectiveRange: nil) as? NSColor
+        assertTest("v8.9.9 [8.B]: R highlights string escape sequences and '#' comments distinctly",
+                   rEscColor != nil && rEscColor != rStrColor && rCmtColor != rStrColor)
+
+        let cppCode = "auto d = 100ms; auto n = 100; auto s = \"abc\"_sv;\n"
+        let cppStorage = NSTextStorage(string: cppCode)
+        NppSyntaxHighlighter.highlight(textStorage: cppStorage, language: "C++", isDarkMode: true)
+        let udlNumLoc = (cppCode as NSString).range(of: "100ms").location
+        let plainNumLoc = (cppCode as NSString).range(of: "100;").location
+        let udlStrLoc = (cppCode as NSString).range(of: "\"abc\"_sv").location
+        let udlNumColor = cppStorage.attribute(.foregroundColor, at: udlNumLoc, effectiveRange: nil) as? NSColor
+        let plainNumColor = cppStorage.attribute(.foregroundColor, at: plainNumLoc, effectiveRange: nil) as? NSColor
+        let udlStrColor = cppStorage.attribute(.foregroundColor, at: udlStrLoc, effectiveRange: nil) as? NSColor
+        assertTest("master [8.C]: C++ highlights user-defined numeric and string literals distinctly",
+                   udlNumColor != nil && udlNumColor != plainNumColor && udlStrColor == udlNumColor)
+
+        // 9. UDL as Default Language for New Document + Deleted UDL Fallback (a1ecd4e116, ea9fc5926a)
+        let customUdl = NppUserDefineLanguage(name: "AuditTempUDL", extensions: "aududl")
+        ws.userDefinedLanguages.append(customUdl)
+        ws.defaultNewDocLanguage = "AuditTempUDL"
+        ws.newDocument()
+        assertTest("v8.9.9 [9.A]: newDocument uses configured UDL as default language",
+                   ws.activeDocument?.language == "AuditTempUDL")
+        ws.userDefinedLanguages.removeAll { $0.name == "AuditTempUDL" }
+        ws.newDocument()
+        assertTest("v8.9.9 [9.B]: newDocument falls back to Plain Text when configured UDL no longer exists",
+                   ws.activeDocument?.language == "Plain Text" && ws.defaultNewDocLanguage == "Plain Text")
+
+        // 10. Clipboard History Expanded Label Limit & Surrogate-Safe Truncation (816c16df89, a8c229afc5)
+        let long70 = String(repeating: "A", count: 70)
+        let emojiLong = String(repeating: "🚀", count: 140)
+        let item70 = ClipboardItem(text: long70)
+        let itemEmoji = ClipboardItem(text: emojiLong)
+        assertTest("v8.9.9 [10.A]: ClipboardItem preview retains 70-char label and safely truncates >128-char emojis",
+                   item70.preview == long70 &&
+                   itemEmoji.preview.count == 128 &&
+                   itemEmoji.preview.hasSuffix("..."))
+
+        // 11. CLI Parser Safe Handling on Empty / Non-Numeric Arguments (99d4f2a0d4, 6eba6c1a35)
+        let badCli = NppCommandLineParser.parseArgs(["-n", "/tmp/target.txt", "-nabc", "-c99999999999999999999999", "-l", "-L"])
+        assertTest("master [11.A]: NppCommandLineParser handles empty or non-numeric CLI flags without crashing or swallowing file args",
+                   badCli.line == nil && badCli.column == nil && badCli.language == nil && badCli.files == ["/tmp/target.txt"])
+
+        // 12. Search Results Shift+F4 Caret-at-Start Parity (b7f3e81cd6)
+        ws.closeAll(force: true)
+        if let sDoc = ws.activeDocument {
+            sDoc.content = "hit zero\nhit one hit two"
+            sDoc.cursorPos = 9 // right before "hit one"
+            sDoc.selectionLength = 0
+            ws.activeTextView = nil
+            let sm0 = NppSearchMatch(documentId: sDoc.id, documentTitle: sDoc.title, filePath: nil, lineNumber: 1, lineContent: "hit zero", matchRangeInLine: NSRange(location: 0, length: 3), charPosition: 0, matchLength: 3)
+            let sm1 = NppSearchMatch(documentId: sDoc.id, documentTitle: sDoc.title, filePath: nil, lineNumber: 2, lineContent: "hit one hit two", matchRangeInLine: NSRange(location: 0, length: 3), charPosition: 9, matchLength: 3)
+            let sm2 = NppSearchMatch(documentId: sDoc.id, documentTitle: sDoc.title, filePath: nil, lineNumber: 2, lineContent: "hit one hit two", matchRangeInLine: NSRange(location: 8, length: 3), charPosition: 17, matchLength: 3)
+            ws.searchFileGroups = [NppSearchFileGroup(documentId: sDoc.id, documentTitle: sDoc.title, filePath: nil, matches: [sm0, sm1, sm2])]
+            ws.currentSearchResultIndex = -1
+            ws.prevSearchResult()
+            assertTest("master [12.A]: prevSearchResult moves strictly to previous result when caret is at start of occurrence without selection",
+                       ws.currentSearchResultIndex == 0 && sDoc.cursorPos == 0)
+            ws.clearSearchResults()
+        }
+
+        ws.showSearchResultsPanel = false
         ws.closeAll(force: true)
     }
 

@@ -83,15 +83,28 @@ public struct NppWindowsDialogView: View {
                 .border(Color.secondary.opacity(0.3), width: 1)
 
                 // Table Rows
-                ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(sortedDocuments) { doc in
-                            rowView(for: doc)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 1) {
+                            ForEach(sortedDocuments) { doc in
+                                rowView(for: doc)
+                                    .id(doc.id)
+                            }
+                        }
+                    }
+                    .border(Color.secondary.opacity(0.3), width: 1)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .onAppear {
+                        if let activeId = workspace.activeDocumentId,
+                           sortedDocuments.contains(where: { $0.id == activeId }) {
+                            selectedDocIds = [activeId]
+                            lastClickedDocId = activeId
+                            DispatchQueue.main.async {
+                                proxy.scrollTo(activeId, anchor: .center)
+                            }
                         }
                     }
                 }
-                .border(Color.secondary.opacity(0.3), width: 1)
-                .background(Color(NSColor.textBackgroundColor))
             }
             .frame(minWidth: 630)
 
@@ -138,6 +151,9 @@ public struct NppWindowsDialogView: View {
         }
         .padding(14)
         .frame(minWidth: 780, minHeight: 420)
+        .onExitCommand {
+            onClose()
+        }
     }
 
     private func headerButton(title: String, col: Int, width: CGFloat) -> some View {
@@ -281,6 +297,26 @@ public struct NppWindowsDialogView: View {
     }
 
     public func sortTabsToCurrentOrder() {
+        if workspace.documents.contains(where: { $0.isPinned }) {
+            let approved: Bool
+            if let handler = workspace.confirmUnpinToSortHandler {
+                approved = handler()
+            } else if !workspace.isTest {
+                let alert = NSAlert()
+                alert.messageText = workspace.tr("Sort tabs question")
+                alert.informativeText = workspace.tr("Cannot sort pinned files. Unpin all pinned files firstly?")
+                alert.addButton(withTitle: workspace.tr("Yes"))
+                alert.addButton(withTitle: workspace.tr("No"))
+                alert.alertStyle = .informational
+                approved = (alert.runModal() == .alertFirstButtonReturn)
+            } else {
+                approved = false
+            }
+            guard approved else { return }
+            for doc in workspace.documents where doc.isPinned {
+                doc.isPinned = false
+            }
+        }
         let currentOrder = sortedDocuments
         let activeId = workspace.activeDocumentId
         workspace.documents = currentOrder
@@ -302,6 +338,12 @@ public struct NppWindowsDialogView: View {
     }
 }
 
+final class NppWindowsDialogPanel: NSPanel {
+    override func cancelOperation(_ sender: Any?) {
+        NppWindowsDialogWindowController.shared.close()
+    }
+}
+
 // MARK: - Windows Management Window Controller
 public final class NppWindowsDialogWindowController: NSObject, NSWindowDelegate {
     public static let shared = NppWindowsDialogWindowController()
@@ -316,7 +358,7 @@ public final class NppWindowsDialogWindowController: NSObject, NSWindowDelegate 
         self.workspace = workspace
         close()
 
-        let newPanel = NSPanel(
+        let newPanel = NppWindowsDialogPanel(
             contentRect: NSRect(x: 180, y: 240, width: 800, height: 460),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
             backing: .buffered,
@@ -347,9 +389,15 @@ public final class NppWindowsDialogWindowController: NSObject, NSWindowDelegate 
     public func close() {
         panel?.orderOut(nil)
         panel = nil
+        if let tv = workspace?.activeTextView {
+            tv.window?.makeFirstResponder(tv)
+        }
     }
 
     public func windowWillClose(_ notification: Notification) {
         panel = nil
+        if let tv = workspace?.activeTextView {
+            tv.window?.makeFirstResponder(tv)
+        }
     }
 }

@@ -53,7 +53,7 @@ public struct NppStyleConfiguratorView: View {
         "LaTeX", "Lisp", "Lua", "Makefile", "Markdown", "Matlab",
         "Objective-C", "Pascal", "Perl", "PHP", "PowerShell", "Properties",
         "Python", "R", "Ruby", "Rust", "Scheme", "Smalltalk",
-        "SQL", "Swift", "Tcl", "TeX", "TypeScript", "VB / VBS",
+        "SQL", "Structured Text", "Swift", "Tcl", "TeX", "TypeScript", "VB / VBS",
         "Verilog", "VHDL", "XML", "YAML"
     ]
 
@@ -84,7 +84,7 @@ public struct NppStyleConfiguratorView: View {
         "Mark Style 3",
         "Mark Style 4",
         "Mark Style 5",
-        "Incremental highlight all",
+        "Find matches highlight all",
         "Tags match highlighting",
         "Tags attribute",
         "Active tab focused indicator",
@@ -123,7 +123,10 @@ public struct NppStyleConfiguratorView: View {
     }
 
     private var currentStyles: [String] {
-        selectedLanguage == "Global Styles" ? globalStyles : languageStyles
+        if selectedLanguage == "Global Styles" {
+            return globalStyles
+        }
+        return selectedLanguage == "C++" ? (languageStyles + ["USERLITERAL"]) : languageStyles
     }
 
     private var isKeywordStyle: Bool {
@@ -146,7 +149,7 @@ public struct NppStyleConfiguratorView: View {
             return (6, "Margins/Border/Edge")
         case "Smart Highlighting", "Tags match highlighting", "Tags attribute":
             return (13, "Highlighting")
-        case "Find Mark Style", "Incremental highlight all":
+        case "Find Mark Style", "Find matches highlight all", "Incremental highlight all":
             return (15, "Searching")
         case "Active tab focused indicator", "Active tab unfocused indicator", "Active tab text", "Inactive tabs":
             return (2, "Tab Bar")
@@ -764,6 +767,10 @@ public struct NppStyleConfiguratorView: View {
                 return (theme.commentColor, theme.backgroundColor)
             case "NUMBER":
                 return (theme.numberColor, theme.backgroundColor)
+            case "USERLITERAL":
+                return (theme.isDark ? NSColor(calibratedRed: 0.99, green: 0.42, blue: 0.63, alpha: 1.0)
+                                     : NSColor(calibratedRed: 0.72, green: 0.10, blue: 0.45, alpha: 1.0),
+                        theme.backgroundColor)
             default:
                 return (theme.foregroundColor, theme.backgroundColor)
             }

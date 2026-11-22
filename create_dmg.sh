@@ -223,7 +223,7 @@ if [ -f "$INFO_PLIST" ]; then
     fi
 fi
 if [ -z "$VERSION" ]; then
-    VERSION="8.9.8.1"
+    VERSION="8.9.9.1"
 fi
 
 echo "=== Packaging Notepad++ v${VERSION} into macOS DMG ==="

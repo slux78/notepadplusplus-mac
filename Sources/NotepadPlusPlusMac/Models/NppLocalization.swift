@@ -667,7 +667,21 @@ public struct NppLocalization {
         "Workspace has been modified. Save changes?": "작업 영역이 변경되었습니다. 저장하시겠습니까?",
         "Reload will discard all changes. Continue?": "작업 영역이 변경되었습니다. 다시 읽으면 모든 변경 사항이 취소됩니다. 계속하시겠습니까?",
         "Are you sure?": "맞습니까?",
-        "Are you sure you want to replace all occurrences in the selected projects?": "선택한 프로젝트 영역의 모든 문서에서 바꾸시겠습니까?"
+        "Are you sure you want to replace all occurrences in the selected projects?": "선택한 프로젝트 영역의 모든 문서에서 바꾸시겠습니까?",
+
+        // Upstream v8.9.9 / v8.9.9.1 Additions
+        "Highlight all": "모두 강조",
+        "Highlight all matches in the active document while typing": "입력하는 동안 현재 문서의 일치 항목 모두 강조",
+        "Don't move to the following occurrence": "바꾸기 후 다음 일치 항목으로 이동 안 함",
+        "Confirm Replace All in All Opened Documents": "열려 있는 모든 문서에서 모두 바꾸기 확인",
+        "Show at top": "상단에 표시",
+        "Incremental Search: show the bar at the top": "증분 찾기: 찾기 막대를 상단에 표시",
+        "Sort tabs question": "탭 정렬 확인",
+        "Cannot sort pinned files. Unpin all pinned files firstly?": "고정된 파일은 정렬할 수 없습니다. 먼저 모든 고정된 파일의 고정을 해제하시겠습니까?",
+        "hits in": "개 일치 /",
+        "files": "개 파일",
+        "Line": "줄",
+        "hits": "개 일치"
     ]
 
     public static let japaneseTable: [String: String] = [
