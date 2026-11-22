@@ -89,9 +89,9 @@ public struct NppFindReplaceDialogView: View {
             Divider()
 
             // Dialog Main Body
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 16) {
                 // Left Area: Inputs & Options (width ~ 460)
-                VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 4 : 8) {
+                VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 1 || workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 5 : 8) {
                     // Find What Row
                     HStack(spacing: 8) {
                         Text(workspace.tr("Find what :"))
@@ -110,6 +110,7 @@ public struct NppFindReplaceDialogView: View {
                                 .font(.system(size: 10))
                                 .toggleStyle(CheckboxToggleStyle())
                                 .fixedSize()
+                                .padding(.trailing, 4)
                                 .help(workspace.tr("Highlight all matches in the active document while typing"))
                         }
                     }
@@ -240,7 +241,7 @@ public struct NppFindReplaceDialogView: View {
 
                     // Checkboxes Row: Match case, Whole word, Wrap around
                     HStack(alignment: .top, spacing: 20) {
-                        VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 4 : 6) {
+                        VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 1 || workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 4 : 6) {
                             Toggle(workspace.tr("Match whole word only"), isOn: $workspace.matchWholeWord)
                                 .font(.system(size: 11))
                                 .toggleStyle(CheckboxToggleStyle())
@@ -254,7 +255,7 @@ public struct NppFindReplaceDialogView: View {
                             }
                         }
 
-                        VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 4 : 6) {
+                        VStack(alignment: .leading, spacing: (workspace.findReplaceTab == 1 || workspace.findReplaceTab == 2 || workspace.findReplaceTab == 3) ? 4 : 6) {
                             if workspace.findReplaceTab != 2 && workspace.findReplaceTab != 3 {
                                 Toggle(workspace.tr("Backward direction"), isOn: $workspace.searchBackward)
                                     .font(.system(size: 11))
@@ -263,17 +264,21 @@ public struct NppFindReplaceDialogView: View {
                                     .font(.system(size: 11))
                                     .toggleStyle(CheckboxToggleStyle())
                             }
-                            if workspace.findReplaceTab == 1 {
-                                Toggle(workspace.tr("Don't move to the following occurrence"), isOn: $workspace.replaceAndStop)
-                                    .font(.system(size: 10))
-                                    .toggleStyle(CheckboxToggleStyle())
-                                Toggle(workspace.tr("Confirm Replace All in All Opened Documents"), isOn: $workspace.confirmReplaceAllInAllOpenedDocs)
-                                    .font(.system(size: 10))
-                                    .toggleStyle(CheckboxToggleStyle())
-                            }
                         }
                     }
                     .padding(.leading, 15)
+
+                    if workspace.findReplaceTab == 1 {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Toggle(workspace.tr("Don't move to the following occurrence"), isOn: $workspace.replaceAndStop)
+                                .font(.system(size: 11))
+                                .toggleStyle(CheckboxToggleStyle())
+                            Toggle(workspace.tr("Confirm Replace All in All Opened Documents"), isOn: $workspace.confirmReplaceAllInAllOpenedDocs)
+                                .font(.system(size: 11))
+                                .toggleStyle(CheckboxToggleStyle())
+                        }
+                        .padding(.leading, 15)
+                    }
 
                     // Search Mode & Transparency side-by-side (matching upstream FindReplaceDlg.rc y=131)
                     HStack(alignment: .top, spacing: 8) {
@@ -470,10 +475,11 @@ public struct NppFindReplaceDialogView: View {
 
     @ViewBuilder
     private var findNextButtonCluster: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Toggle("", isOn: $twoFindButtonsMode)
                 .labelsHidden()
                 .toggleStyle(CheckboxToggleStyle())
+                .fixedSize()
                 .help(workspace.tr("2 find buttons mode"))
 
             if twoFindButtonsMode {
@@ -498,14 +504,16 @@ public struct NppFindReplaceDialogView: View {
             } else {
                 actionBtn(workspace.tr("Find Next"), isDefault: true) { runFindNext() }
             }
-
+        }
+        .frame(width: 215)
+        .background(
             Button("") {
                 runFindNext(backward: true)
             }
             .keyboardShortcut(.return, modifiers: [.shift])
             .frame(width: 0, height: 0)
             .opacity(0)
-        }
+        )
     }
 
     private func syncFromWorkspaceOnOpen() {
@@ -541,7 +549,7 @@ public struct NppFindReplaceDialogView: View {
                 .minimumScaleFactor(0.85)
                 .frame(maxWidth: .infinity)
         }
-        .frame(width: 215, height: 24)
+        .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
         .keyboardShortcut(isDefault ? .defaultAction : .none)
     }
 

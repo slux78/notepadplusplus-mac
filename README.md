@@ -76,7 +76,7 @@ cd notepadplusplus-mac
 open build/Notepad++.app
 ```
 
-### Run Automated Test Suite (1,605 tests)
+### Run Automated Test Suite (1,609 tests)
 ```bash
 swift run NotepadPlusPlusMac --run-tests
 ```

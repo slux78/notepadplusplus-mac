@@ -11401,6 +11401,112 @@ final class NppAutomatedTestSuite {
             ws.clearSearchResults()
         }
 
+        // 13. Trim Trailing Spaces preserves scroll position in editor viewport (6acc473797)
+        ws.closeAll(force: true)
+        if let trimDoc = ws.activeDocument {
+            let linesText = (1...60).map { "line \($0)   " }.joined(separator: "\n")
+            trimDoc.content = linesText
+            let sv = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 120))
+            sv.hasVerticalScroller = true
+            let scrollTv = NppTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 120))
+            scrollTv.isVerticallyResizable = true
+            scrollTv.workspace = ws
+            scrollTv.string = linesText
+            sv.documentView = scrollTv
+            let scrollWin = NSWindow(
+                contentRect: NSRect(x: 100, y: 100, width: 420, height: 140),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
+            scrollWin.isReleasedWhenClosed = false
+            scrollWin.contentView = sv
+            scrollWin.layoutIfNeeded()
+            if let tc = scrollTv.textContainer {
+                scrollTv.layoutManager?.ensureLayout(for: tc)
+            }
+            sv.contentView.scroll(to: NSPoint(x: 0, y: 240))
+            sv.reflectScrolledClipView(sv.contentView)
+            let yBefore = sv.contentView.bounds.origin.y
+            ws.activeTextView = scrollTv
+            scrollTv.contextTrimTrailing()
+            let yAfter = sv.contentView.bounds.origin.y
+            scrollWin.orderOut(nil)
+            assertTest("master [13.A]: Trim Trailing Spaces removes trailing spaces while preserving viewport scroll position",
+                       yBefore >= 150 && yAfter >= 150 && !trimDoc.content.contains("   "))
+        }
+
+        // 14. Window move / resize dismisses parameter hint popover (ed3986e177)
+        ws.closeAll(force: true)
+        if let hintDoc = ws.activeDocument {
+            hintDoc.language = "Python"
+            hintDoc.content = "len("
+            let hintTv = NppTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+            hintTv.workspace = ws
+            hintTv.string = "len("
+            hintTv.setSelectedRange(NSRange(location: 4, length: 0))
+            let hintWin = NSWindow(
+                contentRect: NSRect(x: 120, y: 120, width: 420, height: 220),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
+            hintWin.isReleasedWhenClosed = false
+            hintWin.contentView = hintTv
+            hintWin.makeKeyAndOrderFront(nil)
+            hintWin.layoutIfNeeded()
+            hintTv.layoutSubtreeIfNeeded()
+            ws.activeTextView = hintTv
+
+            hintTv.showParameterHint(force: true)
+            let shownBeforeMove = hintTv.hasVisibleParameterHint
+            appDelegate.windowDidMove(Notification(name: NSWindow.didMoveNotification, object: hintWin))
+            let shownAfterMove = hintTv.hasVisibleParameterHint
+
+            hintTv.showParameterHint(force: true)
+            let shownBeforeResize = hintTv.hasVisibleParameterHint
+            appDelegate.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: hintWin))
+            let shownAfterResize = hintTv.hasVisibleParameterHint
+
+            hintWin.orderOut(nil)
+            assertTest("v8.9.9 [14.A]: Window move and resize dismiss parameter hint popover",
+                       shownBeforeMove && !shownAfterMove && shownBeforeResize && !shownAfterResize)
+        }
+
+        // 15. Windows Dialog ESC closes dialog even after closing a document (08fc584aa5)
+        ws.closeAll(force: true)
+        ws.newDocument()
+        NppWindowsDialogWindowController.shared.show(workspace: ws)
+        let panelCreated = NppWindowsDialogWindowController.shared.panel is NppWindowsDialogPanel
+        if let firstDoc = ws.documents.first {
+            ws.closeDocument(id: firstDoc.id, force: true)
+        }
+        NppWindowsDialogWindowController.shared.panel?.cancelOperation(nil)
+        assertTest("v8.9.9 [15.A]: Windows dialog ESC closes cleanly after a document is closed",
+                   panelCreated && NppWindowsDialogWindowController.shared.panel == nil)
+        NppWindowsDialogWindowController.shared.close()
+
+        // 16. Search Results header caption localizes cleanly after UI language change (eb7ae49b7d)
+        ws.closeAll(force: true)
+        if let capDoc = ws.activeDocument {
+            ws.lastSearchQuery = "needle"
+            let m = NppSearchMatch(documentId: capDoc.id, documentTitle: capDoc.title, filePath: nil, lineNumber: 1, lineContent: "needle here", matchRangeInLine: NSRange(location: 0, length: 6), charPosition: 0, matchLength: 6)
+            ws.searchFileGroups = [NppSearchFileGroup(documentId: capDoc.id, documentTitle: capDoc.title, filePath: nil, matches: [m])]
+            ws.localizationLanguage = "English"
+            let enCaption = NppSearchResultsView.headerCaption(for: ws)
+            ws.localizationLanguage = "한국어"
+            let krCaption = NppSearchResultsView.headerCaption(for: ws)
+            let srView = NppSearchResultsView(workspace: ws)
+            let srHost = NSHostingView(rootView: srView)
+            srHost.frame = NSRect(x: 0, y: 0, width: 600, height: 200)
+            srHost.layoutSubtreeIfNeeded()
+            assertTest("master [16.A]: Search Results caption updates cleanly across UI language changes",
+                       enCaption.contains("Search \"needle\"") && enCaption.contains("hits in") &&
+                       krCaption.contains("찾기 \"needle\"") && krCaption.contains("개 일치 /") && krCaption.contains("개 파일"))
+            ws.localizationLanguage = "English"
+            ws.clearSearchResults()
+        }
+
         ws.showSearchResultsPanel = false
         ws.closeAll(force: true)
     }

@@ -693,6 +693,10 @@ public final class NppTextView: NSTextView {
         parameterHintPopover = popover
     }
 
+    public var hasVisibleParameterHint: Bool {
+        parameterHintPopover?.isShown == true
+    }
+
     public func dismissPopups() {
         parameterHintPopover?.close()
         parameterHintPopover = nil
@@ -2866,7 +2870,7 @@ public final class NppTextView: NSTextView {
         NppEditOperations.splitLines(in: self)
     }
     private func performContextDocumentOp(_ op: (NppDocument) -> Void) {
-        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        guard self.isEditable, let doc = resolvedDocument, !doc.isReadOnly else { return }
         if doc.content != self.string {
             doc.content = self.string
         }
@@ -2917,19 +2921,19 @@ public final class NppTextView: NSTextView {
     }
 
     @objc func contextTrimTrailing() {
-        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        guard self.isEditable, let doc = resolvedDocument, !doc.isReadOnly else { return }
         let sel = self.selectedRange()
         resolvedWorkspace?.recordMacroStep(.trimTrailingSpace)
         performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .trailing, selectedRange: sel) }
     }
     @objc func contextTrimLeading() {
-        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        guard self.isEditable, let doc = resolvedDocument, !doc.isReadOnly else { return }
         let sel = self.selectedRange()
         resolvedWorkspace?.recordMacroStep(.trimLeadingSpace)
         performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .leading, selectedRange: sel) }
     }
     @objc func contextTrimBoth() {
-        guard self.isEditable, let doc = editorCoordinator?.parent.document, !doc.isReadOnly else { return }
+        guard self.isEditable, let doc = resolvedDocument, !doc.isReadOnly else { return }
         let sel = self.selectedRange()
         resolvedWorkspace?.recordMacroStep(.trimBothSpace)
         performContextDocumentOp { NppEditOperations.trimSpaces(in: $0, mode: .both, selectedRange: sel) }

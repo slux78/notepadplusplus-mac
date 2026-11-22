@@ -11,6 +11,10 @@ public struct NppSearchResultsView: View {
         self.workspace = workspace
     }
 
+    public static func headerCaption(for workspace: NppWorkspace) -> String {
+        "\(workspace.tr("Search")) \"\(workspace.lastSearchQuery)\" (\(workspace.totalSearchHits) \(workspace.tr("hits in")) \(workspace.searchFileGroups.count) \(workspace.tr("files")))"
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
             // Header Bar
@@ -19,7 +23,7 @@ public struct NppSearchResultsView: View {
                     .foregroundColor(.accentColor)
                     .font(.system(size: 12))
 
-                Text("\(workspace.tr("Search")) \"\(workspace.lastSearchQuery)\" (\(workspace.totalSearchHits) \(workspace.tr("hits in")) \(workspace.searchFileGroups.count) \(workspace.tr("files")))")
+                Text(Self.headerCaption(for: workspace))
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(.primary)
 

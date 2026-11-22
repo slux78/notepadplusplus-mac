@@ -147,6 +147,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NppAutomatedTestSuite.captureCustomScreenshot(appDelegate: self, setup: { ws in
                 ws.openFind()
             }, filename: "screenshot_find_dialog.png")
+        } else if CommandLine.arguments.contains("--screenshot-find-replace-dialog") {
+            NppAutomatedTestSuite.captureCustomScreenshot(appDelegate: self, setup: { ws in
+                ws.openReplace()
+            }, filename: "screenshot_find_replace_dialog.png")
         } else if CommandLine.arguments.contains("--screenshot-find-in-files") {
             NppAutomatedTestSuite.captureCustomScreenshot(appDelegate: self, setup: { ws in
                 ws.openFindInFiles()
